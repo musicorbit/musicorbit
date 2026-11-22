@@ -10,9 +10,9 @@ A self-hosted, open-source music library, browser player, metadata manager, and 
   - Full on-demand track metadata editor writing real tags back to disk via `node-taglib-sharp` (title, artist, album artist, album, track/disc numbers, year, genre, composer, BPM, comment, lyrics, and embedded cover art).
   - Multi-provider **Fetch Metadata** lookup (**Deezer**, **MusicBrainz**, and **LRCLIB** for lyrics) with a per-field **Current → Suggested** diff so you can accept all fields, fill empty fields only, or cherry-pick individual tags and cover art.
   - Album-wide **Fix Tags** modal with MusicBrainz release matching, plus an artist portrait picker & custom uploader.
-- **Optional Soulseek Acquisition (`slskd`):** Search releases grouped by folder and ranked FLAC-first, queue downloads, and monitor live transfer progress via an optional `slskd` REST API connection. MusicOrbit works seamlessly without `slskd` if you only want a local music library and player.
-- **Import Pipeline & Review Queue:** Scans `DOWNLOADS_DIR`, matches releases against MusicBrainz, auto-imports high-confidence albums into `MUSIC_DIR/Artist/Album (Year)/...`, and routes uncertain matches into an interactive **Review Queue**.
-- **Playlists & `.m3u8` Interoperability:** Create, reorder, and play playlists in the browser, or import and export standard `#EXTM3U` (`.m3u8`) playlists compatible with Navidrome and Symfonium.
+- **Playlists & `.csv` / `.m3u8` Interoperability:** Create, reorder, customize covers, and play playlists in the browser, or import/export standard `#EXTM3U` (`.m3u8`) and `.csv` playlists (compatible with Navidrome, Symfonium, and Exportify).
+- **Post-Processing Pipeline & Review Queue:** Watches `DOWNLOADS_DIR`, matches incoming albums and single tracks, writes clean tags & cover art, handles duplicates, organizes files into `MUSIC_DIR/Artist/Album (Year)/...`, and routes uncertain matches into an interactive **Review Queue**.
+- **Optional External Transfer Integration (`slskd`):** Connect an optional self-hosted `slskd` instance via its REST API to search, queue, and track external peer-to-peer transfers. MusicOrbit is designed to work completely standalone as a local music library and player without `slskd`.
 - **Optional Authentication:** Built-in first-run admin setup wizard and session-cookie login (`scrypt` password hashing + `HttpOnly` cookies) when `AUTH_ENABLED=true`.
 - **Single-Container Docker Release:** Multi-stage Docker image serving both the Fastify API and the compiled React SPA on one port (`3001`).
 
@@ -94,6 +94,10 @@ musicorbit/
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow and PR guidelines.
+
+## Legal Disclaimer
+
+MusicOrbit is an open-source, self-hosted music library manager and audio player. It does **not** host, index, provide, or distribute any audio files or copyrighted material. Optional third-party integrations (such as `slskd`) are disabled by default and connect solely to user-configured external services. Users are solely responsible for ensuring they have the legal right to download, store, tag, and stream any media managed with this software in accordance with applicable laws in their jurisdiction.
 
 ## License
 
