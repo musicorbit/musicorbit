@@ -10,6 +10,18 @@ export interface DbContext {
   dbPath: string;
 }
 
+function ensureColumn(
+  sqlite: Database.Database,
+  table: string,
+  column: string,
+  definition: string,
+): void {
+  const columns = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!columns.some((c) => c.name === column)) {
+    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
 /**
  * Opens the SQLite database in WAL mode and ensures tables exist.
  *
@@ -29,6 +41,8 @@ export function initDatabase(dbPath: string): DbContext {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL UNIQUE,
       sort_name TEXT NOT NULL,
+      image_hash TEXT,
+      image_checked_at INTEGER,
       mbid TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -84,6 +98,10 @@ export function initDatabase(dbPath: string): DbContext {
     CREATE INDEX IF NOT EXISTS idx_tracks_album_id ON tracks(album_id);
     CREATE INDEX IF NOT EXISTS idx_tracks_artist_id ON tracks(artist_id);
   `);
+
+  // Non-destructive upgrades for existing SQLite databases created before these columns existed
+  ensureColumn(sqlite, "artists", "image_hash", "TEXT");
+  ensureColumn(sqlite, "artists", "image_checked_at", "INTEGER");
 
   const db = drizzle(sqlite, { schema });
   return { sqlite, db, dbPath };

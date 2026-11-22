@@ -4,7 +4,7 @@ import { count } from "drizzle-orm";
 import type { HealthResponse } from "@musicorbit/shared";
 import type { AppConfig } from "../config.js";
 import type { DbContext } from "../db/index.js";
-import { albums, artists, tracks } from "../db/schema.js";
+import { albums, tracks } from "../db/schema.js";
 
 export interface HealthRouteDeps {
   config: AppConfig;
@@ -24,10 +24,14 @@ export async function registerHealthRoutes(
     let trackCount = 0;
 
     try {
-      const [a] = await dbContext.db.select({ value: count() }).from(artists);
+      // Count album artists so the count matches the Artists directory
+      // (track-only featured artists don't inflate the library artist count).
+      const artistRow = dbContext.sqlite
+        .prepare("SELECT COUNT(DISTINCT artist_id) AS value FROM albums")
+        .get() as { value: number } | undefined;
       const [al] = await dbContext.db.select({ value: count() }).from(albums);
       const [t] = await dbContext.db.select({ value: count() }).from(tracks);
-      artistCount = a?.value ?? 0;
+      artistCount = artistRow?.value ?? 0;
       albumCount = al?.value ?? 0;
       trackCount = t?.value ?? 0;
       dbConnected = true;

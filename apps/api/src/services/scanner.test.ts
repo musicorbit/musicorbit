@@ -119,6 +119,8 @@ describe("LibraryScanner & Library API", () => {
       dataDir,
       dbPath: path.join(dataDir, "musicorbit.db"),
       coversDir,
+      artistImagesDir: path.join(dataDir, "artist-images"),
+      fetchArtistImages: false,
       version: "0.1.0",
     });
   });

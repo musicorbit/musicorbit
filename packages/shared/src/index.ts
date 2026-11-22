@@ -58,6 +58,8 @@ export interface ArtistSummary {
   id: number;
   name: string;
   sortName: string;
+  imageHash: string | null;
+  fallbackAlbumId: number | null;
   albumCount: number;
   trackCount: number;
 }
@@ -98,4 +100,5 @@ export interface AlbumDetailResponse {
 export interface ArtistDetailResponse {
   artist: ArtistSummary;
   albums: AlbumSummary[];
+  tracks: TrackSummary[];
 }

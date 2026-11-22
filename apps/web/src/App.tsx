@@ -2,102 +2,112 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Activity,
   AlertTriangle,
-  CheckCircle2,
-  Database,
   Disc3,
-  FolderOpen,
-  Library,
   ListMusic,
-  Play,
+  Music,
   RefreshCw,
-  RotateCcw,
   Search,
   Sparkles,
   Users,
+  X,
 } from "lucide-react";
 import type {
   AlbumSummary,
+  ArtistSummary,
   HealthResponse,
   ScanStatusResponse,
   TrackSummary,
 } from "@musicorbit/shared";
 import {
   fetchAlbums,
+  fetchArtists,
   fetchHealth,
   fetchScanStatus,
   fetchTracks,
   triggerScan,
 } from "./api/client";
+import { PlayerBar } from "./components/PlayerBar";
+import { PlayerProvider, usePlayer } from "./context/PlayerContext";
+import { AlbumDetailView } from "./views/AlbumDetailView";
+import { AlbumsView } from "./views/AlbumsView";
+import { ArtistDetailView } from "./views/ArtistDetailView";
+import { ArtistsView } from "./views/ArtistsView";
+import { SystemView } from "./views/SystemView";
+import { TracksView } from "./views/TracksView";
+
+type Route =
+  | { view: "albums" }
+  | { view: "album-detail"; albumId: number }
+  | { view: "artists" }
+  | { view: "artist-detail"; artistId: number }
+  | { view: "tracks" }
+  | { view: "system" };
 
 const UPCOMING_NAV = [
-  { label: "Albums", icon: Disc3, step: "Step 3" },
-  { label: "Artists", icon: Users, step: "Step 3" },
-  { label: "Library", icon: Library, step: "Step 3" },
   { label: "Soulseek Search", icon: Search, step: "Step 4" },
   { label: "Review Queue", icon: Sparkles, step: "Step 5" },
   { label: "Playlists", icon: ListMusic, step: "Step 6" },
 ];
 
-function formatDuration(seconds: number | null): string {
-  if (seconds === null || !Number.isFinite(seconds)) return "—";
-  const total = Math.round(seconds);
-  const mins = Math.floor(total / 60);
-  const secs = total % 60;
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
-}
-
-export function App() {
+function MusicOrbitShell() {
+  const { currentTrack } = usePlayer();
+  const [route, setRoute] = useState<Route>({ view: "albums" });
+  const [searchQuery, setSearchQuery] = useState("");
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [scanStatus, setScanStatus] = useState<ScanStatusResponse | null>(null);
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
+  const [artists, setArtists] = useState<ArtistSummary[]>([]);
   const [tracks, setTracks] = useState<TrackSummary[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [startingScan, setStartingScan] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const loadAll = useCallback(async () => {
+  const loadLibrary = useCallback(async (q: string) => {
     setLoading(true);
     setError(null);
     try {
-      const [h, s, al, tr] = await Promise.all([
+      const [h, s, al, ar, tr] = await Promise.all([
         fetchHealth(),
         fetchScanStatus(),
-        fetchAlbums(),
-        fetchTracks(25),
+        fetchAlbums(q),
+        fetchArtists(q),
+        fetchTracks(q, 200),
       ]);
       setHealth(h);
       setScanStatus(s);
       setAlbums(al);
+      setArtists(ar);
       setTracks(tr);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not reach API");
-      setHealth(null);
+      setError(err instanceof Error ? err.message : "Could not reach MusicOrbit API");
     } finally {
       setLoading(false);
     }
   }, []);
 
+  // Re-fetch when search query changes (debounced 180ms for smooth typing)
   useEffect(() => {
-    void loadAll();
-  }, [loadAll]);
+    const timer = window.setTimeout(() => {
+      void loadLibrary(searchQuery);
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery, loadLibrary]);
 
-  // Poll scan status every 500ms while a scan is actively running
+  // Poll scan status while a scan is running
   useEffect(() => {
     if (scanStatus?.state !== "running") return;
-
     const timer = window.setInterval(() => {
       void fetchScanStatus()
         .then((next) => {
           setScanStatus(next);
           if (next.state !== "running") {
-            void loadAll();
+            void loadLibrary(searchQuery);
           }
         })
         .catch(() => {});
     }, 500);
-
     return () => window.clearInterval(timer);
-  }, [scanStatus?.state, loadAll]);
+  }, [scanStatus?.state, searchQuery, loadLibrary]);
 
   const handleScan = async (force = false) => {
     setStartingScan(true);
@@ -106,7 +116,7 @@ export function App() {
       const next = await triggerScan(force);
       setScanStatus(next);
       if (next.state !== "running") {
-        await loadAll();
+        await loadLibrary(searchQuery);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start library scan");
@@ -115,17 +125,32 @@ export function App() {
     }
   };
 
-  const isScanning = scanStatus?.state === "running";
-  const progressPct =
-    scanStatus && scanStatus.filesTotal > 0
-      ? Math.round((scanStatus.filesProcessed / scanStatus.filesTotal) * 100)
-      : 0;
+  const navItems = [
+    { id: "albums" as const, label: "Albums", icon: Disc3, count: health?.counts.albums },
+    { id: "artists" as const, label: "Artists", icon: Users, count: health?.counts.artists },
+    { id: "tracks" as const, label: "Tracks", icon: Music, count: health?.counts.tracks },
+    { id: "system" as const, label: "System & Scanner", icon: Activity, count: undefined },
+  ];
+
+  const isNavActive = (id: "albums" | "artists" | "tracks" | "system") => {
+    if (route.view === id) return true;
+    if (id === "albums" && route.view === "album-detail") return true;
+    if (id === "artists" && route.view === "artist-detail") return true;
+    return false;
+  };
+
+  const showSearchBar =
+    route.view === "albums" || route.view === "artists" || route.view === "tracks";
 
   return (
     <div className="flex min-h-screen bg-zinc-950 text-zinc-100">
       {/* Sidebar */}
-      <aside className="flex w-64 shrink-0 flex-col border-r border-zinc-800/80 bg-zinc-900/40 px-4 py-6">
-        <div className="mb-8 flex items-center gap-3 px-2">
+      <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r border-zinc-800/80 bg-zinc-900/40 px-4 py-6">
+        <button
+          type="button"
+          onClick={() => setRoute({ view: "albums" })}
+          className="mb-8 flex items-center gap-3 px-2 text-left"
+        >
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
             <Disc3 className="h-5 w-5" />
           </div>
@@ -133,15 +158,38 @@ export function App() {
             <h1 className="text-base font-semibold tracking-tight text-zinc-50">MusicOrbit</h1>
             <p className="text-xs text-zinc-500">v{health?.version ?? "0.1.0"}</p>
           </div>
-        </div>
+        </button>
 
         <nav className="flex flex-1 flex-col gap-1">
-          <div className="flex items-center gap-3 rounded-lg bg-zinc-800/80 px-3 py-2 text-sm font-medium text-zinc-100">
-            <Activity className="h-4 w-4 text-amber-400" />
-            <span>System &amp; Scanner</span>
-          </div>
+          <p className="mb-1.5 px-3 text-[11px] font-medium tracking-wider text-zinc-500 uppercase">
+            Library
+          </p>
 
-          <p className="mt-6 mb-2 px-3 text-[11px] font-medium tracking-wider text-zinc-500 uppercase">
+          {navItems.map(({ id, label, icon: Icon, count }) => {
+            const active = isNavActive(id);
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setRoute({ view: id })}
+                className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition ${
+                  active
+                    ? "bg-zinc-800/90 text-zinc-50"
+                    : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+                }`}
+              >
+                <span className="flex items-center gap-3">
+                  <Icon className={`h-4 w-4 ${active ? "text-amber-400" : "text-zinc-500"}`} />
+                  {label}
+                </span>
+                {count !== undefined && (
+                  <span className="text-xs font-normal text-zinc-500">{count}</span>
+                )}
+              </button>
+            );
+          })}
+
+          <p className="mt-6 mb-1.5 px-3 text-[11px] font-medium tracking-wider text-zinc-500 uppercase">
             Coming Next
           </p>
 
@@ -166,49 +214,65 @@ export function App() {
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 px-8 py-10">
-        <div className="mx-auto max-w-5xl">
-          <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h2 className="text-2xl font-semibold tracking-tight text-zinc-50">
-                System &amp; Library Scanner
-              </h2>
-              <p className="mt-1 text-sm text-zinc-400">
-                Step 2 — incremental audio scanning, tag extraction, and SQLite indexing.
-              </p>
+      {/* Main Content (adds bottom padding when PlayerBar is visible so nothing gets covered) */}
+      <main className={`flex-1 px-8 py-8 ${currentTrack ? "pb-32" : "pb-12"}`}>
+        <div className="mx-auto max-w-6xl">
+          {/* Top header for main library views */}
+          {showSearchBar && (
+            <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-semibold tracking-tight text-zinc-50 capitalize">
+                  {route.view}
+                </h2>
+                <p className="mt-0.5 text-xs text-zinc-500">
+                  {route.view === "albums" &&
+                    `${albums.length} ${albums.length === 1 ? "album" : "albums"}`}
+                  {route.view === "artists" &&
+                    `${artists.length} ${artists.length === 1 ? "artist" : "artists"}`}
+                  {route.view === "tracks" &&
+                    `${tracks.length} ${tracks.length === 1 ? "track" : "tracks"}`}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2.5">
+                <div className="relative w-64 sm:w-72">
+                  <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+                  <input
+                    type="search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder={`Filter ${route.view}…`}
+                    className="w-full rounded-lg border border-zinc-800 bg-zinc-900/80 py-2 pr-8 pl-9 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery("")}
+                      aria-label="Clear search"
+                      className="absolute top-1/2 right-2.5 -translate-y-1/2 text-zinc-500 hover:text-zinc-200"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => void handleScan(false)}
+                  disabled={scanStatus?.state === "running" || startingScan}
+                  title="Scan library for new or updated audio files"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-45"
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 ${scanStatus?.state === "running" ? "animate-spin text-amber-400" : ""}`}
+                  />
+                  <span className="hidden sm:inline">
+                    {scanStatus?.state === "running" ? "Scanning…" : "Scan"}
+                  </span>
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => void handleScan(false)}
-                disabled={isScanning || startingScan || !health?.musicDir.exists}
-                className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-3.5 py-2 text-sm font-medium text-zinc-950 transition hover:bg-amber-400 disabled:opacity-45"
-              >
-                <Play className="h-4 w-4" />
-                {isScanning ? "Scanning…" : "Scan Library"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleScan(true)}
-                disabled={isScanning || startingScan || !health?.musicDir.exists}
-                title="Re-read tags for all files even if unchanged"
-                className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-45"
-              >
-                <RotateCcw className="h-4 w-4" />
-                Full Rescan
-              </button>
-              <button
-                type="button"
-                onClick={() => void loadAll()}
-                disabled={loading}
-                className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
-              >
-                <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-                Refresh
-              </button>
-            </div>
-          </div>
+          )}
 
           {error && (
             <div className="mb-6 flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
@@ -220,221 +284,81 @@ export function App() {
             </div>
           )}
 
-          {health && (
-            <div className="space-y-6">
-              {/* Status summary cards */}
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium tracking-wider text-zinc-400 uppercase">
-                      API Server
-                    </span>
-                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                  </div>
-                  <p className="mt-3 text-xl font-semibold text-zinc-50">
-                    {health.status === "ok" ? "Online" : "Degraded"}
-                  </p>
-                  <p className="mt-1 text-xs text-zinc-500">Uptime: {health.uptimeSeconds}s</p>
-                </div>
+          {route.view === "albums" && (
+            <AlbumsView
+              albums={albums}
+              loading={loading}
+              searchQuery={searchQuery}
+              onSelectAlbum={(albumId) => setRoute({ view: "album-detail", albumId })}
+              onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
+              onGoToScanner={() => setRoute({ view: "system" })}
+            />
+          )}
 
-                <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium tracking-wider text-zinc-400 uppercase">
-                      SQLite Database
-                    </span>
-                    <Database
-                      className={`h-4 w-4 ${
-                        health.database.connected ? "text-emerald-400" : "text-red-400"
-                      }`}
-                    />
-                  </div>
-                  <p className="mt-3 text-xl font-semibold text-zinc-50">
-                    {health.database.connected ? "Connected" : "Error"}
-                  </p>
-                  <p className="mt-1 truncate text-xs text-zinc-500" title={health.database.path}>
-                    {health.database.path}
-                  </p>
-                </div>
+          {route.view === "album-detail" && (
+            <AlbumDetailView
+              albumId={route.albumId}
+              onBack={() => setRoute({ view: "albums" })}
+              onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
+            />
+          )}
 
-                <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium tracking-wider text-zinc-400 uppercase">
-                      Music Directory
-                    </span>
-                    <FolderOpen
-                      className={`h-4 w-4 ${
-                        health.musicDir.exists ? "text-emerald-400" : "text-amber-400"
-                      }`}
-                    />
-                  </div>
-                  <p className="mt-3 text-xl font-semibold text-zinc-50">
-                    {health.musicDir.exists ? "Ready" : "Not Found Yet"}
-                  </p>
-                  <p className="mt-1 truncate text-xs text-zinc-500" title={health.musicDir.path}>
-                    {health.musicDir.path}
-                  </p>
-                </div>
-              </div>
+          {route.view === "artists" && (
+            <ArtistsView
+              artists={artists}
+              loading={loading}
+              searchQuery={searchQuery}
+              onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
+              onGoToScanner={() => setRoute({ view: "system" })}
+            />
+          )}
 
-              {!health.musicDir.exists && (
-                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
-                  <p className="font-medium">Point MusicOrbit at a music folder to scan</p>
-                  <p className="mt-1 text-amber-200/80">
-                    Either drop a few audio files into{" "}
-                    <code className="rounded bg-zinc-900/80 px-1.5 py-0.5 text-xs">
-                      {health.musicDir.path}
-                    </code>{" "}
-                    or set <code className="rounded bg-zinc-900/80 px-1.5 py-0.5 text-xs">MUSIC_DIR</code>{" "}
-                    in <code className="rounded bg-zinc-900/80 px-1.5 py-0.5 text-xs">.env</code> and
-                    restart the API.
-                  </p>
-                </div>
-              )}
+          {route.view === "artist-detail" && (
+            <ArtistDetailView
+              artistId={route.artistId}
+              onBack={() => setRoute({ view: "artists" })}
+              onSelectAlbum={(albumId) => setRoute({ view: "album-detail", albumId })}
+              onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
+              onGoToScanner={() => setRoute({ view: "system" })}
+            />
+          )}
 
-              {/* Library counts & scan status */}
-              <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-medium text-zinc-200">Indexed Library</h3>
-                    <p className="mt-0.5 text-xs text-zinc-500">
-                      Supports FLAC, MP3, M4A, AAC, OGG, Opus, and WAV. Unchanged files are skipped
-                      automatically on re-scan.
-                    </p>
-                  </div>
-                  {scanStatus && scanStatus.state !== "idle" && (
-                    <span
-                      className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                        scanStatus.state === "running"
-                          ? "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30"
-                          : scanStatus.state === "completed"
-                            ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30"
-                            : "bg-red-500/15 text-red-300 ring-1 ring-red-500/30"
-                      }`}
-                    >
-                      Last scan: {scanStatus.state}
-                    </span>
-                  )}
-                </div>
+          {route.view === "tracks" && (
+            <TracksView
+              tracks={tracks}
+              loading={loading}
+              searchQuery={searchQuery}
+              onSelectAlbum={(albumId) => setRoute({ view: "album-detail", albumId })}
+              onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
+              onGoToScanner={() => setRoute({ view: "system" })}
+            />
+          )}
 
-                <div className="mt-5 grid grid-cols-3 gap-4 border-t border-zinc-800/80 pt-5">
-                  <div>
-                    <p className="text-2xl font-semibold text-zinc-50">{health.counts.artists}</p>
-                    <p className="text-xs text-zinc-400">Artists</p>
-                  </div>
-                  <div>
-                    <p className="text-2xl font-semibold text-zinc-50">{health.counts.albums}</p>
-                    <p className="text-xs text-zinc-400">Albums</p>
-                  </div>
-                  <div>
-                    <p className="text-2xl font-semibold text-zinc-50">{health.counts.tracks}</p>
-                    <p className="text-xs text-zinc-400">Tracks</p>
-                  </div>
-                </div>
-
-                {scanStatus && scanStatus.state !== "idle" && (
-                  <div className="mt-5 border-t border-zinc-800/80 pt-4">
-                    {isScanning && (
-                      <div className="mb-3">
-                        <div className="mb-1.5 flex justify-between text-xs text-zinc-400">
-                          <span>
-                            Scanning {scanStatus.filesProcessed} / {scanStatus.filesTotal} files
-                          </span>
-                          <span>{progressPct}%</span>
-                        </div>
-                        <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-800">
-                          <div
-                            className="h-full bg-amber-400 transition-all duration-200"
-                            style={{ width: `${progressPct}%` }}
-                          />
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-zinc-400">
-                      <span>
-                        Total files: <strong className="text-zinc-200">{scanStatus.filesTotal}</strong>
-                      </span>
-                      <span>
-                        Added: <strong className="text-emerald-400">{scanStatus.filesAdded}</strong>
-                      </span>
-                      <span>
-                        Updated: <strong className="text-amber-300">{scanStatus.filesUpdated}</strong>
-                      </span>
-                      <span>
-                        Skipped: <strong className="text-zinc-300">{scanStatus.filesSkipped}</strong>
-                      </span>
-                      <span>
-                        Removed: <strong className="text-zinc-300">{scanStatus.filesRemoved}</strong>
-                      </span>
-                    </div>
-
-                    {scanStatus.errors.length > 0 && (
-                      <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
-                        <p className="font-medium">
-                          Scan warnings/errors ({scanStatus.errors.length}):
-                        </p>
-                        <ul className="mt-1 list-disc space-y-0.5 pl-4 text-red-300/85">
-                          {scanStatus.errors.slice(0, 5).map((e, i) => (
-                            <li key={i}>{e}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Indexed metadata preview (Step 2 verification before Step 3 UI) */}
-              {tracks.length > 0 && (
-                <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
-                  <div className="mb-4 flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-medium text-zinc-200">
-                        Indexed Tracks Preview ({albums.length} albums)
-                      </h3>
-                      <p className="mt-0.5 text-xs text-zinc-500">
-                        Showing up to 25 indexed tracks. Full album grid &amp; audio playback arrive
-                        in Step 3.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-zinc-800 text-zinc-400">
-                          <th className="py-2 pr-3 font-medium">#</th>
-                          <th className="py-2 pr-3 font-medium">Title</th>
-                          <th className="py-2 pr-3 font-medium">Artist</th>
-                          <th className="py-2 pr-3 font-medium">Album</th>
-                          <th className="py-2 pr-3 font-medium">Format</th>
-                          <th className="py-2 text-right font-medium">Length</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-zinc-800/60">
-                        {tracks.map((track) => (
-                          <tr key={track.id} className="text-zinc-300">
-                            <td className="py-2 pr-3 text-zinc-500">
-                              {track.trackNumber ?? "—"}
-                            </td>
-                            <td className="py-2 pr-3 font-medium text-zinc-100">{track.title}</td>
-                            <td className="py-2 pr-3 text-zinc-400">{track.artistName}</td>
-                            <td className="py-2 pr-3 text-zinc-400">{track.albumTitle}</td>
-                            <td className="py-2 pr-3 text-zinc-500">{track.codec ?? "—"}</td>
-                            <td className="py-2 text-right text-zinc-400">
-                              {formatDuration(track.durationSeconds)}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
+          {route.view === "system" && (
+            <SystemView
+              health={health}
+              scanStatus={scanStatus}
+              loading={loading}
+              startingScan={startingScan}
+              onScan={(force) => void handleScan(force)}
+              onRefresh={() => void loadLibrary(searchQuery)}
+            />
           )}
         </div>
       </main>
+
+      <PlayerBar
+        onSelectAlbum={(albumId) => setRoute({ view: "album-detail", albumId })}
+        onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
+      />
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <PlayerProvider>
+      <MusicOrbitShell />
+    </PlayerProvider>
   );
 }

@@ -446,7 +446,7 @@ export class LibraryScanner {
         ? albumArtistId
         : this.upsertArtist(trackArtistName, null, now);
 
-    const year = common.year ?? null;
+    const year = common.year && common.year > 0 ? common.year : null;
     const genre = common.genre?.[0]?.trim() || null;
     const albumId = this.upsertAlbum(
       {

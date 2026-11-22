@@ -30,12 +30,15 @@ const listQuerySchema = z.object({
   q: z.string().trim().optional(),
   artistId: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
+  includeTrackOnly: z.coerce.boolean().optional(),
 });
 
 interface ArtistRow {
   id: number;
   name: string;
   sortName: string;
+  imageHash: string | null;
+  fallbackAlbumId: number | null;
   albumCount: number;
   trackCount: number;
 }
@@ -93,29 +96,52 @@ export async function registerLibraryRoutes(
     return scanner.getStatus();
   });
 
-  // List all artists with album & track counts
+  // List album artists (by default) with album & track counts.
+  // Passing ?includeTrackOnly=true also includes artists who only appear on individual tracks.
   app.get("/api/artists", async (request): Promise<ArtistSummary[]> => {
     const query = listQuerySchema.parse(request.query);
-    const search = query.q ? `%${query.q.toLowerCase()}%` : null;
+    const conditions: string[] = [];
+    const params: unknown[] = [];
 
+    if (!query.includeTrackOnly) {
+      conditions.push("EXISTS (SELECT 1 FROM albums al WHERE al.artist_id = ar.id)");
+    }
+    if (query.q) {
+      conditions.push("lower(ar.name) LIKE ?");
+      params.push(`%${query.q.toLowerCase()}%`);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const sql = `
       SELECT
         ar.id,
         ar.name,
         ar.sort_name AS sortName,
+        ar.image_hash AS imageHash,
+        (
+          SELECT al.id
+          FROM albums al
+          WHERE al.artist_id = ar.id AND al.cover_hash IS NOT NULL
+          ORDER BY COALESCE(al.year, 0) DESC, al.id ASC
+          LIMIT 1
+        ) AS fallbackAlbumId,
         (SELECT COUNT(*) FROM albums al WHERE al.artist_id = ar.id) AS albumCount,
-        (SELECT COUNT(*) FROM tracks t WHERE t.artist_id = ar.id) AS trackCount
+        (
+          SELECT COUNT(DISTINCT t.id)
+          FROM tracks t
+          JOIN albums al ON al.id = t.album_id
+          WHERE t.artist_id = ar.id OR al.artist_id = ar.id
+        ) AS trackCount
       FROM artists ar
-      ${search ? "WHERE lower(ar.name) LIKE ?" : ""}
+      ${whereClause}
       ORDER BY lower(ar.sort_name) ASC
     `;
 
-    const stmt = sqlite.prepare(sql);
-    const rows = (search ? stmt.all(search) : stmt.all()) as ArtistRow[];
+    const rows = sqlite.prepare(sql).all(...params) as ArtistRow[];
     return rows;
   });
 
-  // Artist detail + albums
+  // Artist detail + albums + tracks (so track-only / featured artists also display cleanly)
   app.get("/api/artists/:id", async (request, reply): Promise<ArtistDetailResponse> => {
     const parsed = idParamSchema.safeParse(request.params);
     if (!parsed.success) {
@@ -129,8 +155,21 @@ export async function registerLibraryRoutes(
           ar.id,
           ar.name,
           ar.sort_name AS sortName,
+          ar.image_hash AS imageHash,
+          (
+            SELECT al.id
+            FROM albums al
+            WHERE al.artist_id = ar.id AND al.cover_hash IS NOT NULL
+            ORDER BY COALESCE(al.year, 0) DESC, al.id ASC
+            LIMIT 1
+          ) AS fallbackAlbumId,
           (SELECT COUNT(*) FROM albums al WHERE al.artist_id = ar.id) AS albumCount,
-          (SELECT COUNT(*) FROM tracks t WHERE t.artist_id = ar.id) AS trackCount
+          (
+            SELECT COUNT(DISTINCT t.id)
+            FROM tracks t
+            JOIN albums al ON al.id = t.album_id
+            WHERE t.artist_id = ar.id OR al.artist_id = ar.id
+          ) AS trackCount
         FROM artists ar
         WHERE ar.id = ?
       `,
@@ -164,7 +203,33 @@ export async function registerLibraryRoutes(
       )
       .all(parsed.data.id) as AlbumRow[];
 
-    return { artist, albums: artistAlbums };
+    const artistTracks = sqlite
+      .prepare(
+        `
+        SELECT
+          t.id,
+          t.title,
+          t.album_id AS albumId,
+          al.title AS albumTitle,
+          t.artist_id AS artistId,
+          ar.name AS artistName,
+          t.track_number AS trackNumber,
+          t.disc_number AS discNumber,
+          t.duration_seconds AS durationSeconds,
+          t.codec,
+          t.bitrate,
+          t.sample_rate AS sampleRate,
+          t.file_path AS filePath
+        FROM tracks t
+        JOIN albums al ON al.id = t.album_id
+        JOIN artists ar ON ar.id = t.artist_id
+        WHERE t.artist_id = ? OR al.artist_id = ?
+        ORDER BY lower(al.title) ASC, COALESCE(t.disc_number, 1) ASC, COALESCE(t.track_number, 9999) ASC, lower(t.title) ASC
+      `,
+      )
+      .all(parsed.data.id, parsed.data.id) as TrackRow[];
+
+    return { artist, albums: artistAlbums, tracks: artistTracks };
   });
 
   // List albums with optional search (?q=) or artist filter (?artistId=)

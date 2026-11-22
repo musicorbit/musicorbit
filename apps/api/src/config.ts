@@ -16,6 +16,11 @@ if (fs.existsSync(rootEnvPath)) {
   dotenv.config();
 }
 
+const booleanFromEnv = z
+  .enum(["true", "false", "1", "0"])
+  .default("true")
+  .transform((v) => v === "true" || v === "1");
+
 const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3001),
   HOST: z.string().min(1).default("0.0.0.0"),
@@ -24,6 +29,7 @@ const envSchema = z.object({
     .default("info"),
   MUSIC_DIR: z.string().min(1).default("./sample-music"),
   DATA_DIR: z.string().min(1).default("./data"),
+  FETCH_ARTIST_IMAGES: booleanFromEnv,
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -44,6 +50,8 @@ export const config = {
   dataDir: resolveFromRoot(parsed.data.DATA_DIR),
   dbPath: path.join(resolveFromRoot(parsed.data.DATA_DIR), "musicorbit.db"),
   coversDir: path.join(resolveFromRoot(parsed.data.DATA_DIR), "covers"),
+  artistImagesDir: path.join(resolveFromRoot(parsed.data.DATA_DIR), "artist-images"),
+  fetchArtistImages: parsed.data.FETCH_ARTIST_IMAGES,
   version: "0.1.0",
 } as const;
 

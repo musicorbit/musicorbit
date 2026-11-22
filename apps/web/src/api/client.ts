@@ -1,5 +1,8 @@
 import type {
+  AlbumDetailResponse,
   AlbumSummary,
+  ArtistDetailResponse,
+  ArtistSummary,
   HealthResponse,
   ScanStatusResponse,
   TrackSummary,
@@ -39,10 +42,42 @@ export async function triggerScan(force = false): Promise<ScanStatusResponse> {
   return (await res.json()) as ScanStatusResponse;
 }
 
-export function fetchAlbums(): Promise<AlbumSummary[]> {
-  return getJson<AlbumSummary[]>("/api/albums");
+export function fetchArtists(q?: string): Promise<ArtistSummary[]> {
+  const params = new URLSearchParams();
+  if (q?.trim()) params.set("q", q.trim());
+  const qs = params.toString();
+  return getJson<ArtistSummary[]>(`/api/artists${qs ? `?${qs}` : ""}`);
 }
 
-export function fetchTracks(limit = 50): Promise<TrackSummary[]> {
-  return getJson<TrackSummary[]>(`/api/tracks?limit=${limit}`);
+export function fetchArtistDetail(id: number): Promise<ArtistDetailResponse> {
+  return getJson<ArtistDetailResponse>(`/api/artists/${id}`);
+}
+
+export function fetchAlbums(q?: string, artistId?: number): Promise<AlbumSummary[]> {
+  const params = new URLSearchParams();
+  if (q?.trim()) params.set("q", q.trim());
+  if (artistId !== undefined) params.set("artistId", String(artistId));
+  const qs = params.toString();
+  return getJson<AlbumSummary[]>(`/api/albums${qs ? `?${qs}` : ""}`);
+}
+
+export function fetchAlbumDetail(id: number): Promise<AlbumDetailResponse> {
+  return getJson<AlbumDetailResponse>(`/api/albums/${id}`);
+}
+
+export function fetchTracks(q?: string, limit = 200): Promise<TrackSummary[]> {
+  const params = new URLSearchParams();
+  if (q?.trim()) params.set("q", q.trim());
+  params.set("limit", String(limit));
+  return getJson<TrackSummary[]>(`/api/tracks?${params.toString()}`);
+}
+
+export function getTrackStreamUrl(trackId: number): string {
+  return `/api/tracks/${trackId}/stream`;
+}
+
+export function getAlbumCoverUrl(albumId: number, coverHash?: string | null): string | null {
+  if (!coverHash) return null;
+  // Appending the content hash as a cache-buster ensures updated covers reload immediately
+  return `/api/albums/${albumId}/cover?v=${encodeURIComponent(coverHash)}`;
 }

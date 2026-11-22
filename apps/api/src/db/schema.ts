@@ -8,6 +8,8 @@ export const artists = sqliteTable("artists", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull().unique(),
   sortName: text("sort_name").notNull(),
+  imageHash: text("image_hash"), // Cached portrait filename in DATA_DIR/artist-images
+  imageCheckedAt: integer("image_checked_at", { mode: "timestamp_ms" }),
   mbid: text("mbid"), // MusicBrainz Artist ID
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
