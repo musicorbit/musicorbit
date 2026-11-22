@@ -583,6 +583,55 @@ export function getPlaylistExportUrl(playlistId: number): string {
   return `/api/playlists/${playlistId}/export.m3u8`;
 }
 
+export function getPlaylistCoverUrl(playlistId: number, coverHash?: string | null): string {
+  return coverHash
+    ? `/api/playlists/${playlistId}/cover?v=${encodeURIComponent(coverHash)}`
+    : `/api/playlists/${playlistId}/cover`;
+}
+
+export async function uploadPlaylistCover(
+  playlistId: number,
+  file: File,
+): Promise<PlaylistSummary> {
+  const res = await fetch(`/api/playlists/${playlistId}/cover`, {
+    method: "PUT",
+    headers: { "Content-Type": file.type || "image/jpeg" },
+    body: file,
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not upload playlist cover (HTTP ${res.status})`);
+  }
+  return (await res.json()) as PlaylistSummary;
+}
+
+export async function setPlaylistCoverFromAlbum(
+  playlistId: number,
+  albumId: number,
+): Promise<PlaylistSummary> {
+  const res = await fetch(`/api/playlists/${playlistId}/cover/from-album`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ albumId }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not set playlist cover (HTTP ${res.status})`);
+  }
+  return (await res.json()) as PlaylistSummary;
+}
+
+export async function deletePlaylistCover(playlistId: number): Promise<PlaylistSummary> {
+  const res = await fetch(`/api/playlists/${playlistId}/cover`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not reset playlist cover (HTTP ${res.status})`);
+  }
+  return (await res.json()) as PlaylistSummary;
+}
+
 export function fetchAuthStatus(): Promise<AuthStatusResponse> {
   return getJson<AuthStatusResponse>("/api/auth/status");
 }

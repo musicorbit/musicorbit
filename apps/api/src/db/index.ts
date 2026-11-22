@@ -120,6 +120,7 @@ export function initDatabase(dbPath: string): DbContext {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
+      cover_hash TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -174,6 +175,7 @@ export function initDatabase(dbPath: string): DbContext {
   // Non-destructive upgrades for existing SQLite databases created before these columns existed
   ensureColumn(sqlite, "artists", "image_hash", "TEXT");
   ensureColumn(sqlite, "artists", "image_checked_at", "INTEGER");
+  ensureColumn(sqlite, "playlists", "cover_hash", "TEXT");
 
   const db = drizzle(sqlite, { schema });
   return { sqlite, db, dbPath };

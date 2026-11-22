@@ -2,7 +2,8 @@
 
 /*
  * Tailwind CSS v4 defaults buttons to cursor: default.
- * Restore pointer cursor globally for all enabled buttons (and not-allowed when disabled).
+ * Restore pointer cursor globally for all enabled buttons (and not-allowed when disabled),
+ * and provide a consistent, high-contrast keyboard focus ring via :focus-visible.
  */
 @layer base {
   button:not(:disabled),
@@ -13,5 +14,15 @@
   button:disabled,
   [role="button"][aria-disabled="true"] {
     cursor: not-allowed;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  [role="button"]:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid rgba(245, 158, 11, 0.8);
+    outline-offset: 2px;
   }
 }

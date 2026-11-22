@@ -134,6 +134,7 @@ export async function buildServer(
     dbContext,
     musicDir: config.musicDir,
     getMusicDir,
+    coversDir: config.coversDir,
     slskdClient,
     batchSearchService,
   });

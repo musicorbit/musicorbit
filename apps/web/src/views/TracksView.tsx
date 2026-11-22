@@ -92,7 +92,9 @@ export function TracksView({
                 />
                 <div
                   className={`absolute inset-0 flex items-center justify-center bg-zinc-950/60 transition ${
-                    active ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                    active
+                      ? "opacity-100"
+                      : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
                   }`}
                 >
                   {active && isPlaying ? (
@@ -151,7 +153,7 @@ export function TracksView({
                   }}
                   title="Edit metadata"
                   aria-label={`Edit metadata for ${track.title}`}
-                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
                 >
                   <Pencil className="h-3.5 w-3.5" />
                 </button>
@@ -163,7 +165,7 @@ export function TracksView({
                   }}
                   title="Add to playlist"
                   aria-label={`Add ${track.title} to playlist`}
-                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
                 >
                   <ListMusic className="h-4 w-4" />
                 </button>
@@ -175,7 +177,7 @@ export function TracksView({
                   }}
                   title="Add to queue"
                   aria-label={`Add ${track.title} to queue`}
-                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-zinc-100"
+                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-zinc-100"
                 >
                   <ListPlus className="h-4 w-4" />
                 </button>

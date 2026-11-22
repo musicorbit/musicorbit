@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowUp,
@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import type { BrowseDirectoriesResponse } from "@musicorbit/shared";
 import { browseServerDirectories, updateMusicDirectory } from "../api/client";
+import { useModalAccessibility } from "../hooks/useModalAccessibility";
 
 interface DirectoryPickerModalProps {
   initialPath: string;
@@ -22,12 +23,15 @@ export function DirectoryPickerModal({
   onClose,
   onSaved,
 }: DirectoryPickerModalProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const [data, setData] = useState<BrowseDirectoriesResponse | null>(null);
   const [pathInput, setPathInput] = useState(initialPath);
   const [scanNow, setScanNow] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useModalAccessibility(dialogRef, onClose);
 
   const loadPath = useCallback(async (target?: string) => {
     setLoading(true);
@@ -75,7 +79,12 @@ export function DirectoryPickerModal({
       onClick={onClose}
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Select Music Directory"
+        tabIndex={-1}
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">

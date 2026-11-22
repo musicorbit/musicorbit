@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Check, Disc3, Loader2, Search, Sparkles, X } from "lucide-react";
 import type {
   ApplyTaggingRequest,
@@ -6,6 +6,7 @@ import type {
   RetagTrackOverride,
 } from "@musicorbit/shared";
 import { fetchMusicBrainzRelease, searchMusicBrainz } from "../api/client";
+import { useModalAccessibility } from "../hooks/useModalAccessibility";
 
 export interface EditableTrackRow {
   filePath: string;
@@ -62,6 +63,9 @@ export function RetagAlbumModal({
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  useModalAccessibility(dialogRef, onClose);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -190,7 +194,12 @@ export function RetagAlbumModal({
       onClick={onClose}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={heading}
+        tabIndex={-1}
+        className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

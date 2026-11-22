@@ -7,6 +7,7 @@ import {
   selectArtistImageFromUrl,
   uploadArtistImage,
 } from "../api/client";
+import { useModalAccessibility } from "../hooks/useModalAccessibility";
 
 interface EditArtistImageModalProps {
   artistId: number;
@@ -29,10 +30,13 @@ export function EditArtistImageModal({
   onClose,
   onUpdated,
 }: EditArtistImageModalProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const [tab, setTab] = useState<"deezer" | "upload">("deezer");
   const [query, setQuery] = useState(artistName);
   const [candidates, setCandidates] = useState<ArtistImageCandidate[]>([]);
   const [searching, setSearching] = useState(false);
+
+  useModalAccessibility(dialogRef, onClose);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -149,7 +153,12 @@ export function EditArtistImageModal({
       onClick={onClose}
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Change Artist Picture"
+        tabIndex={-1}
+        className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -270,7 +279,7 @@ export function EditArtistImageModal({
                             </div>
                           )}
                         </div>
-                        <p className="mt-2.5 w-full truncate text-xs font-medium text-zinc-100 group-hover:text-amber-300">
+                        <p className="mt-2.5 w-full truncate text-xs font-medium text-zinc-100 group-hover:text-amber-300 group-focus-visible:text-amber-300">
                           {candidate.name}
                         </p>
                         <p className="mt-0.5 text-[11px] text-zinc-500">

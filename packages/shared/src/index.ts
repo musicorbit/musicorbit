@@ -399,6 +399,7 @@ export interface PlaylistSummary {
   missingCount: number;
   totalDurationSeconds: number;
   coverAlbumId: number | null;
+  coverHash: string | null;
   createdAt: string;
   updatedAt: string;
 }

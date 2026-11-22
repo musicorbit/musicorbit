@@ -1,3 +1,6 @@
+import crypto from "node:crypto";
+import fs from "node:fs";
+import fsp from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -21,10 +24,49 @@ import {
   type LocalLibraryTrack,
 } from "../services/playlistImport.js";
 
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+};
+
+const MAX_PLAYLIST_COVER_BYTES = 5 * 1024 * 1024;
+
+function detectImageExtension(bytes: Uint8Array): string | null {
+  if (bytes.length < 12) return null;
+  // JPEG: FF D8 FF
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "jpg";
+  // PNG: 89 50 4E 47
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return "png";
+  }
+  // GIF: GIF8
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
+    return "gif";
+  }
+  // WebP: RIFF....WEBP
+  if (
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return "webp";
+  }
+  return null;
+}
+
 export interface PlaylistRouteDeps {
   dbContext: DbContext;
   musicDir: string;
   getMusicDir?: () => string;
+  coversDir: string;
   slskdClient?: SlskdClient;
   batchSearchService?: PlaylistBatchSearchService;
 }
@@ -81,6 +123,10 @@ const downloadMissingCandidateBodySchema = z.object({
   size: z.number().int().min(0),
 });
 
+const coverFromAlbumBodySchema = z.object({
+  albumId: z.number().int().positive(),
+});
+
 interface PlaylistRow {
   id: number;
   name: string;
@@ -89,6 +135,7 @@ interface PlaylistRow {
   missingCount: number;
   totalDurationSeconds: number;
   coverAlbumId: number | null;
+  coverHash: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -128,6 +175,7 @@ function toPlaylistSummary(row: PlaylistRow): PlaylistSummary {
     missingCount: row.missingCount,
     totalDurationSeconds: row.totalDurationSeconds,
     coverAlbumId: row.coverAlbumId,
+    coverHash: row.coverHash,
     createdAt: new Date(row.createdAt).toISOString(),
     updatedAt: new Date(row.updatedAt).toISOString(),
   };
@@ -162,7 +210,7 @@ export async function registerPlaylistRoutes(
   app: FastifyInstance,
   deps: PlaylistRouteDeps,
 ): Promise<void> {
-  const { dbContext, slskdClient, batchSearchService } = deps;
+  const { dbContext, coversDir, slskdClient, batchSearchService } = deps;
   const getMusicDir = deps.getMusicDir ?? (() => deps.musicDir);
   const { sqlite } = dbContext;
 
@@ -174,6 +222,7 @@ export async function registerPlaylistRoutes(
           p.id,
           p.name,
           p.description,
+          p.cover_hash AS coverHash,
           p.created_at AS createdAt,
           p.updated_at AS updatedAt,
           COUNT(pt.id) AS trackCount,
@@ -275,6 +324,7 @@ export async function registerPlaylistRoutes(
           p.id,
           p.name,
           p.description,
+          p.cover_hash AS coverHash,
           p.created_at AS createdAt,
           p.updated_at AS updatedAt,
           COUNT(pt.id) AS trackCount,
@@ -802,5 +852,138 @@ export async function registerPlaylistRoutes(
       queued: true,
       missingTrackId: parsedParams.data.missingId,
     });
+  });
+
+  // Serve a playlist's custom cover image
+  app.get("/api/playlists/:id/cover", async (request, reply) => {
+    const parsed = idParamSchema.safeParse(request.params);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Invalid playlist ID" });
+    }
+
+    const row = sqlite
+      .prepare("SELECT cover_hash AS coverHash FROM playlists WHERE id = ?")
+      .get(parsed.data.id) as { coverHash: string | null } | undefined;
+
+    if (!row || !row.coverHash) {
+      return reply.code(404).send({ error: "Custom playlist cover not set" });
+    }
+
+    const safeFileName = path.basename(row.coverHash);
+    const fullPath = path.join(coversDir, safeFileName);
+    if (!fs.existsSync(fullPath)) {
+      return reply.code(404).send({ error: "Playlist cover file missing on disk" });
+    }
+
+    const ext = path.extname(safeFileName).toLowerCase();
+    reply.header("Content-Type", IMAGE_MIME_BY_EXT[ext] ?? "image/jpeg");
+    reply.header("Cache-Control", "public, max-age=31536000, immutable");
+    return reply.send(fs.createReadStream(fullPath));
+  });
+
+  // Upload a custom cover image for a playlist (raw image/* binary body up to 5 MB)
+  app.put("/api/playlists/:id/cover", async (request, reply): Promise<PlaylistSummary> => {
+    const parsed = idParamSchema.safeParse(request.params);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Invalid playlist ID" });
+    }
+
+    const existing = selectPlaylistSummary(parsed.data.id);
+    if (!existing) {
+      return reply.code(404).send({ error: "Playlist not found" });
+    }
+
+    const body = request.body;
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      return reply
+        .code(400)
+        .send({ error: "Expected raw image bytes with an image/* Content-Type." });
+    }
+
+    if (body.length > MAX_PLAYLIST_COVER_BYTES) {
+      return reply.code(400).send({ error: "Image exceeds the 5 MB size limit." });
+    }
+
+    const ext = detectImageExtension(body);
+    if (!ext) {
+      return reply
+        .code(400)
+        .send({ error: "Unsupported image format. Please upload a JPG, PNG, WebP, or GIF image." });
+    }
+
+    await fsp.mkdir(coversDir, { recursive: true });
+    const hash = crypto.createHash("sha256").update(body).digest("hex").slice(0, 16);
+    const fileName = `pl_${hash}.${ext}`;
+    const destPath = path.join(coversDir, fileName);
+    if (!fs.existsSync(destPath)) {
+      await fsp.writeFile(destPath, body);
+    }
+
+    const now = Date.now();
+    sqlite
+      .prepare("UPDATE playlists SET cover_hash = ?, updated_at = ? WHERE id = ?")
+      .run(fileName, now, parsed.data.id);
+
+    return selectPlaylistSummary(parsed.data.id)!;
+  });
+
+  // Set a playlist's cover image from an existing library album's artwork
+  app.post(
+    "/api/playlists/:id/cover/from-album",
+    async (request, reply): Promise<PlaylistSummary> => {
+      const parsedId = idParamSchema.safeParse(request.params);
+      if (!parsedId.success) {
+        return reply.code(400).send({ error: "Invalid playlist ID" });
+      }
+      const parsedBody = coverFromAlbumBodySchema.safeParse(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({ error: "Please provide a valid album ID." });
+      }
+
+      const existing = selectPlaylistSummary(parsedId.data.id);
+      if (!existing) {
+        return reply.code(404).send({ error: "Playlist not found" });
+      }
+
+      const albumRow = sqlite
+        .prepare("SELECT cover_hash AS coverHash FROM albums WHERE id = ?")
+        .get(parsedBody.data.albumId) as { coverHash: string | null } | undefined;
+
+      if (!albumRow || !albumRow.coverHash) {
+        return reply.code(404).send({ error: "That album does not have cover artwork." });
+      }
+
+      const safeAlbumCover = path.basename(albumRow.coverHash);
+      if (!fs.existsSync(path.join(coversDir, safeAlbumCover))) {
+        return reply.code(404).send({ error: "Album cover file not found on disk." });
+      }
+
+      const now = Date.now();
+      sqlite
+        .prepare("UPDATE playlists SET cover_hash = ?, updated_at = ? WHERE id = ?")
+        .run(safeAlbumCover, now, parsedId.data.id);
+
+      return selectPlaylistSummary(parsedId.data.id)!;
+    },
+  );
+
+  // Clear custom playlist cover (reverts to automatic first-track album artwork)
+  app.delete("/api/playlists/:id/cover", async (request, reply): Promise<PlaylistSummary> => {
+    const parsed = idParamSchema.safeParse(request.params);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Invalid playlist ID" });
+    }
+
+    const existing = selectPlaylistSummary(parsed.data.id);
+    if (!existing) {
+      return reply.code(404).send({ error: "Playlist not found" });
+    }
+
+    const now = Date.now();
+    sqlite
+      .prepare("UPDATE playlists SET cover_hash = NULL, updated_at = ? WHERE id = ?")
+      .run(now, parsed.data.id);
+
+    return selectPlaylistSummary(parsed.data.id)!;
   });
 }

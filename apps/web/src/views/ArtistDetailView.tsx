@@ -98,7 +98,7 @@ export function ArtistDetailView({
             className="h-24 w-24 shadow-lg"
             textClassName="text-3xl"
           />
-          <span className="absolute inset-0 flex flex-col items-center justify-center rounded-full bg-zinc-950/65 text-zinc-100 opacity-0 transition group-hover:opacity-100">
+          <span className="absolute inset-0 flex flex-col items-center justify-center rounded-full bg-zinc-950/65 text-zinc-100 opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100 group-focus-within:opacity-100">
             <Camera className="h-5 w-5" />
             <span className="mt-1 text-[10px] font-medium">Edit</span>
           </span>

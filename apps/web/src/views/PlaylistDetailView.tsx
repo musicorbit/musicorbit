@@ -4,10 +4,10 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  Camera,
   CheckCircle2,
   Clock,
   Download,
-  ListMusic,
   Loader2,
   Pause,
   Play,
@@ -39,6 +39,8 @@ import {
   startMissingTracksBatchSearch,
 } from "../api/client";
 import { AlbumCover } from "../components/AlbumCover";
+import { EditPlaylistCoverModal } from "../components/EditPlaylistCoverModal";
+import { PlaylistCover } from "../components/PlaylistCover";
 import { usePlayer } from "../context/PlayerContext";
 import { formatCodec, formatDuration, formatTotalDuration } from "../utils/format";
 
@@ -83,6 +85,7 @@ export function PlaylistDetailView({
   const [rechecking, setRechecking] = useState(false);
   const [batchError, setBatchError] = useState<string | null>(null);
   const [recheckNotice, setRecheckNotice] = useState<string | null>(null);
+  const [coverModalOpen, setCoverModalOpen] = useState(false);
   const { currentTrack, isPlaying, playQueue, togglePlay } = usePlayer();
 
   const load = useCallback(async () => {
@@ -314,18 +317,26 @@ export function PlaylistDetailView({
       </button>
 
       <div className="flex flex-col gap-6 sm:flex-row sm:items-end">
-        {playlist.coverAlbumId ? (
-          <AlbumCover
-            albumId={playlist.coverAlbumId}
+        <button
+          type="button"
+          onClick={() => setCoverModalOpen(true)}
+          title="Change playlist cover image"
+          aria-label={`Change cover image for ${playlist.name}`}
+          className="group relative h-44 w-44 shrink-0 overflow-hidden rounded-2xl shadow-xl focus:outline-none focus:ring-2 focus:ring-amber-500/70"
+        >
+          <PlaylistCover
+            playlistId={playlist.id}
+            coverHash={playlist.coverHash}
+            coverAlbumId={playlist.coverAlbumId}
             alt={playlist.name}
-            className="h-44 w-44 shrink-0 rounded-2xl shadow-xl"
+            className="h-44 w-44 rounded-2xl"
             iconClassName="h-14 w-14"
           />
-        ) : (
-          <div className="flex h-44 w-44 shrink-0 items-center justify-center rounded-2xl bg-zinc-900 text-zinc-600 ring-1 ring-zinc-800">
-            <ListMusic className="h-14 w-14" />
-          </div>
-        )}
+          <span className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/65 text-zinc-100 opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100 group-focus-within:opacity-100">
+            <Camera className="h-6 w-6" />
+            <span className="mt-1 text-xs font-medium">Edit Cover</span>
+          </span>
+        </button>
 
         <div className="min-w-0 flex-1 space-y-2">
           <p className="text-xs font-medium tracking-wider text-amber-400 uppercase">Playlist</p>
@@ -458,7 +469,7 @@ export function PlaylistDetailView({
                   {formatDuration(track.durationSeconds)}
                 </span>
 
-                <div className="flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
+                <div className="flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
                   <button
                     type="button"
                     disabled={idx === 0}
@@ -772,6 +783,17 @@ export function PlaylistDetailView({
             })}
           </div>
         </section>
+      )}
+      {coverModalOpen && (
+        <EditPlaylistCoverModal
+          playlist={playlist}
+          playlistTracks={tracks}
+          onClose={() => setCoverModalOpen(false)}
+          onUpdated={(updated) => {
+            setDetail((prev) => (prev ? { ...prev, playlist: updated } : prev));
+            onPlaylistsChanged();
+          }}
+        />
       )}
     </div>
   );

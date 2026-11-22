@@ -67,7 +67,7 @@ export function ArtistsView({
             textClassName="text-lg"
           />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-zinc-100 group-hover:text-amber-300">
+            <p className="truncate text-sm font-medium text-zinc-100 group-hover:text-amber-300 group-focus-visible:text-amber-300">
               {artist.name}
             </p>
             <p className="mt-0.5 text-xs text-zinc-500">

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   AlertCircle,
   ListMusic,
@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { usePlayer } from "../context/PlayerContext";
+import { useModalAccessibility } from "../hooks/useModalAccessibility";
 import { formatBitrate, formatCodec, formatDuration } from "../utils/format";
 import { AlbumCover } from "./AlbumCover";
 
@@ -52,6 +53,9 @@ export function PlayerBar({ onSelectAlbum, onSelectArtist }: PlayerBarProps) {
   } = usePlayer();
 
   const [queueOpen, setQueueOpen] = useState(false);
+  const queueDialogRef = useRef<HTMLDivElement | null>(null);
+
+  useModalAccessibility(queueDialogRef, () => setQueueOpen(false), queueOpen);
 
   if (!currentTrack) {
     return null;
@@ -64,7 +68,14 @@ export function PlayerBar({ onSelectAlbum, onSelectArtist }: PlayerBarProps) {
     <>
       {/* Slide-over Queue Drawer */}
       {queueOpen && (
-        <div className="fixed right-4 bottom-24 z-40 flex max-h-[65vh] w-96 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/95 shadow-2xl backdrop-blur-xl">
+        <div
+          ref={queueDialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Play Queue"
+          tabIndex={-1}
+          className="fixed right-4 bottom-24 z-40 flex max-h-[65vh] w-96 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/95 shadow-2xl backdrop-blur-xl focus:outline-none"
+        >
           <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
             <div>
               <h3 className="text-sm font-semibold text-zinc-100">Play Queue</h3>
@@ -131,7 +142,7 @@ export function PlayerBar({ onSelectAlbum, onSelectArtist }: PlayerBarProps) {
                     type="button"
                     onClick={() => removeFromQueue(idx)}
                     aria-label="Remove from queue"
-                    className="rounded p-1 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-red-400"
+                    className="rounded p-1 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-red-400"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>

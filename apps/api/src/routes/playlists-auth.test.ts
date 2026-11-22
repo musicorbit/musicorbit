@@ -228,4 +228,62 @@ describe("Playlists (M3U8) & Optional Auth", () => {
     assert.equal(goodLogin.statusCode, 200);
     assert.equal(goodLogin.json<AuthStatusResponse>().authenticated, true);
   });
+
+  it("uploads, serves, and resets a custom playlist cover image", async () => {
+    const createRes = await playlistHandle.app.inject({
+      method: "POST",
+      url: "/api/playlists",
+      payload: { name: "Cover Art Test" },
+    });
+    assert.equal(createRes.statusCode, 201);
+    const created = createRes.json<PlaylistSummary>();
+    assert.equal(created.coverHash, null);
+
+    // Reject non-image bytes
+    const badRes = await playlistHandle.app.inject({
+      method: "PUT",
+      url: `/api/playlists/${created.id}/cover`,
+      headers: { "content-type": "image/png" },
+      payload: Buffer.from("not-a-real-image-at-all"),
+    });
+    assert.equal(badRes.statusCode, 400);
+
+    // Valid minimal PNG header + bytes
+    const fakePng = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.alloc(32, 0x01),
+    ]);
+    const uploadRes = await playlistHandle.app.inject({
+      method: "PUT",
+      url: `/api/playlists/${created.id}/cover`,
+      headers: { "content-type": "image/png" },
+      payload: fakePng,
+    });
+    assert.equal(uploadRes.statusCode, 200);
+    const updated = uploadRes.json<PlaylistSummary>();
+    assert.ok(updated.coverHash?.endsWith(".png"));
+
+    // Serve uploaded cover
+    const getCover = await playlistHandle.app.inject({
+      method: "GET",
+      url: `/api/playlists/${created.id}/cover`,
+    });
+    assert.equal(getCover.statusCode, 200);
+    assert.equal(getCover.headers["content-type"], "image/png");
+    assert.deepEqual(getCover.rawPayload, fakePng);
+
+    // Reset cover back to null
+    const delCover = await playlistHandle.app.inject({
+      method: "DELETE",
+      url: `/api/playlists/${created.id}/cover`,
+    });
+    assert.equal(delCover.statusCode, 200);
+    assert.equal(delCover.json<PlaylistSummary>().coverHash, null);
+
+    const missingAfterReset = await playlistHandle.app.inject({
+      method: "GET",
+      url: `/api/playlists/${created.id}/cover`,
+    });
+    assert.equal(missingAfterReset.statusCode, 404);
+  });
 });

@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type { ImportM3u8Response, PlaylistImportFormat } from "@musicorbit/shared";
 import { importPlaylistFile } from "../api/client";
+import { useModalAccessibility } from "../hooks/useModalAccessibility";
 
 interface ImportPlaylistModalProps {
   onClose: () => void;
@@ -18,6 +19,7 @@ interface ImportPlaylistModalProps {
 }
 
 export function ImportPlaylistModal({ onClose, onImported }: ImportPlaylistModalProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [playlistName, setPlaylistName] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
@@ -25,6 +27,8 @@ export function ImportPlaylistModal({ onClose, onImported }: ImportPlaylistModal
   const [content, setContent] = useState<string>("");
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useModalAccessibility(dialogRef, onClose);
 
   const handleFileSelected = async (file: File | null) => {
     if (!file) return;
@@ -68,7 +72,12 @@ export function ImportPlaylistModal({ onClose, onImported }: ImportPlaylistModal
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Import Playlist"
+        tabIndex={-1}
+        className="w-full max-w-lg overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
@@ -131,6 +140,7 @@ export function ImportPlaylistModal({ onClose, onImported }: ImportPlaylistModal
 
             <button
               type="button"
+              data-autofocus
               onClick={() => fileInputRef.current?.click()}
               className="flex w-full flex-col items-center justify-center rounded-xl border border-dashed border-zinc-700 bg-zinc-950/60 px-4 py-7 text-center transition hover:border-amber-500/60 hover:bg-zinc-950"
             >

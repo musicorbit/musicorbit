@@ -2,8 +2,8 @@ import { useState } from "react";
 import { AlertTriangle, ListMusic, Play, Plus, Upload } from "lucide-react";
 import type { ImportM3u8Response, PlaylistSummary } from "@musicorbit/shared";
 import { createPlaylist, fetchPlaylistDetail } from "../api/client";
-import { AlbumCover } from "../components/AlbumCover";
 import { ImportPlaylistModal } from "../components/ImportPlaylistModal";
+import { PlaylistCover } from "../components/PlaylistCover";
 import { usePlayer } from "../context/PlayerContext";
 import { formatTotalDuration } from "../utils/format";
 
@@ -176,25 +176,21 @@ export function PlaylistsView({
               className="group flex flex-col rounded-xl border border-transparent bg-zinc-900/40 p-3 transition hover:border-zinc-800 hover:bg-zinc-900/80"
             >
               <div className="relative overflow-hidden rounded-lg">
-                {pl.coverAlbumId ? (
-                  <AlbumCover
-                    albumId={pl.coverAlbumId}
-                    alt={pl.name}
-                    className="aspect-square w-full rounded-lg"
-                    iconClassName="h-12 w-12"
-                  />
-                ) : (
-                  <div className="flex aspect-square w-full items-center justify-center rounded-lg bg-gradient-to-br from-zinc-800 to-zinc-900 text-zinc-600 ring-1 ring-inset ring-zinc-700/50">
-                    <ListMusic className="h-12 w-12" />
-                  </div>
-                )}
+                <PlaylistCover
+                  playlistId={pl.id}
+                  coverHash={pl.coverHash}
+                  coverAlbumId={pl.coverAlbumId}
+                  alt={pl.name}
+                  className="aspect-square w-full rounded-lg"
+                  iconClassName="h-12 w-12"
+                />
 
                 {pl.trackCount > 0 && (
                   <button
                     type="button"
                     onClick={(e) => void handleQuickPlay(e, pl.id)}
                     aria-label={`Play ${pl.name}`}
-                    className="absolute right-2.5 bottom-2.5 flex h-10 w-10 translate-y-2 items-center justify-center rounded-full bg-amber-500 text-zinc-950 opacity-0 shadow-lg transition duration-200 group-hover:translate-y-0 group-hover:opacity-100 hover:scale-105 hover:bg-amber-400"
+                    className="absolute right-2.5 bottom-2.5 flex h-10 w-10 translate-y-2 items-center justify-center rounded-full bg-amber-500 text-zinc-950 opacity-0 shadow-lg transition duration-200 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100 focus-visible:translate-y-0 focus-visible:opacity-100 hover:scale-105 hover:bg-amber-400"
                   >
                     <Play className="ml-0.5 h-4 w-4 fill-current" />
                   </button>
@@ -202,7 +198,7 @@ export function PlaylistsView({
               </div>
 
               <div className="mt-3 min-w-0">
-                <p className="truncate text-sm font-medium text-zinc-100 group-hover:text-amber-300">
+                <p className="truncate text-sm font-medium text-zinc-100 group-hover:text-amber-300 group-focus-within:text-amber-300">
                   {pl.name}
                 </p>
                 {pl.description && (

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, ListMusic, Loader2, Plus, X } from "lucide-react";
 import type { PlaylistSummary, TrackSummary } from "@musicorbit/shared";
 import { addTracksToPlaylist, createPlaylist, fetchPlaylists } from "../api/client";
+import { useModalAccessibility } from "../hooks/useModalAccessibility";
 
 interface AddToPlaylistModalProps {
   track: TrackSummary;
@@ -10,12 +11,15 @@ interface AddToPlaylistModalProps {
 }
 
 export function AddToPlaylistModal({ track, onClose, onChanged }: AddToPlaylistModalProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState("");
   const [busyId, setBusyId] = useState<number | "new" | null>(null);
   const [addedId, setAddedId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useModalAccessibility(dialogRef, onClose);
 
   useEffect(() => {
     void fetchPlaylists()
@@ -64,7 +68,12 @@ export function AddToPlaylistModal({ track, onClose, onChanged }: AddToPlaylistM
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Add to Playlist"
+        tabIndex={-1}
+        className="w-full max-w-md overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">

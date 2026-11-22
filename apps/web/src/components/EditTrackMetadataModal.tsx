@@ -19,6 +19,7 @@ import {
   updateTrackMetadata,
   uploadTrackCover,
 } from "../api/client";
+import { useModalAccessibility } from "../hooks/useModalAccessibility";
 import { formatBitrate, formatBytes, formatCodec, formatDuration } from "../utils/format";
 import { AlbumCover } from "./AlbumCover";
 import { MetadataFetchPanel } from "./MetadataFetchPanel";
@@ -52,7 +53,10 @@ export function EditTrackMetadataModal({
   const [pendingCoverUrl, setPendingCoverUrl] = useState<string | null>(null);
   const [appliedNotice, setAppliedNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useModalAccessibility(dialogRef, onClose);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,7 +157,12 @@ export function EditTrackMetadataModal({
       onClick={onClose}
     >
       <div
-        className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Edit Track Metadata"
+        tabIndex={-1}
+        className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl focus:outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

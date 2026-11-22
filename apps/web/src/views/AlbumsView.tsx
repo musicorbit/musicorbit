@@ -97,21 +97,21 @@ export function AlbumsView({
               albumId={album.id}
               coverHash={album.coverHash}
               alt={album.title}
-              className="aspect-square w-full rounded-lg transition duration-300 group-hover:scale-[1.02]"
+              className="aspect-square w-full rounded-lg transition duration-300 group-hover:scale-[1.02] group-focus-within:scale-[1.02]"
               iconClassName="h-12 w-12"
             />
             <button
               type="button"
               onClick={(e) => void handleQuickPlay(e, album.id)}
               aria-label={`Play ${album.title}`}
-              className="absolute right-2.5 bottom-2.5 flex h-10 w-10 translate-y-2 items-center justify-center rounded-full bg-amber-500 text-zinc-950 opacity-0 shadow-lg transition duration-200 group-hover:translate-y-0 group-hover:opacity-100 hover:scale-105 hover:bg-amber-400"
+              className="absolute right-2.5 bottom-2.5 flex h-10 w-10 translate-y-2 items-center justify-center rounded-full bg-amber-500 text-zinc-950 opacity-0 shadow-lg transition duration-200 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100 focus-visible:translate-y-0 focus-visible:opacity-100 hover:scale-105 hover:bg-amber-400"
             >
               <Play className="ml-0.5 h-4 w-4 fill-current" />
             </button>
           </div>
 
           <div className="mt-3 min-w-0">
-            <p className="truncate text-sm font-medium text-zinc-100 group-hover:text-amber-300">
+            <p className="truncate text-sm font-medium text-zinc-100 group-hover:text-amber-300 group-focus-within:text-amber-300">
               {album.title}
             </p>
             <div className="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-400">

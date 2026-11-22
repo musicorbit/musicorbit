@@ -182,10 +182,10 @@ export function AlbumDetailView({
                     <Pause className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
                   ) : (
                     <>
-                      <span className="group-hover:hidden">
+                      <span className="group-hover:hidden group-focus-within:hidden">
                         {track.trackNumber ?? idx + 1}
                       </span>
-                      <Play className="hidden h-3.5 w-3.5 fill-zinc-100 text-zinc-100 group-hover:block" />
+                      <Play className="hidden h-3.5 w-3.5 fill-zinc-100 text-zinc-100 group-hover:block group-focus-within:block" />
                     </>
                   )}
                 </div>
@@ -220,7 +220,7 @@ export function AlbumDetailView({
                     }}
                     title="Edit track metadata"
                     aria-label={`Edit metadata for ${track.title}`}
-                    className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                    className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
                   >
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
@@ -232,7 +232,7 @@ export function AlbumDetailView({
                     }}
                     title="Add to playlist"
                     aria-label={`Add ${track.title} to playlist`}
-                    className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                    className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
                   >
                     <ListMusic className="h-4 w-4" />
                   </button>
@@ -244,7 +244,7 @@ export function AlbumDetailView({
                     }}
                     title="Add to queue"
                     aria-label={`Add ${track.title} to queue`}
-                    className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-zinc-100"
+                    className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-zinc-100"
                   >
                     <ListPlus className="h-4 w-4" />
                   </button>
