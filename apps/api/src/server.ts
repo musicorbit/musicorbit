@@ -11,6 +11,7 @@ import { registerMetadataRoutes } from "./routes/metadata.js";
 import { SlskdClient } from "./services/acquisition/slskd.js";
 import { ArtistImageService } from "./services/artistImages.js";
 import { LibraryImporter } from "./services/importer.js";
+import { MetadataLookupService } from "./services/metadataLookup.js";
 import { MusicBrainzClient } from "./services/musicbrainz.js";
 import { LibraryScanner } from "./services/scanner.js";
 
@@ -70,6 +71,10 @@ export async function buildServer(
     fetchImpl: options?.fetchImpl,
     rateLimitMs: options?.musicBrainzRateLimitMs,
   });
+  const metadataLookup = new MetadataLookupService({
+    fetchImpl: options?.fetchImpl,
+    mbRateLimitMs: options?.musicBrainzRateLimitMs,
+  });
   const importer = new LibraryImporter({
     dbContext,
     musicDir: config.musicDir,
@@ -90,7 +95,12 @@ export async function buildServer(
   });
   await registerAcquisitionRoutes(app, { slskdClient });
   await registerImportRoutes(app, { importer, musicBrainz });
-  await registerMetadataRoutes(app, { dbContext, scanner });
+  await registerMetadataRoutes(app, {
+    dbContext,
+    scanner,
+    metadataLookup,
+    fetchImpl: options?.fetchImpl,
+  });
 
   // Cleanly close SQLite when Fastify shuts down
   app.addHook("onClose", async () => {

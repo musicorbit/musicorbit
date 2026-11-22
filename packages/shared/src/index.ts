@@ -376,3 +376,14 @@ export interface TrackMetadataResponse {
   embeddedCoverMime: string | null;
   embeddedCoverSizeBytes: number | null;
 }
+
+export type MetadataProvider = "deezer" | "musicbrainz" | "lrclib";
+
+export interface TrackMetadataSuggestion {
+  id: string;
+  provider: MetadataProvider;
+  title: string;
+  subtitle: string;
+  coverArtUrl: string | null;
+  fields: Partial<EditableTrackTags>;
+}

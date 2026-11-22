@@ -15,6 +15,7 @@ import type {
   ImportItemStatus,
   ImportsListResponse,
   InboxScanResult,
+  MetadataProvider,
   MusicBrainzReleaseCandidate,
   MusicBrainzReleaseDetail,
   RetagAlbumResponse,
@@ -22,6 +23,7 @@ import type {
   SoulseekSearchResultsResponse,
   SoulseekSearchSummary,
   TrackMetadataResponse,
+  TrackMetadataSuggestion,
   TrackSummary,
 } from "@musicorbit/shared";
 
@@ -338,6 +340,35 @@ export async function deleteTrackCover(trackId: number): Promise<TrackMetadataRe
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ?? `Failed to remove embedded cover art (HTTP ${res.status})`);
+  }
+  return (await res.json()) as TrackMetadataResponse;
+}
+
+export function lookupTrackMetadata(
+  trackId: number,
+  params: { provider: MetadataProvider; title?: string; artist?: string; album?: string },
+): Promise<TrackMetadataSuggestion[]> {
+  const sp = new URLSearchParams({ provider: params.provider });
+  if (params.title?.trim()) sp.set("title", params.title.trim());
+  if (params.artist?.trim()) sp.set("artist", params.artist.trim());
+  if (params.album?.trim()) sp.set("album", params.album.trim());
+  return getJson<TrackMetadataSuggestion[]>(
+    `/api/tracks/${trackId}/metadata/lookup?${sp.toString()}`,
+  );
+}
+
+export async function embedTrackCoverFromUrl(
+  trackId: number,
+  imageUrl: string,
+): Promise<TrackMetadataResponse> {
+  const res = await fetch(`/api/tracks/${trackId}/cover/from-url`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ imageUrl }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Failed to embed remote cover art (HTTP ${res.status})`);
   }
   return (await res.json()) as TrackMetadataResponse;
 }

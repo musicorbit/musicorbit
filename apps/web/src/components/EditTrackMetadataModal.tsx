@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Loader2,
   SlidersHorizontal,
+  Sparkles,
   Trash2,
   Upload,
   X,
@@ -13,12 +14,14 @@ import {
 import type { EditableTrackTags, TrackMetadataResponse } from "@musicorbit/shared";
 import {
   deleteTrackCover,
+  embedTrackCoverFromUrl,
   fetchTrackMetadata,
   updateTrackMetadata,
   uploadTrackCover,
 } from "../api/client";
 import { formatBitrate, formatBytes, formatCodec, formatDuration } from "../utils/format";
 import { AlbumCover } from "./AlbumCover";
+import { MetadataFetchPanel } from "./MetadataFetchPanel";
 
 interface EditTrackMetadataModalProps {
   trackId: number;
@@ -45,6 +48,9 @@ export function EditTrackMetadataModal({
   const [coverBusy, setCoverBusy] = useState(false);
   const [coverVersion, setCoverVersion] = useState(0);
   const [showMbIds, setShowMbIds] = useState(false);
+  const [fetchOpen, setFetchOpen] = useState(false);
+  const [pendingCoverUrl, setPendingCoverUrl] = useState<string | null>(null);
+  const [appliedNotice, setAppliedNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -94,7 +100,11 @@ export function EditTrackMetadataModal({
     setSaving(true);
     setError(null);
     try {
-      const updated = await updateTrackMetadata(trackId, form);
+      let updated = await updateTrackMetadata(trackId, form);
+      if (pendingCoverUrl) {
+        updated = await embedTrackCoverFromUrl(trackId, pendingCoverUrl);
+        setPendingCoverUrl(null);
+      }
       setMeta(updated);
       setForm(updated.tags);
       onSaved();
@@ -159,14 +169,30 @@ export function EditTrackMetadataModal({
               </p>
             )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close metadata editor"
-            className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            {form && (
+              <button
+                type="button"
+                onClick={() => setFetchOpen((v) => !v)}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                  fetchOpen
+                    ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
+                    : "border border-zinc-700 bg-zinc-800/80 text-zinc-100 hover:bg-zinc-800"
+                }`}
+              >
+                <Sparkles className="h-3.5 w-3.5 text-amber-400" />
+                Fetch Metadata
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close metadata editor"
+              className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -185,6 +211,48 @@ export function EditTrackMetadataModal({
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
                   <span>{error}</span>
                 </div>
+              )}
+
+              {appliedNotice && (
+                <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-2.5 text-xs text-emerald-200">
+                  <span>{appliedNotice}</span>
+                  <button
+                    type="button"
+                    onClick={() => setAppliedNotice(null)}
+                    className="text-emerald-300/70 hover:text-emerald-100"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {fetchOpen && (
+                <MetadataFetchPanel
+                  trackId={trackId}
+                  currentTags={form}
+                  onClose={() => setFetchOpen(false)}
+                  onApplyFields={(patch, selectedCoverUrl, appliedKeys) => {
+                    setForm((prev) => (prev ? { ...prev, ...patch } : prev));
+                    if (selectedCoverUrl) {
+                      setPendingCoverUrl(selectedCoverUrl);
+                    }
+                    const parts: string[] = [];
+                    if (appliedKeys.length > 0) {
+                      parts.push(
+                        `Applied ${appliedKeys.length} ${appliedKeys.length === 1 ? "field" : "fields"}`,
+                      );
+                    }
+                    if (selectedCoverUrl) {
+                      parts.push("queued new cover art");
+                    }
+                    if (parts.length > 0) {
+                      setAppliedNotice(
+                        `${parts.join(" and ")} — review below and click Save Metadata to write to the file.`,
+                      );
+                    }
+                    setFetchOpen(false);
+                  }}
+                />
               )}
 
               {/* Cover Art & Technical File Summary */}
