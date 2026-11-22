@@ -11,7 +11,7 @@ export interface DbContext {
 }
 
 /**
- * Opens the SQLite database in WAL mode and ensures initial tables exist.
+ * Opens the SQLite database in WAL mode and ensures tables exist.
  *
  * Self-hosted apps should boot cleanly on an empty DATA_DIR without requiring
  * users to manually run database migration commands.
@@ -64,6 +64,20 @@ export function initDatabase(dbPath: string): DbContext {
       mbid TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS scan_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      status TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER,
+      files_total INTEGER NOT NULL DEFAULT 0,
+      files_processed INTEGER NOT NULL DEFAULT 0,
+      files_added INTEGER NOT NULL DEFAULT 0,
+      files_updated INTEGER NOT NULL DEFAULT 0,
+      files_skipped INTEGER NOT NULL DEFAULT 0,
+      files_removed INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON albums(artist_id);

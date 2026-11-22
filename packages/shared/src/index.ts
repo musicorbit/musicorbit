@@ -29,7 +29,30 @@ export interface HealthResponse {
 }
 
 /**
- * Core library domain types (populated in Step 2 by the library scanner).
+ * Library scan job progress & history.
+ */
+export type ScanState = "idle" | "running" | "completed" | "failed";
+
+export interface ScanStatusResponse {
+  state: ScanState;
+  jobId: number | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  filesTotal: number;
+  filesProcessed: number;
+  filesAdded: number;
+  filesUpdated: number;
+  filesSkipped: number;
+  filesRemoved: number;
+  errors: string[];
+}
+
+export interface TriggerScanRequest {
+  force?: boolean;
+}
+
+/**
+ * Core library domain types.
  */
 export interface ArtistSummary {
   id: number;
@@ -45,18 +68,34 @@ export interface AlbumSummary {
   artistId: number;
   artistName: string;
   year: number | null;
+  genre: string | null;
   coverHash: string | null;
   trackCount: number;
+  totalDurationSeconds: number;
 }
 
 export interface TrackSummary {
   id: number;
   title: string;
   albumId: number;
+  albumTitle: string;
   artistId: number;
+  artistName: string;
   trackNumber: number | null;
   discNumber: number | null;
   durationSeconds: number | null;
   codec: string | null;
   bitrate: number | null;
+  sampleRate: number | null;
+  filePath: string;
+}
+
+export interface AlbumDetailResponse {
+  album: AlbumSummary;
+  tracks: TrackSummary[];
+}
+
+export interface ArtistDetailResponse {
+  artist: ArtistSummary;
+  albums: AlbumSummary[];
 }

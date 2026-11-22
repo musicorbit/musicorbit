@@ -43,6 +43,7 @@ export const config = {
   musicDir: resolveFromRoot(parsed.data.MUSIC_DIR),
   dataDir: resolveFromRoot(parsed.data.DATA_DIR),
   dbPath: path.join(resolveFromRoot(parsed.data.DATA_DIR), "musicorbit.db"),
+  coversDir: path.join(resolveFromRoot(parsed.data.DATA_DIR), "covers"),
   version: "0.1.0",
 } as const;
 
