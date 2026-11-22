@@ -1,0 +1,49 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import dotenv from "dotenv";
+import { z } from "zod";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// Repo root is three levels up from apps/api/src/config.ts
+const REPO_ROOT = path.resolve(__dirname, "../../..");
+
+// Load .env from repo root if present (Docker/production can also inject env vars directly)
+const rootEnvPath = path.join(REPO_ROOT, ".env");
+if (fs.existsSync(rootEnvPath)) {
+  dotenv.config({ path: rootEnvPath });
+} else {
+  dotenv.config();
+}
+
+const envSchema = z.object({
+  PORT: z.coerce.number().int().min(1).max(65535).default(3001),
+  HOST: z.string().min(1).default("0.0.0.0"),
+  LOG_LEVEL: z
+    .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
+    .default("info"),
+  MUSIC_DIR: z.string().min(1).default("./sample-music"),
+  DATA_DIR: z.string().min(1).default("./data"),
+});
+
+const parsed = envSchema.safeParse(process.env);
+if (!parsed.success) {
+  console.error("Invalid environment configuration:", parsed.error.flatten().fieldErrors);
+  process.exit(1);
+}
+
+function resolveFromRoot(p: string): string {
+  return path.isAbsolute(p) ? p : path.resolve(REPO_ROOT, p);
+}
+
+export const config = {
+  port: parsed.data.PORT,
+  host: parsed.data.HOST,
+  logLevel: parsed.data.LOG_LEVEL,
+  musicDir: resolveFromRoot(parsed.data.MUSIC_DIR),
+  dataDir: resolveFromRoot(parsed.data.DATA_DIR),
+  dbPath: path.join(resolveFromRoot(parsed.data.DATA_DIR), "musicorbit.db"),
+  version: "0.1.0",
+} as const;
+
+export type AppConfig = typeof config;

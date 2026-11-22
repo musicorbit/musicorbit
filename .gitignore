@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+*.tsbuildinfo
+
+# Local environment & runtime data
+.env
+.env.local
+data/
+sample-music/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite*
+
+# Logs & OS files
+*.log
+.DS_Store
+Thumbs.db

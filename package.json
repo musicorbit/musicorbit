@@ -1,0 +1,26 @@
+{
+  "name": "musicorbit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted, open-source music library, browser player, and acquisition hub.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run build -w @musicorbit/shared && concurrently -n api,web -c cyan,magenta \"npm run dev -w @musicorbit/api\" \"npm run dev -w @musicorbit/web\"",
+    "dev:api": "npm run build -w @musicorbit/shared && npm run dev -w @musicorbit/api",
+    "dev:web": "npm run build -w @musicorbit/shared && npm run dev -w @musicorbit/web",
+    "build": "npm run build -w @musicorbit/shared && npm run build -w @musicorbit/api && npm run build -w @musicorbit/web",
+    "typecheck": "npm run build -w @musicorbit/shared && npm run typecheck -w @musicorbit/api && npm run typecheck -w @musicorbit/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.8.2"
+  }
+}
