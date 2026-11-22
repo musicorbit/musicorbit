@@ -3,11 +3,38 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { FastifyBaseLogger } from "fastify";
+import type { ArtistImageCandidate } from "@musicorbit/shared";
 import type { DbContext } from "../db/index.js";
 
 const RETRY_MISS_AFTER_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB safety limit
+export const MAX_ARTIST_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB safety limit
 const SKIPPED_ARTIST_NAMES = new Set(["unknown artist", "various artists", "va"]);
+const ALLOWED_UPLOAD_MIMES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"]);
+
+export class ArtistImageValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ArtistImageValidationError";
+  }
+}
+
+/**
+ * SSRF guard: only allow downloading portraits from official Deezer image CDN hosts
+ * over HTTPS (no localhost, private IPs, or arbitrary user-controlled hosts).
+ */
+export function isAllowedRemoteImageUrl(rawUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:") return false;
+  if (parsed.username || parsed.password) return false;
+  if (parsed.port && parsed.port !== "443") return false;
+  const host = parsed.hostname.toLowerCase();
+  return host === "dzcdn.net" || host.endsWith(".dzcdn.net");
+}
 
 interface DeezerArtistResult {
   id?: number;
@@ -301,19 +328,11 @@ export class ArtistImageService {
 
       const arrayBuffer = await imgRes.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
-      if (bytes.byteLength === 0 || bytes.byteLength > MAX_IMAGE_BYTES) {
+      if (bytes.byteLength === 0 || bytes.byteLength > MAX_ARTIST_IMAGE_BYTES) {
         return null;
       }
 
-      await fsp.mkdir(this.artistImagesDir, { recursive: true });
-      const hash = crypto.createHash("sha256").update(bytes).digest("hex").slice(0, 16);
-      const fileName = `${hash}.${extensionForMime(contentType)}`;
-      const dest = path.join(this.artistImagesDir, fileName);
-
-      if (!fs.existsSync(dest)) {
-        await fsp.writeFile(dest, bytes);
-      }
-
+      const fileName = await this.writeCachedBytes(bytes, contentType);
       this.markChecked(artistId, fileName, nowMs);
       this.logger?.info({ artistName, fileName }, "Cached artist portrait");
       return fileName;
@@ -322,6 +341,126 @@ export class ArtistImageService {
       this.logger?.debug({ err, artistName }, "Could not fetch artist portrait");
       return null;
     }
+  }
+
+  /**
+   * Searches Deezer for candidate artist portraits so the user can manually choose
+   * the exact right photo when automatic matching hits an edge case.
+   */
+  async searchCandidates(query: string): Promise<ArtistImageCandidate[]> {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+
+    const url = `https://api.deezer.com/search/artist?q=${encodeURIComponent(trimmed)}&limit=12`;
+    const payload = await this.fetchJson<DeezerArtistSearchResponse>(url);
+    const items = payload?.data ?? [];
+
+    const results: ArtistImageCandidate[] = [];
+    const seen = new Set<string>();
+
+    for (const item of items) {
+      const imageUrl = pickArtistPictureUrl(item);
+      if (!imageUrl || !item.name) continue;
+      const key = String(item.id ?? `${item.name}:${imageUrl}`);
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const previewUrl =
+        (isUsableImageUrl(item.picture_medium) ? item.picture_medium : null) ?? imageUrl;
+
+      results.push({
+        id: String(item.id ?? key),
+        name: item.name,
+        fans: item.nb_fan ?? 0,
+        previewUrl,
+        imageUrl,
+      });
+    }
+
+    results.sort((a, b) => b.fans - a.fans);
+    return results;
+  }
+
+  /**
+   * Validates and stores a user-uploaded portrait image for an artist.
+   */
+  async saveUploadedImage(
+    artistId: number,
+    bytes: Uint8Array,
+    contentType: string,
+  ): Promise<string> {
+    const normalizedMime = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+    if (!ALLOWED_UPLOAD_MIMES.has(normalizedMime)) {
+      throw new ArtistImageValidationError(
+        "Unsupported image format. Please upload a JPEG, PNG, WebP, or GIF image.",
+      );
+    }
+    if (bytes.byteLength === 0) {
+      throw new ArtistImageValidationError("Uploaded image is empty.");
+    }
+    if (bytes.byteLength > MAX_ARTIST_IMAGE_BYTES) {
+      throw new ArtistImageValidationError("Image exceeds the 5 MB size limit.");
+    }
+
+    const fileName = await this.writeCachedBytes(bytes, normalizedMime);
+    this.setArtistImageHash(artistId, fileName);
+    this.logger?.info({ artistId, fileName }, "Saved custom artist portrait");
+    return fileName;
+  }
+
+  /**
+   * Downloads and caches a user-selected portrait from an allowlisted Deezer CDN URL.
+   */
+  async saveImageFromAllowedUrl(artistId: number, imageUrl: string): Promise<string> {
+    if (!isAllowedRemoteImageUrl(imageUrl)) {
+      throw new ArtistImageValidationError(
+        "Image URL must be an HTTPS Deezer CDN URL (*.dzcdn.net).",
+      );
+    }
+
+    const imgRes = await this.fetchImpl(imageUrl, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!imgRes.ok) {
+      throw new ArtistImageValidationError(`Failed to download image (HTTP ${imgRes.status}).`);
+    }
+
+    const contentType = imgRes.headers.get("content-type") ?? "";
+    const arrayBuffer = await imgRes.arrayBuffer();
+    return this.saveUploadedImage(artistId, new Uint8Array(arrayBuffer), contentType);
+  }
+
+  /**
+   * Clears the artist's portrait while stamping image_checked_at so it falls back
+   * to album art / monogram instead of immediately auto-fetching again.
+   */
+  clearArtistImage(artistId: number): void {
+    const nowMs = Date.now();
+    this.dbContext.sqlite
+      .prepare(
+        "UPDATE artists SET image_hash = NULL, image_checked_at = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(nowMs, nowMs, artistId);
+  }
+
+  private async writeCachedBytes(bytes: Uint8Array, contentType: string): Promise<string> {
+    await fsp.mkdir(this.artistImagesDir, { recursive: true });
+    const hash = crypto.createHash("sha256").update(bytes).digest("hex").slice(0, 16);
+    const fileName = `${hash}.${extensionForMime(contentType)}`;
+    const dest = path.join(this.artistImagesDir, fileName);
+    if (!fs.existsSync(dest)) {
+      await fsp.writeFile(dest, bytes);
+    }
+    return fileName;
+  }
+
+  private setArtistImageHash(artistId: number, imageHash: string): void {
+    const nowMs = Date.now();
+    this.dbContext.sqlite
+      .prepare(
+        "UPDATE artists SET image_hash = ?, image_checked_at = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(imageHash, nowMs, nowMs, artistId);
   }
 
   private markChecked(artistId: number, imageHash: string | null, checkedAtMs: number): void {

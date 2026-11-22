@@ -102,3 +102,16 @@ export interface ArtistDetailResponse {
   albums: AlbumSummary[];
   tracks: TrackSummary[];
 }
+
+export interface ArtistImageCandidate {
+  id: string;
+  name: string;
+  fans: number;
+  previewUrl: string;
+  imageUrl: string;
+}
+
+export interface ArtistImageUpdateResponse {
+  artistId: number;
+  imageHash: string | null;
+}

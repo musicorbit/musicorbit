@@ -3,8 +3,13 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import type { ArtistImageCandidate, ArtistImageUpdateResponse } from "@musicorbit/shared";
 import type { DbContext } from "../db/index.js";
-import type { ArtistImageService } from "../services/artistImages.js";
+import {
+  ArtistImageValidationError,
+  MAX_ARTIST_IMAGE_BYTES,
+  type ArtistImageService,
+} from "../services/artistImages.js";
 
 export interface MediaRouteDeps {
   dbContext: DbContext;
@@ -15,6 +20,14 @@ export interface MediaRouteDeps {
 
 const idParamSchema = z.object({
   id: z.coerce.number().int().positive(),
+});
+
+const candidatesQuerySchema = z.object({
+  q: z.string().trim().optional(),
+});
+
+const fromUrlBodySchema = z.object({
+  imageUrl: z.string().url(),
 });
 
 const AUDIO_MIME_TYPES: Record<string, string> = {
@@ -85,6 +98,15 @@ export async function registerMediaRoutes(
 ): Promise<void> {
   const { dbContext, coversDir, artistImagesDir, artistImageService } = deps;
   const { sqlite } = dbContext;
+
+  // Accept raw image binary uploads up to 5 MB for PUT /api/artists/:id/image
+  app.addContentTypeParser(
+    ["image/jpeg", "image/jpg", "image/png", "image/webp", "image/gif"],
+    { parseAs: "buffer", bodyLimit: MAX_ARTIST_IMAGE_BYTES },
+    (_req, body, done) => {
+      done(null, body);
+    },
+  );
 
   /**
    * Streams an audio track by ID with HTTP 206 Partial Content support so
@@ -213,4 +235,133 @@ export async function registerMediaRoutes(
     reply.header("Cache-Control", "public, max-age=86400");
     return reply.send(fs.createReadStream(fullPath));
   });
+
+  /**
+   * Lists candidate artist portraits from Deezer so the user can manually pick
+   * the right image (optionally overriding the search term with ?q=).
+   */
+  app.get(
+    "/api/artists/:id/image/candidates",
+    async (request, reply): Promise<ArtistImageCandidate[]> => {
+      const parsed = idParamSchema.safeParse(request.params);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "Invalid artist ID" });
+      }
+
+      const row = sqlite
+        .prepare("SELECT name FROM artists WHERE id = ?")
+        .get(parsed.data.id) as { name: string } | undefined;
+
+      if (!row) {
+        return reply.code(404).send({ error: "Artist not found" });
+      }
+
+      const query = candidatesQuerySchema.parse(request.query);
+      const searchTerm = query.q || row.name;
+      return artistImageService.searchCandidates(searchTerm);
+    },
+  );
+
+  /**
+   * Uploads a custom artist portrait (raw image bytes with Content-Type: image/*).
+   */
+  app.put(
+    "/api/artists/:id/image",
+    async (request, reply): Promise<ArtistImageUpdateResponse> => {
+      const parsed = idParamSchema.safeParse(request.params);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "Invalid artist ID" });
+      }
+
+      const exists = sqlite
+        .prepare("SELECT id FROM artists WHERE id = ?")
+        .get(parsed.data.id) as { id: number } | undefined;
+      if (!exists) {
+        return reply.code(404).send({ error: "Artist not found" });
+      }
+
+      const contentType = request.headers["content-type"] ?? "";
+      const body = request.body;
+      if (!Buffer.isBuffer(body)) {
+        return reply
+          .code(400)
+          .send({ error: "Expected raw image bytes with an image/* Content-Type." });
+      }
+
+      try {
+        const imageHash = await artistImageService.saveUploadedImage(
+          parsed.data.id,
+          new Uint8Array(body),
+          contentType,
+        );
+        return { artistId: parsed.data.id, imageHash };
+      } catch (err) {
+        if (err instanceof ArtistImageValidationError) {
+          return reply.code(400).send({ error: err.message });
+        }
+        throw err;
+      }
+    },
+  );
+
+  /**
+   * Downloads and caches a user-chosen portrait from an allowlisted Deezer CDN URL.
+   */
+  app.post(
+    "/api/artists/:id/image/from-url",
+    async (request, reply): Promise<ArtistImageUpdateResponse> => {
+      const parsedParams = idParamSchema.safeParse(request.params);
+      if (!parsedParams.success) {
+        return reply.code(400).send({ error: "Invalid artist ID" });
+      }
+
+      const parsedBody = fromUrlBodySchema.safeParse(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({ error: "A valid imageUrl is required." });
+      }
+
+      const exists = sqlite
+        .prepare("SELECT id FROM artists WHERE id = ?")
+        .get(parsedParams.data.id) as { id: number } | undefined;
+      if (!exists) {
+        return reply.code(404).send({ error: "Artist not found" });
+      }
+
+      try {
+        const imageHash = await artistImageService.saveImageFromAllowedUrl(
+          parsedParams.data.id,
+          parsedBody.data.imageUrl,
+        );
+        return { artistId: parsedParams.data.id, imageHash };
+      } catch (err) {
+        if (err instanceof ArtistImageValidationError) {
+          return reply.code(400).send({ error: err.message });
+        }
+        throw err;
+      }
+    },
+  );
+
+  /**
+   * Removes an artist's cached portrait so the UI falls back to album art / monogram.
+   */
+  app.delete(
+    "/api/artists/:id/image",
+    async (request, reply): Promise<ArtistImageUpdateResponse> => {
+      const parsed = idParamSchema.safeParse(request.params);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "Invalid artist ID" });
+      }
+
+      const exists = sqlite
+        .prepare("SELECT id FROM artists WHERE id = ?")
+        .get(parsed.data.id) as { id: number } | undefined;
+      if (!exists) {
+        return reply.code(404).send({ error: "Artist not found" });
+      }
+
+      artistImageService.clearArtistImage(parsed.data.id);
+      return { artistId: parsed.data.id, imageHash: null };
+    },
+  );
 }

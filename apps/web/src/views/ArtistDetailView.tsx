@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Camera } from "lucide-react";
 import type { ArtistDetailResponse } from "@musicorbit/shared";
 import { fetchArtistDetail } from "../api/client";
 import { ArtistAvatar } from "../components/ArtistAvatar";
+import { EditArtistImageModal } from "../components/EditArtistImageModal";
 import { AlbumsView } from "./AlbumsView";
 import { TracksView } from "./TracksView";
 
@@ -12,6 +13,7 @@ interface ArtistDetailViewProps {
   onSelectAlbum: (albumId: number) => void;
   onSelectArtist: (artistId: number) => void;
   onGoToScanner: () => void;
+  onArtistImageChanged: () => void;
 }
 
 export function ArtistDetailView({
@@ -20,10 +22,12 @@ export function ArtistDetailView({
   onSelectAlbum,
   onSelectArtist,
   onGoToScanner,
+  onArtistImageChanged,
 }: ArtistDetailViewProps) {
   const [detail, setDetail] = useState<ArtistDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editModalOpen, setEditModalOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,29 +81,66 @@ export function ArtistDetailView({
       </button>
 
       <div className="flex items-center gap-5">
-        <ArtistAvatar
-          artistId={artist.id}
-          name={artist.name}
-          imageHash={artist.imageHash}
-          fallbackAlbumId={artist.fallbackAlbumId}
-          className="h-24 w-24 shadow-lg"
-          textClassName="text-3xl"
-        />
+        <button
+          type="button"
+          onClick={() => setEditModalOpen(true)}
+          title="Change artist picture"
+          aria-label={`Change picture for ${artist.name}`}
+          className="group relative shrink-0 rounded-full focus:outline-none focus:ring-2 focus:ring-amber-500/70"
+        >
+          <ArtistAvatar
+            artistId={artist.id}
+            name={artist.name}
+            imageHash={artist.imageHash}
+            fallbackAlbumId={artist.fallbackAlbumId}
+            className="h-24 w-24 shadow-lg"
+            textClassName="text-3xl"
+          />
+          <span className="absolute inset-0 flex flex-col items-center justify-center rounded-full bg-zinc-950/65 text-zinc-100 opacity-0 transition group-hover:opacity-100">
+            <Camera className="h-5 w-5" />
+            <span className="mt-1 text-[10px] font-medium">Edit</span>
+          </span>
+        </button>
         <div>
           <p className="text-xs font-medium tracking-wider text-amber-400 uppercase">Artist</p>
           <h2 className="mt-1 text-3xl font-semibold tracking-tight text-zinc-50">
             {artist.name}
           </h2>
-          <p className="mt-1 text-sm text-zinc-400">
-            {artist.albumCount > 0 && (
-              <>
-                {artist.albumCount} {artist.albumCount === 1 ? "album" : "albums"} ·{" "}
-              </>
-            )}
-            {artist.trackCount} {artist.trackCount === 1 ? "track" : "tracks"}
-          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-zinc-400">
+            <span>
+              {artist.albumCount > 0 && (
+                <>
+                  {artist.albumCount} {artist.albumCount === 1 ? "album" : "albums"} ·{" "}
+                </>
+              )}
+              {artist.trackCount} {artist.trackCount === 1 ? "track" : "tracks"}
+            </span>
+            <button
+              type="button"
+              onClick={() => setEditModalOpen(true)}
+              className="inline-flex items-center gap-1 rounded-md border border-zinc-800 bg-zinc-900/70 px-2 py-0.5 text-xs text-zinc-300 transition hover:border-zinc-700 hover:bg-zinc-800 hover:text-zinc-100"
+            >
+              <Camera className="h-3 w-3" />
+              Edit picture
+            </button>
+          </div>
         </div>
       </div>
+
+      {editModalOpen && (
+        <EditArtistImageModal
+          artistId={artist.id}
+          artistName={artist.name}
+          currentImageHash={artist.imageHash}
+          onClose={() => setEditModalOpen(false)}
+          onUpdated={(newImageHash) => {
+            setDetail((prev) =>
+              prev ? { ...prev, artist: { ...prev.artist, imageHash: newImageHash } } : prev,
+            );
+            onArtistImageChanged();
+          }}
+        />
+      )}
 
       {albums.length > 0 && (
         <div>

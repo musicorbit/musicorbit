@@ -2,6 +2,8 @@ import type {
   AlbumDetailResponse,
   AlbumSummary,
   ArtistDetailResponse,
+  ArtistImageCandidate,
+  ArtistImageUpdateResponse,
   ArtistSummary,
   HealthResponse,
   ScanStatusResponse,
@@ -80,4 +82,59 @@ export function getAlbumCoverUrl(albumId: number, coverHash?: string | null): st
   if (!coverHash) return null;
   // Appending the content hash as a cache-buster ensures updated covers reload immediately
   return `/api/albums/${albumId}/cover?v=${encodeURIComponent(coverHash)}`;
+}
+
+export function fetchArtistImageCandidates(
+  artistId: number,
+  q?: string,
+): Promise<ArtistImageCandidate[]> {
+  const params = new URLSearchParams();
+  if (q?.trim()) params.set("q", q.trim());
+  const qs = params.toString();
+  return getJson<ArtistImageCandidate[]>(
+    `/api/artists/${artistId}/image/candidates${qs ? `?${qs}` : ""}`,
+  );
+}
+
+export async function selectArtistImageFromUrl(
+  artistId: number,
+  imageUrl: string,
+): Promise<ArtistImageUpdateResponse> {
+  const res = await fetch(`/api/artists/${artistId}/image/from-url`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ imageUrl }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Failed to save image (HTTP ${res.status})`);
+  }
+  return (await res.json()) as ArtistImageUpdateResponse;
+}
+
+export async function uploadArtistImage(
+  artistId: number,
+  file: File,
+): Promise<ArtistImageUpdateResponse> {
+  const res = await fetch(`/api/artists/${artistId}/image`, {
+    method: "PUT",
+    headers: { "Content-Type": file.type || "image/jpeg" },
+    body: file,
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Failed to upload image (HTTP ${res.status})`);
+  }
+  return (await res.json()) as ArtistImageUpdateResponse;
+}
+
+export async function deleteArtistImage(artistId: number): Promise<ArtistImageUpdateResponse> {
+  const res = await fetch(`/api/artists/${artistId}/image`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Failed to remove image (HTTP ${res.status})`);
+  }
+  return (await res.json()) as ArtistImageUpdateResponse;
 }

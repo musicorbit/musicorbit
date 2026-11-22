@@ -3,7 +3,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import type { AlbumSummary, ArtistSummary, TrackSummary } from "@musicorbit/shared";
+import type {
+  AlbumSummary,
+  ArtistImageCandidate,
+  ArtistImageUpdateResponse,
+  ArtistSummary,
+  TrackSummary,
+} from "@musicorbit/shared";
 import { buildServer, type ServerHandle } from "../server.js";
 
 function createMinimalWav(numSamples = 800): Buffer {
@@ -66,9 +72,11 @@ describe("Media streaming & cover art routes", () => {
             data: [
               {
                 title: "01 - Tone",
+                rank: 900000,
                 artist: {
+                  id: 42,
                   name: "Artist",
-                  picture_big: "https://cdn.example/artist-right.jpg",
+                  picture_big: "https://cdn-images.dzcdn.net/images/artist/right/500x500.jpg",
                 },
               },
             ],
@@ -80,14 +88,26 @@ describe("Media streaming & cover art routes", () => {
         return new Response(
           JSON.stringify({
             data: [
-              { name: "Artist", nb_fan: 5, picture_big: "https://cdn.example/artist-obscure.jpg" },
-              { name: "Artist", nb_fan: 500000, picture_big: "https://cdn.example/artist-right.jpg" },
+              {
+                id: 1,
+                name: "Artist",
+                nb_fan: 5,
+                picture_medium: "https://cdn-images.dzcdn.net/images/artist/obscure/250x250.jpg",
+                picture_big: "https://cdn-images.dzcdn.net/images/artist/obscure/500x500.jpg",
+              },
+              {
+                id: 42,
+                name: "Artist",
+                nb_fan: 500000,
+                picture_medium: "https://cdn-images.dzcdn.net/images/artist/right/250x250.jpg",
+                picture_big: "https://cdn-images.dzcdn.net/images/artist/right/500x500.jpg",
+              },
             ],
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
-      assert.equal(url, "https://cdn.example/artist-right.jpg");
+      assert.equal(url, "https://cdn-images.dzcdn.net/images/artist/right/500x500.jpg");
       return new Response(new Uint8Array(portraitBytes), {
         status: 200,
         headers: { "content-type": "image/jpeg" },
@@ -214,5 +234,69 @@ describe("Media streaming & cover art routes", () => {
     assert.equal(cached.statusCode, 200);
     assert.deepEqual(cached.rawPayload, portraitBytes);
     assert.equal(mockFetchCalls, 2);
+  });
+
+  it("supports searching Deezer candidates, SSRF validation, custom photo uploads, and deletion", async () => {
+    // 1. Search candidates sorted by fans descending
+    const candRes = await handle.app.inject({
+      method: "GET",
+      url: `/api/artists/${artistId}/image/candidates?q=Artist`,
+    });
+    assert.equal(candRes.statusCode, 200);
+    const candidates = candRes.json<ArtistImageCandidate[]>();
+    assert.equal(candidates.length, 2);
+    assert.equal(candidates[0]?.fans, 500000);
+
+    // 2. Reject disallowed remote URLs (SSRF protection)
+    const ssrfRes = await handle.app.inject({
+      method: "POST",
+      url: `/api/artists/${artistId}/image/from-url`,
+      payload: { imageUrl: "http://127.0.0.1:8080/internal.jpg" },
+    });
+    assert.equal(ssrfRes.statusCode, 400);
+
+    // 3. Accept allowlisted Deezer CDN URL
+    const fromUrlRes = await handle.app.inject({
+      method: "POST",
+      url: `/api/artists/${artistId}/image/from-url`,
+      payload: { imageUrl: candidates[0]!.imageUrl },
+    });
+    assert.equal(fromUrlRes.statusCode, 200);
+    const fromUrlBody = fromUrlRes.json<ArtistImageUpdateResponse>();
+    assert.ok(fromUrlBody.imageHash?.endsWith(".jpg"));
+
+    // 4. Upload custom PNG bytes directly
+    const customPng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const uploadRes = await handle.app.inject({
+      method: "PUT",
+      url: `/api/artists/${artistId}/image`,
+      headers: { "content-type": "image/png" },
+      payload: customPng,
+    });
+    assert.equal(uploadRes.statusCode, 200);
+    const uploadBody = uploadRes.json<ArtistImageUpdateResponse>();
+    assert.ok(uploadBody.imageHash?.endsWith(".png"));
+
+    const servedCustom = await handle.app.inject({
+      method: "GET",
+      url: `/api/artists/${artistId}/image`,
+    });
+    assert.equal(servedCustom.statusCode, 200);
+    assert.equal(servedCustom.headers["content-type"], "image/png");
+    assert.deepEqual(servedCustom.rawPayload, customPng);
+
+    // 5. Delete portrait — should return 404 without immediately re-fetching
+    const delRes = await handle.app.inject({
+      method: "DELETE",
+      url: `/api/artists/${artistId}/image`,
+    });
+    assert.equal(delRes.statusCode, 200);
+    assert.equal(delRes.json<ArtistImageUpdateResponse>().imageHash, null);
+
+    const afterDel = await handle.app.inject({
+      method: "GET",
+      url: `/api/artists/${artistId}/image`,
+    });
+    assert.equal(afterDel.statusCode, 404);
   });
 });

@@ -320,6 +320,7 @@ function MusicOrbitShell() {
               onSelectAlbum={(albumId) => setRoute({ view: "album-detail", albumId })}
               onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
               onGoToScanner={() => setRoute({ view: "system" })}
+              onArtistImageChanged={() => void loadLibrary(searchQuery)}
             />
           )}
 
