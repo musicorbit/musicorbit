@@ -21,6 +21,18 @@ const booleanFromEnv = z
   .default("true")
   .transform((v) => v === "true" || v === "1");
 
+const optionalUrl = z
+  .string()
+  .trim()
+  .optional()
+  .transform((v) => (v && v.length > 0 ? v.replace(/\/+$/, "") : null));
+
+const optionalString = z
+  .string()
+  .trim()
+  .optional()
+  .transform((v) => (v && v.length > 0 ? v : null));
+
 const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3001),
   HOST: z.string().min(1).default("0.0.0.0"),
@@ -30,6 +42,8 @@ const envSchema = z.object({
   MUSIC_DIR: z.string().min(1).default("./sample-music"),
   DATA_DIR: z.string().min(1).default("./data"),
   FETCH_ARTIST_IMAGES: booleanFromEnv,
+  SLSKD_URL: optionalUrl,
+  SLSKD_API_KEY: optionalString,
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -52,6 +66,8 @@ export const config = {
   coversDir: path.join(resolveFromRoot(parsed.data.DATA_DIR), "covers"),
   artistImagesDir: path.join(resolveFromRoot(parsed.data.DATA_DIR), "artist-images"),
   fetchArtistImages: parsed.data.FETCH_ARTIST_IMAGES,
+  slskdUrl: parsed.data.SLSKD_URL,
+  slskdApiKey: parsed.data.SLSKD_API_KEY,
   version: "0.1.0",
 } as const;
 

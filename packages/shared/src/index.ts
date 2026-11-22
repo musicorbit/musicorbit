@@ -115,3 +115,95 @@ export interface ArtistImageUpdateResponse {
   artistId: number;
   imageHash: string | null;
 }
+
+/**
+ * Soulseek acquisition & download types (Step 4 — slskd integration).
+ */
+export interface AcquisitionStatusResponse {
+  provider: "slskd";
+  configured: boolean;
+  connected: boolean;
+  loggedIn: boolean;
+  url: string | null;
+  version: string | null;
+  error: string | null;
+}
+
+export interface SoulseekSearchSummary {
+  id: string;
+  query: string;
+  state: string;
+  isComplete: boolean;
+  responseCount: number;
+  fileCount: number;
+}
+
+export interface SoulseekFileItem {
+  filename: string;
+  basename: string;
+  size: number;
+  extension: string;
+  bitRate: number | null;
+  sampleRate: number | null;
+  bitDepth: number | null;
+  lengthSeconds: number | null;
+  isLocked: boolean;
+}
+
+export interface SoulseekReleaseGroup {
+  id: string;
+  username: string;
+  directoryPath: string;
+  folderName: string;
+  format: string;
+  isLossless: boolean;
+  avgBitrate: number | null;
+  trackCount: number;
+  totalSizeBytes: number;
+  hasFreeUploadSlot: boolean;
+  uploadSpeed: number;
+  queueLength: number;
+  hasLockedFiles: boolean;
+  files: SoulseekFileItem[];
+}
+
+export interface SoulseekSearchResultsResponse {
+  search: SoulseekSearchSummary;
+  groups: SoulseekReleaseGroup[];
+}
+
+export interface EnqueueDownloadFile {
+  filename: string;
+  size: number;
+}
+
+export interface EnqueueDownloadRequest {
+  username: string;
+  files: EnqueueDownloadFile[];
+}
+
+export interface DownloadTransferItem {
+  id: string;
+  username: string;
+  directory: string;
+  folderName: string;
+  filename: string;
+  basename: string;
+  size: number;
+  bytesTransferred: number;
+  percentComplete: number;
+  averageSpeed: number;
+  state: string;
+  isActive: boolean;
+  isCompleted: boolean;
+  isFailed: boolean;
+  requestedAt: string | null;
+  endedAt: string | null;
+}
+
+export interface DownloadsListResponse {
+  activeCount: number;
+  completedCount: number;
+  failedCount: number;
+  transfers: DownloadTransferItem[];
+}

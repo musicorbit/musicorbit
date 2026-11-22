@@ -32,6 +32,7 @@ import { AlbumDetailView } from "./views/AlbumDetailView";
 import { AlbumsView } from "./views/AlbumsView";
 import { ArtistDetailView } from "./views/ArtistDetailView";
 import { ArtistsView } from "./views/ArtistsView";
+import { SearchView } from "./views/SearchView";
 import { SystemView } from "./views/SystemView";
 import { TracksView } from "./views/TracksView";
 
@@ -41,10 +42,10 @@ type Route =
   | { view: "artists" }
   | { view: "artist-detail"; artistId: number }
   | { view: "tracks" }
+  | { view: "search" }
   | { view: "system" };
 
 const UPCOMING_NAV = [
-  { label: "Soulseek Search", icon: Search, step: "Step 4" },
   { label: "Review Queue", icon: Sparkles, step: "Step 5" },
   { label: "Playlists", icon: ListMusic, step: "Step 6" },
 ];
@@ -129,10 +130,11 @@ function MusicOrbitShell() {
     { id: "albums" as const, label: "Albums", icon: Disc3, count: health?.counts.albums },
     { id: "artists" as const, label: "Artists", icon: Users, count: health?.counts.artists },
     { id: "tracks" as const, label: "Tracks", icon: Music, count: health?.counts.tracks },
+    { id: "search" as const, label: "Soulseek Search", icon: Search, count: undefined },
     { id: "system" as const, label: "System & Scanner", icon: Activity, count: undefined },
   ];
 
-  const isNavActive = (id: "albums" | "artists" | "tracks" | "system") => {
+  const isNavActive = (id: "albums" | "artists" | "tracks" | "search" | "system") => {
     if (route.view === id) return true;
     if (id === "albums" && route.view === "album-detail") return true;
     if (id === "artists" && route.view === "artist-detail") return true;
@@ -334,6 +336,8 @@ function MusicOrbitShell() {
               onGoToScanner={() => setRoute({ view: "system" })}
             />
           )}
+
+          {route.view === "search" && <SearchView />}
 
           {route.view === "system" && (
             <SystemView

@@ -121,6 +121,8 @@ describe("LibraryScanner & Library API", () => {
       coversDir,
       artistImagesDir: path.join(dataDir, "artist-images"),
       fetchArtistImages: false,
+      slskdUrl: null,
+      slskdApiKey: null,
       version: "0.1.0",
     });
   });

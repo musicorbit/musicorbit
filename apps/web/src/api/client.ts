@@ -1,12 +1,17 @@
 import type {
+  AcquisitionStatusResponse,
   AlbumDetailResponse,
   AlbumSummary,
   ArtistDetailResponse,
   ArtistImageCandidate,
   ArtistImageUpdateResponse,
   ArtistSummary,
+  DownloadsListResponse,
+  EnqueueDownloadRequest,
   HealthResponse,
   ScanStatusResponse,
+  SoulseekSearchResultsResponse,
+  SoulseekSearchSummary,
   TrackSummary,
 } from "@musicorbit/shared";
 
@@ -137,4 +142,72 @@ export async function deleteArtistImage(artistId: number): Promise<ArtistImageUp
     throw new Error(body?.error ?? `Failed to remove image (HTTP ${res.status})`);
   }
   return (await res.json()) as ArtistImageUpdateResponse;
+}
+
+export function fetchAcquisitionStatus(): Promise<AcquisitionStatusResponse> {
+  return getJson<AcquisitionStatusResponse>("/api/acquisition/status");
+}
+
+export async function startSoulseekSearch(query: string): Promise<SoulseekSearchSummary> {
+  const res = await fetch("/api/acquisition/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Search failed (HTTP ${res.status})`);
+  }
+  return (await res.json()) as SoulseekSearchSummary;
+}
+
+export function fetchSoulseekSearchResults(
+  searchId: string,
+): Promise<SoulseekSearchResultsResponse> {
+  return getJson<SoulseekSearchResultsResponse>(
+    `/api/acquisition/search/${encodeURIComponent(searchId)}`,
+  );
+}
+
+export async function deleteSoulseekSearch(searchId: string): Promise<void> {
+  await fetch(`/api/acquisition/search/${encodeURIComponent(searchId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function enqueueSoulseekDownloads(payload: EnqueueDownloadRequest): Promise<void> {
+  const res = await fetch("/api/acquisition/downloads", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Download request failed (HTTP ${res.status})`);
+  }
+}
+
+export function fetchDownloads(): Promise<DownloadsListResponse> {
+  return getJson<DownloadsListResponse>("/api/acquisition/downloads");
+}
+
+export async function removeDownload(username: string, transferId: string): Promise<void> {
+  const res = await fetch(
+    `/api/acquisition/downloads/${encodeURIComponent(username)}/${encodeURIComponent(transferId)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not remove transfer (HTTP ${res.status})`);
+  }
+}
+
+export async function clearCompletedDownloads(): Promise<void> {
+  const res = await fetch("/api/acquisition/downloads/completed", {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not clear completed downloads (HTTP ${res.status})`);
+  }
 }

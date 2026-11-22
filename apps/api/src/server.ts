@@ -2,9 +2,11 @@ import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import type { AppConfig } from "./config.js";
 import { initDatabase, type DbContext } from "./db/index.js";
+import { registerAcquisitionRoutes } from "./routes/acquisition.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerLibraryRoutes } from "./routes/library.js";
 import { registerMediaRoutes } from "./routes/media.js";
+import { SlskdClient } from "./services/acquisition/slskd.js";
 import { ArtistImageService } from "./services/artistImages.js";
 import { LibraryScanner } from "./services/scanner.js";
 
@@ -13,6 +15,7 @@ export interface ServerHandle {
   dbContext: DbContext;
   scanner: LibraryScanner;
   artistImageService: ArtistImageService;
+  slskdClient: SlskdClient;
 }
 
 export interface BuildServerOptions {
@@ -51,6 +54,11 @@ export async function buildServer(
     logger: app.log,
     fetchImpl: options?.fetchImpl,
   });
+  const slskdClient = new SlskdClient({
+    baseUrl: config.slskdUrl,
+    apiKey: config.slskdApiKey,
+    fetchImpl: options?.fetchImpl,
+  });
 
   await registerHealthRoutes(app, { config, dbContext });
   await registerLibraryRoutes(app, { dbContext, scanner });
@@ -60,11 +68,12 @@ export async function buildServer(
     artistImagesDir: config.artistImagesDir,
     artistImageService,
   });
+  await registerAcquisitionRoutes(app, { slskdClient });
 
   // Cleanly close SQLite when Fastify shuts down
   app.addHook("onClose", async () => {
     dbContext.sqlite.close();
   });
 
-  return { app, dbContext, scanner, artistImageService };
+  return { app, dbContext, scanner, artistImageService, slskdClient };
 }
