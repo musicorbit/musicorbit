@@ -389,28 +389,122 @@ export interface TrackMetadataSuggestion {
 }
 
 /**
- * Playlists & M3U8 import/export (Step 6).
+ * Playlists & M3U8 / CSV import/export (Step 6+).
  */
 export interface PlaylistSummary {
   id: number;
   name: string;
   description: string;
   trackCount: number;
+  missingCount: number;
   totalDurationSeconds: number;
   coverAlbumId: number | null;
   createdAt: string;
   updatedAt: string;
 }
 
+export interface PlaylistMissingTrack {
+  id: number;
+  playlistId: number;
+  position: number;
+  title: string;
+  artist: string;
+  album: string | null;
+  status: "missing" | "queued";
+}
+
 export interface PlaylistDetailResponse {
   playlist: PlaylistSummary;
   tracks: TrackSummary[];
+  missingTracks: PlaylistMissingTrack[];
 }
+
+export type PlaylistImportFormat = "m3u8" | "csv";
 
 export interface ImportM3u8Response {
   playlist: PlaylistSummary;
+  format: PlaylistImportFormat;
   matchedCount: number;
+  missingCount: number;
   unmatchedEntries: string[];
+  missingTracks: PlaylistMissingTrack[];
+}
+
+export interface RecheckMissingTracksResponse {
+  playlist: PlaylistSummary;
+  newlyMatchedCount: number;
+  remainingMissingCount: number;
+  tracks: TrackSummary[];
+  missingTracks: PlaylistMissingTrack[];
+}
+
+export interface MissingTrackSearchCandidate {
+  username: string;
+  filename: string;
+  basename: string;
+  directoryPath: string;
+  folderName: string;
+  size: number;
+  extension: string;
+  bitRate: number | null;
+  isLossless: boolean;
+  hasFreeUploadSlot: boolean;
+  uploadSpeed: number;
+  queueLength: number;
+}
+
+export type MissingTrackBatchItemStateValue =
+  | "pending"
+  | "searching"
+  | "found"
+  | "not_found"
+  | "queued"
+  | "error";
+
+export interface MissingTrackBatchItemState {
+  missingTrackId: number;
+  title: string;
+  artist: string;
+  album: string | null;
+  state: MissingTrackBatchItemStateValue;
+  candidates: MissingTrackSearchCandidate[];
+  error: string | null;
+}
+
+export interface MissingTrackBatchJobStatus {
+  playlistId: number;
+  state: "idle" | "running" | "completed" | "cancelled";
+  concurrencyLimit: number;
+  total: number;
+  completed: number;
+  foundCount: number;
+  notFoundCount: number;
+  errorCount: number;
+  items: MissingTrackBatchItemState[];
+}
+
+/**
+ * Dynamic system settings & server folder browser.
+ */
+export interface SystemSettingsResponse {
+  musicDir: string;
+  defaultMusicDir: string;
+  musicDirExists: boolean;
+  isOverridden: boolean;
+  downloadsDir: string;
+}
+
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface BrowseDirectoriesResponse {
+  currentPath: string;
+  parentPath: string | null;
+  exists: boolean;
+  directories: DirectoryEntry[];
+  quickPaths: Array<{ label: string; path: string }>;
 }
 
 /**

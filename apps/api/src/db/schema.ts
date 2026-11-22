@@ -112,6 +112,25 @@ export const playlistTracks = sqliteTable("playlist_tracks", {
   addedAt: integer("added_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+export const playlistMissingTracks = sqliteTable("playlist_missing_tracks", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  playlistId: integer("playlist_id")
+    .notNull()
+    .references(() => playlists.id, { onDelete: "cascade" }),
+  position: integer("position").notNull(),
+  title: text("title").notNull(),
+  artist: text("artist").notNull(),
+  album: text("album"),
+  status: text("status").notNull().default("missing"), // "missing" | "queued"
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const settings = sqliteTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   username: text("username").notNull().unique(),

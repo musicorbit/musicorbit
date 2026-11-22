@@ -470,6 +470,7 @@ function MusicOrbitShell() {
               startingScan={startingScan}
               onScan={(force) => void handleScan(force)}
               onRefresh={() => void loadLibrary(searchQuery)}
+              onMusicDirChanged={() => void loadLibrary(searchQuery)}
             />
           )}
         </div>

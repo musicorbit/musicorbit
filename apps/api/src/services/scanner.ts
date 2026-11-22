@@ -169,13 +169,14 @@ async function findFolderCover(
 export interface LibraryScannerDeps {
   dbContext: DbContext;
   musicDir: string;
+  getMusicDir?: () => string;
   coversDir: string;
   logger?: FastifyBaseLogger;
 }
 
 export class LibraryScanner {
   private readonly dbContext: DbContext;
-  private readonly musicDir: string;
+  private readonly getMusicDirFn: () => string;
   private readonly coversDir: string;
   private readonly logger?: FastifyBaseLogger;
   private activePromise: Promise<ScanStatusResponse> | null = null;
@@ -183,9 +184,13 @@ export class LibraryScanner {
 
   constructor(deps: LibraryScannerDeps) {
     this.dbContext = deps.dbContext;
-    this.musicDir = deps.musicDir;
+    this.getMusicDirFn = deps.getMusicDir ?? (() => deps.musicDir);
     this.coversDir = deps.coversDir;
     this.logger = deps.logger;
+  }
+
+  private get musicDir(): string {
+    return this.getMusicDirFn();
   }
 
   /**

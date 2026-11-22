@@ -9,6 +9,7 @@ import { albums, tracks } from "../db/schema.js";
 export interface HealthRouteDeps {
   config: AppConfig;
   dbContext: DbContext;
+  getMusicDir?: () => string;
 }
 
 export async function registerHealthRoutes(
@@ -17,6 +18,7 @@ export async function registerHealthRoutes(
 ): Promise<void> {
   app.get("/api/health", async (): Promise<HealthResponse> => {
     const { config, dbContext } = deps;
+    const activeMusicDir = deps.getMusicDir ? deps.getMusicDir() : config.musicDir;
 
     let dbConnected = false;
     let artistCount = 0;
@@ -39,7 +41,7 @@ export async function registerHealthRoutes(
       app.log.error({ err }, "Database health check failed");
     }
 
-    const musicDirExists = fs.existsSync(config.musicDir);
+    const musicDirExists = fs.existsSync(activeMusicDir);
 
     return {
       status: dbConnected ? "ok" : "degraded",
@@ -52,7 +54,7 @@ export async function registerHealthRoutes(
         path: dbContext.dbPath,
       },
       musicDir: {
-        path: config.musicDir,
+        path: activeMusicDir,
         exists: musicDirExists,
       },
       counts: {

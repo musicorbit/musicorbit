@@ -132,6 +132,23 @@ export function initDatabase(dbPath: string): DbContext {
       added_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS playlist_missing_tracks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      artist TEXT NOT NULL,
+      album TEXT,
+      status TEXT NOT NULL DEFAULT 'missing',
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT NOT NULL UNIQUE,
@@ -151,6 +168,7 @@ export function initDatabase(dbPath: string): DbContext {
     CREATE INDEX IF NOT EXISTS idx_tracks_album_id ON tracks(album_id);
     CREATE INDEX IF NOT EXISTS idx_tracks_artist_id ON tracks(artist_id);
     CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_id ON playlist_tracks(playlist_id, position);
+    CREATE INDEX IF NOT EXISTS idx_playlist_missing_tracks_playlist_id ON playlist_missing_tracks(playlist_id, position);
   `);
 
   // Non-destructive upgrades for existing SQLite databases created before these columns existed

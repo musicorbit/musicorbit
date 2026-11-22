@@ -195,6 +195,7 @@ function formatTrackFilename(
 export interface LibraryImporterDeps {
   dbContext: DbContext;
   musicDir: string;
+  getMusicDir?: () => string;
   downloadsDir: string;
   autoImportThreshold: number;
   musicBrainz: MusicBrainzClient;
@@ -204,7 +205,7 @@ export interface LibraryImporterDeps {
 
 export class LibraryImporter {
   private readonly dbContext: DbContext;
-  private readonly musicDir: string;
+  private readonly getMusicDirFn: () => string;
   private readonly downloadsDir: string;
   private readonly autoImportThreshold: number;
   private readonly musicBrainz: MusicBrainzClient;
@@ -213,12 +214,16 @@ export class LibraryImporter {
 
   constructor(deps: LibraryImporterDeps) {
     this.dbContext = deps.dbContext;
-    this.musicDir = deps.musicDir;
+    this.getMusicDirFn = deps.getMusicDir ?? (() => deps.musicDir);
     this.downloadsDir = deps.downloadsDir;
     this.autoImportThreshold = deps.autoImportThreshold;
     this.musicBrainz = deps.musicBrainz;
     this.scanner = deps.scanner;
     this.logger = deps.logger;
+  }
+
+  private get musicDir(): string {
+    return this.getMusicDirFn();
   }
 
   listItems(statusFilter?: ImportItemStatus): ImportsListResponse {

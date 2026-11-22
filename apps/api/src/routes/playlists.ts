@@ -3,15 +3,30 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type {
   ImportM3u8Response,
+  MissingTrackBatchJobStatus,
   PlaylistDetailResponse,
+  PlaylistImportFormat,
+  PlaylistMissingTrack,
   PlaylistSummary,
+  RecheckMissingTracksResponse,
   TrackSummary,
 } from "@musicorbit/shared";
 import type { DbContext } from "../db/index.js";
+import { SlskdError, type SlskdClient } from "../services/acquisition/slskd.js";
+import type { PlaylistBatchSearchService } from "../services/playlistBatchSearch.js";
+import {
+  buildLibraryTrackMatcher,
+  parseCsvPlaylist,
+  parseM3u8Playlist,
+  type LocalLibraryTrack,
+} from "../services/playlistImport.js";
 
 export interface PlaylistRouteDeps {
   dbContext: DbContext;
   musicDir: string;
+  getMusicDir?: () => string;
+  slskdClient?: SlskdClient;
+  batchSearchService?: PlaylistBatchSearchService;
 }
 
 const idParamSchema = z.object({
@@ -21,6 +36,11 @@ const idParamSchema = z.object({
 const removeTrackParamSchema = z.object({
   id: z.coerce.number().int().positive(),
   trackId: z.coerce.number().int().positive(),
+});
+
+const missingTrackParamSchema = z.object({
+  id: z.coerce.number().int().positive(),
+  missingId: z.coerce.number().int().positive(),
 });
 
 const createPlaylistBodySchema = z.object({
@@ -41,9 +61,24 @@ const reorderBodySchema = z.object({
   trackIds: z.array(z.number().int().positive()),
 });
 
-const importM3u8BodySchema = z.object({
+const importPlaylistBodySchema = z.object({
   name: z.string().trim().min(1).max(120),
-  content: z.string().min(1).max(2_000_000),
+  content: z.string().min(1).max(5_000_000),
+  format: z.enum(["m3u8", "csv"]).optional(),
+});
+
+const startBatchSearchBodySchema = z
+  .object({
+    missingTrackIds: z.array(z.number().int().positive()).max(500).optional(),
+    concurrency: z.number().int().min(1).max(3).optional(),
+  })
+  .optional()
+  .default({});
+
+const downloadMissingCandidateBodySchema = z.object({
+  username: z.string().trim().min(1).max(200),
+  filename: z.string().min(1),
+  size: z.number().int().min(0),
 });
 
 interface PlaylistRow {
@@ -51,6 +86,7 @@ interface PlaylistRow {
   name: string;
   description: string;
   trackCount: number;
+  missingCount: number;
   totalDurationSeconds: number;
   coverAlbumId: number | null;
   createdAt: number;
@@ -73,12 +109,23 @@ interface TrackRow {
   filePath: string;
 }
 
+interface MissingTrackRow {
+  id: number;
+  playlistId: number;
+  position: number;
+  title: string;
+  artist: string;
+  album: string | null;
+  status: string;
+}
+
 function toPlaylistSummary(row: PlaylistRow): PlaylistSummary {
   return {
     id: row.id,
     name: row.name,
     description: row.description,
     trackCount: row.trackCount,
+    missingCount: row.missingCount,
     totalDurationSeconds: row.totalDurationSeconds,
     coverAlbumId: row.coverAlbumId,
     createdAt: new Date(row.createdAt).toISOString(),
@@ -86,19 +133,37 @@ function toPlaylistSummary(row: PlaylistRow): PlaylistSummary {
   };
 }
 
-function normalizeMatch(val: string): string {
-  return val
-    .toLowerCase()
-    .replace(/\\/g, "/")
-    .replace(/[^a-z0-9/]+/g, " ")
-    .trim();
+function toMissingTrack(row: MissingTrackRow): PlaylistMissingTrack {
+  return {
+    id: row.id,
+    playlistId: row.playlistId,
+    position: row.position,
+    title: row.title,
+    artist: row.artist,
+    album: row.album,
+    status: row.status === "queued" ? "queued" : "missing",
+  };
+}
+
+function detectFormat(content: string, explicit?: PlaylistImportFormat): PlaylistImportFormat {
+  if (explicit) return explicit;
+  const firstLine = content.replace(/^\uFEFF/, "").trimStart().split(/\r?\n/, 1)[0] ?? "";
+  if (firstLine.startsWith("#EXTM3U") || firstLine.startsWith("#EXTINF")) {
+    return "m3u8";
+  }
+  const lower = firstLine.toLowerCase();
+  if (lower.includes(",") && (lower.includes("track") || lower.includes("artist") || lower.includes("title"))) {
+    return "csv";
+  }
+  return "m3u8";
 }
 
 export async function registerPlaylistRoutes(
   app: FastifyInstance,
   deps: PlaylistRouteDeps,
 ): Promise<void> {
-  const { dbContext, musicDir } = deps;
+  const { dbContext, slskdClient, batchSearchService } = deps;
+  const getMusicDir = deps.getMusicDir ?? (() => deps.musicDir);
   const { sqlite } = dbContext;
 
   const selectPlaylistSummary = (playlistId: number): PlaylistSummary | null => {
@@ -112,6 +177,11 @@ export async function registerPlaylistRoutes(
           p.created_at AS createdAt,
           p.updated_at AS updatedAt,
           COUNT(pt.id) AS trackCount,
+          (
+            SELECT COUNT(*)
+            FROM playlist_missing_tracks pmt
+            WHERE pmt.playlist_id = p.id
+          ) AS missingCount,
           COALESCE(SUM(t.duration_seconds), 0) AS totalDurationSeconds,
           (
             SELECT al.id
@@ -163,6 +233,39 @@ export async function registerPlaylistRoutes(
       .all(playlistId) as TrackRow[];
   };
 
+  const selectMissingTracks = (playlistId: number): PlaylistMissingTrack[] => {
+    const rows = sqlite
+      .prepare(
+        `
+        SELECT
+          id,
+          playlist_id AS playlistId,
+          position,
+          title,
+          artist,
+          album,
+          status
+        FROM playlist_missing_tracks
+        WHERE playlist_id = ?
+        ORDER BY position ASC, id ASC
+      `,
+      )
+      .all(playlistId) as MissingTrackRow[];
+    return rows.map(toMissingTrack);
+  };
+
+  const selectAllLibraryTracks = (): LocalLibraryTrack[] => {
+    return sqlite
+      .prepare(
+        `
+        SELECT t.id, t.title, ar.name AS artistName, t.file_path AS filePath
+        FROM tracks t
+        JOIN artists ar ON ar.id = t.artist_id
+      `,
+      )
+      .all() as LocalLibraryTrack[];
+  };
+
   // List all playlists
   app.get("/api/playlists", async (): Promise<PlaylistSummary[]> => {
     const rows = sqlite
@@ -175,6 +278,11 @@ export async function registerPlaylistRoutes(
           p.created_at AS createdAt,
           p.updated_at AS updatedAt,
           COUNT(pt.id) AS trackCount,
+          (
+            SELECT COUNT(*)
+            FROM playlist_missing_tracks pmt
+            WHERE pmt.playlist_id = p.id
+          ) AS missingCount,
           COALESCE(SUM(t.duration_seconds), 0) AS totalDurationSeconds,
           (
             SELECT al.id
@@ -216,7 +324,7 @@ export async function registerPlaylistRoutes(
     return created;
   });
 
-  // Playlist detail + ordered tracks
+  // Playlist detail + ordered tracks + missing tracks
   app.get("/api/playlists/:id", async (request, reply): Promise<PlaylistDetailResponse> => {
     const parsed = idParamSchema.safeParse(request.params);
     if (!parsed.success) {
@@ -231,6 +339,7 @@ export async function registerPlaylistRoutes(
     return {
       playlist,
       tracks: selectPlaylistTracks(parsed.data.id),
+      missingTracks: selectMissingTracks(parsed.data.id),
     };
   });
 
@@ -269,6 +378,7 @@ export async function registerPlaylistRoutes(
     if (!parsedId.success) {
       return reply.code(400).send({ error: "Invalid playlist ID" });
     }
+    batchSearchService?.cancel(parsedId.data.id);
     const res = sqlite.prepare("DELETE FROM playlists WHERE id = ?").run(parsedId.data.id);
     if (res.changes === 0) {
       return reply.code(404).send({ error: "Playlist not found" });
@@ -316,6 +426,7 @@ export async function registerPlaylistRoutes(
     return {
       playlist: selectPlaylistSummary(parsedId.data.id)!,
       tracks: selectPlaylistTracks(parsedId.data.id),
+      missingTracks: selectMissingTracks(parsedId.data.id),
     };
   });
 
@@ -326,7 +437,6 @@ export async function registerPlaylistRoutes(
       return reply.code(400).send({ error: "Invalid parameters" });
     }
 
-    // Remove the first matching occurrence and re-compact positions cleanly
     const row = sqlite
       .prepare(
         "SELECT id FROM playlist_tracks WHERE playlist_id = ? AND track_id = ? ORDER BY position ASC LIMIT 1",
@@ -345,6 +455,7 @@ export async function registerPlaylistRoutes(
     return {
       playlist: selectPlaylistSummary(parsed.data.id)!,
       tracks: selectPlaylistTracks(parsed.data.id),
+      missingTracks: selectMissingTracks(parsed.data.id),
     };
   });
 
@@ -380,6 +491,7 @@ export async function registerPlaylistRoutes(
     return {
       playlist: selectPlaylistSummary(parsedId.data.id)!,
       tracks: selectPlaylistTracks(parsedId.data.id),
+      missingTracks: selectMissingTracks(parsedId.data.id),
     };
   });
 
@@ -395,12 +507,13 @@ export async function registerPlaylistRoutes(
       return reply.code(404).send({ error: "Playlist not found" });
     }
 
+    const activeMusicDir = getMusicDir();
     const tracks = selectPlaylistTracks(parsed.data.id);
     const lines = ["#EXTM3U", `#PLAYLIST:${playlist.name}`];
     for (const track of tracks) {
       const secs = track.durationSeconds ? Math.round(track.durationSeconds) : -1;
       lines.push(`#EXTINF:${secs},${track.artistName} - ${track.title}`);
-      const relPath = path.relative(musicDir, track.filePath).split(path.sep).join("/");
+      const relPath = path.relative(activeMusicDir, track.filePath).split(path.sep).join("/");
       lines.push(relPath);
     }
 
@@ -410,86 +523,284 @@ export async function registerPlaylistRoutes(
     return reply.send(`${lines.join("\n")}\n`);
   });
 
-  // Import an .m3u8 playlist, matching entries by relative path, filename, or #EXTINF Artist - Title
+  // Import an .m3u8 or .csv (Exportify / Spotify / generic) playlist
   app.post("/api/playlists/import", async (request, reply): Promise<ImportM3u8Response> => {
-    const parsed = importM3u8BodySchema.safeParse(request.body);
+    const parsed = importPlaylistBodySchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.code(400).send({ error: "Provide a playlist name and .m3u8 content." });
+      return reply.code(400).send({ error: "Provide a playlist name and .m3u8 or .csv content." });
     }
 
-    const allTracks = sqlite
-      .prepare(
-        `
-        SELECT t.id, t.title, ar.name AS artistName, t.file_path AS filePath
-        FROM tracks t
-        JOIN artists ar ON ar.id = t.artist_id
-      `,
-      )
-      .all() as Array<{ id: number; title: string; artistName: string; filePath: string }>;
+    const format = detectFormat(parsed.data.content, parsed.data.format);
+    const entries =
+      format === "csv"
+        ? parseCsvPlaylist(parsed.data.content)
+        : parseM3u8Playlist(parsed.data.content);
 
-    const byRelPath = new Map<string, number>();
-    const byBasename = new Map<string, number>();
-    const byArtistTitle = new Map<string, number>();
-
-    for (const t of allTracks) {
-      const rel = path.relative(musicDir, t.filePath).split(path.sep).join("/").toLowerCase();
-      byRelPath.set(rel, t.id);
-      byBasename.set(path.basename(t.filePath).toLowerCase(), t.id);
-      byArtistTitle.set(normalizeMatch(`${t.artistName} ${t.title}`), t.id);
+    if (entries.length === 0) {
+      return reply.code(400).send({
+        error:
+          format === "csv"
+            ? "Could not find any tracks in that CSV. Make sure it has a Track Name / Title column (e.g. from exportify.net)."
+            : "Could not find any track entries in that .m3u8 file.",
+      });
     }
 
-    const rawLines = parsed.data.content.split(/\r?\n/);
+    const matcher = buildLibraryTrackMatcher(selectAllLibraryTracks(), getMusicDir());
     const matchedIds: number[] = [];
-    const unmatchedEntries: string[] = [];
-    let pendingExtinf: string | null = null;
+    const missingEntries: Array<{ position: number; title: string; artist: string; album: string | null; rawLabel: string }> = [];
 
-    for (const rawLine of rawLines) {
-      const line = rawLine.trim();
-      if (!line) continue;
-      if (line.startsWith("#EXTINF:")) {
-        const commaIdx = line.indexOf(",");
-        pendingExtinf = commaIdx >= 0 ? line.slice(commaIdx + 1).trim() : null;
-        continue;
-      }
-      if (line.startsWith("#")) continue;
-
-      const normalizedLine = line.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
-      const base = path.posix.basename(normalizedLine);
-
-      let matchedId = byRelPath.get(normalizedLine) ?? byBasename.get(base);
-      if (matchedId === undefined && pendingExtinf) {
-        matchedId = byArtistTitle.get(normalizeMatch(pendingExtinf));
-      }
-
-      if (matchedId !== undefined) {
+    entries.forEach((entry, idx) => {
+      const matchedId = matcher.match(entry);
+      if (matchedId !== null) {
         matchedIds.push(matchedId);
       } else {
-        unmatchedEntries.push(pendingExtinf || line);
+        missingEntries.push({
+          position: idx,
+          title: entry.title,
+          artist: entry.artist,
+          album: entry.album,
+          rawLabel: entry.rawLabel,
+        });
       }
-      pendingExtinf = null;
-    }
+    });
 
     const now = Date.now();
+    const desc = format === "csv" ? "Imported from CSV" : "Imported from M3U8";
     const res = sqlite
       .prepare(
         "INSERT INTO playlists (name, description, created_at, updated_at) VALUES (?, ?, ?, ?)",
       )
-      .run(parsed.data.name, "Imported from M3U8", now, now);
+      .run(parsed.data.name, desc, now, now);
     const playlistId = Number(res.lastInsertRowid);
 
-    const insertStmt = sqlite.prepare(
+    const insertTrackStmt = sqlite.prepare(
       "INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)",
     );
-    const tx = sqlite.transaction((ids: number[]) => {
-      ids.forEach((tid, idx) => insertStmt.run(playlistId, tid, idx, now));
-    });
-    tx(matchedIds);
+    const insertMissingStmt = sqlite.prepare(
+      "INSERT INTO playlist_missing_tracks (playlist_id, position, title, artist, album, status, created_at) VALUES (?, ?, ?, ?, ?, 'missing', ?)",
+    );
 
+    const tx = sqlite.transaction(() => {
+      matchedIds.forEach((tid, idx) => insertTrackStmt.run(playlistId, tid, idx, now));
+      for (const m of missingEntries) {
+        insertMissingStmt.run(playlistId, m.position, m.title, m.artist, m.album, now);
+      }
+    });
+    tx();
+
+    const missingTracks = selectMissingTracks(playlistId);
     reply.code(201);
     return {
       playlist: selectPlaylistSummary(playlistId)!,
+      format,
       matchedCount: matchedIds.length,
-      unmatchedEntries: unmatchedEntries.slice(0, 50),
+      missingCount: missingTracks.length,
+      unmatchedEntries: missingEntries.slice(0, 50).map((m) => m.rawLabel),
+      missingTracks,
     };
+  });
+
+  // Re-check missing tracks against the current local library (e.g. after downloading & scanning)
+  app.post(
+    "/api/playlists/:id/recheck-missing",
+    async (request, reply): Promise<RecheckMissingTracksResponse> => {
+      const parsedId = idParamSchema.safeParse(request.params);
+      if (!parsedId.success) {
+        return reply.code(400).send({ error: "Invalid playlist ID" });
+      }
+      const existing = selectPlaylistSummary(parsedId.data.id);
+      if (!existing) {
+        return reply.code(404).send({ error: "Playlist not found" });
+      }
+
+      const missing = selectMissingTracks(parsedId.data.id);
+      const matcher = buildLibraryTrackMatcher(selectAllLibraryTracks(), getMusicDir());
+
+      const maxPosRow = sqlite
+        .prepare("SELECT COALESCE(MAX(position), -1) AS maxPos FROM playlist_tracks WHERE playlist_id = ?")
+        .get(parsedId.data.id) as { maxPos: number };
+      let nextPos = maxPosRow.maxPos + 1;
+      const now = Date.now();
+      let newlyMatchedCount = 0;
+
+      const insertTrackStmt = sqlite.prepare(
+        "INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)",
+      );
+      const deleteMissingStmt = sqlite.prepare("DELETE FROM playlist_missing_tracks WHERE id = ?");
+
+      const tx = sqlite.transaction(() => {
+        for (const item of missing) {
+          const matchId = matcher.match({
+            title: item.title,
+            artist: item.artist,
+            album: item.album,
+            rawLabel: `${item.artist} - ${item.title}`,
+          });
+          if (matchId !== null) {
+            insertTrackStmt.run(parsedId.data.id, matchId, nextPos, now);
+            deleteMissingStmt.run(item.id);
+            batchSearchService?.removeTrackFromJob(parsedId.data.id, item.id);
+            nextPos += 1;
+            newlyMatchedCount += 1;
+          }
+        }
+        if (newlyMatchedCount > 0) {
+          sqlite
+            .prepare("UPDATE playlists SET updated_at = ? WHERE id = ?")
+            .run(now, parsedId.data.id);
+        }
+      });
+      tx();
+
+      const remaining = selectMissingTracks(parsedId.data.id);
+      return {
+        playlist: selectPlaylistSummary(parsedId.data.id)!,
+        newlyMatchedCount,
+        remainingMissingCount: remaining.length,
+        tracks: selectPlaylistTracks(parsedId.data.id),
+        missingTracks: remaining,
+      };
+    },
+  );
+
+  // Dismiss a missing track from a playlist
+  app.delete("/api/playlists/:id/missing/:missingId", async (request, reply) => {
+    const parsed = missingTrackParamSchema.safeParse(request.params);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Invalid parameters" });
+    }
+    const res = sqlite
+      .prepare("DELETE FROM playlist_missing_tracks WHERE id = ? AND playlist_id = ?")
+      .run(parsed.data.missingId, parsed.data.id);
+    if (res.changes === 0) {
+      return reply.code(404).send({ error: "Missing track not found" });
+    }
+    batchSearchService?.removeTrackFromJob(parsed.data.id, parsed.data.missingId);
+    return {
+      playlist: selectPlaylistSummary(parsed.data.id)!,
+      tracks: selectPlaylistTracks(parsed.data.id),
+      missingTracks: selectMissingTracks(parsed.data.id),
+    };
+  });
+
+  // Start a rate-limited batch Soulseek search across missing tracks (all or selected IDs)
+  app.post(
+    "/api/playlists/:id/missing/search-batch",
+    async (request, reply): Promise<MissingTrackBatchJobStatus> => {
+      const parsedId = idParamSchema.safeParse(request.params);
+      if (!parsedId.success) {
+        return reply.code(400).send({ error: "Invalid playlist ID" });
+      }
+      const parsedBody = startBatchSearchBodySchema.safeParse(request.body);
+      if (!parsedBody.success) {
+        return reply.code(400).send({ error: "Invalid batch search parameters" });
+      }
+      if (!slskdClient || !batchSearchService) {
+        return reply.code(503).send({ error: "Soulseek batch search is unavailable." });
+      }
+      if (!slskdClient.isConfigured) {
+        return reply.code(503).send({
+          error: "slskd is not configured. Set SLSKD_URL and SLSKD_API_KEY in .env first.",
+        });
+      }
+
+      const existing = selectPlaylistSummary(parsedId.data.id);
+      if (!existing) {
+        return reply.code(404).send({ error: "Playlist not found" });
+      }
+
+      let targets = selectMissingTracks(parsedId.data.id);
+      if (parsedBody.data.missingTrackIds && parsedBody.data.missingTrackIds.length > 0) {
+        const allow = new Set(parsedBody.data.missingTrackIds);
+        targets = targets.filter((t) => allow.has(t.id));
+      }
+
+      if (targets.length === 0) {
+        return reply.code(400).send({ error: "No missing tracks to search." });
+      }
+
+      const status = batchSearchService.startBatch(
+        parsedId.data.id,
+        targets,
+        parsedBody.data.concurrency,
+      );
+      reply.code(202);
+      return status;
+    },
+  );
+
+  // Poll live per-song batch search progress
+  app.get(
+    "/api/playlists/:id/missing/search-batch",
+    async (request, reply): Promise<MissingTrackBatchJobStatus> => {
+      const parsedId = idParamSchema.safeParse(request.params);
+      if (!parsedId.success) {
+        return reply.code(400).send({ error: "Invalid playlist ID" });
+      }
+      if (!batchSearchService) {
+        return reply.code(503).send({ error: "Soulseek batch search is unavailable." });
+      }
+      return batchSearchService.getStatus(parsedId.data.id);
+    },
+  );
+
+  // Cancel an active batch search
+  app.delete(
+    "/api/playlists/:id/missing/search-batch",
+    async (request, reply): Promise<MissingTrackBatchJobStatus> => {
+      const parsedId = idParamSchema.safeParse(request.params);
+      if (!parsedId.success) {
+        return reply.code(400).send({ error: "Invalid playlist ID" });
+      }
+      if (!batchSearchService) {
+        return reply.code(503).send({ error: "Soulseek batch search is unavailable." });
+      }
+      return batchSearchService.cancel(parsedId.data.id);
+    },
+  );
+
+  // Enqueue a chosen Soulseek file for a missing track and mark it as queued
+  app.post("/api/playlists/:id/missing/:missingId/download", async (request, reply) => {
+    const parsedParams = missingTrackParamSchema.safeParse(request.params);
+    if (!parsedParams.success) {
+      return reply.code(400).send({ error: "Invalid parameters" });
+    }
+    const parsedBody = downloadMissingCandidateBodySchema.safeParse(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ error: "Invalid download candidate" });
+    }
+    if (!slskdClient || !slskdClient.isConfigured) {
+      return reply.code(503).send({
+        error: "slskd is not configured. Set SLSKD_URL and SLSKD_API_KEY in .env first.",
+      });
+    }
+
+    const row = sqlite
+      .prepare("SELECT id FROM playlist_missing_tracks WHERE id = ? AND playlist_id = ?")
+      .get(parsedParams.data.missingId, parsedParams.data.id) as { id: number } | undefined;
+    if (!row) {
+      return reply.code(404).send({ error: "Missing track not found" });
+    }
+
+    try {
+      await slskdClient.enqueueDownloads(parsedBody.data.username, [
+        { filename: parsedBody.data.filename, size: parsedBody.data.size },
+      ]);
+    } catch (err) {
+      if (err instanceof SlskdError) {
+        return reply.code(err.statusCode).send({ error: err.message });
+      }
+      throw err;
+    }
+
+    sqlite
+      .prepare("UPDATE playlist_missing_tracks SET status = 'queued' WHERE id = ?")
+      .run(parsedParams.data.missingId);
+    batchSearchService?.markTrackQueued(parsedParams.data.id, parsedParams.data.missingId);
+
+    return reply.code(202).send({
+      queued: true,
+      missingTrackId: parsedParams.data.missingId,
+    });
   });
 }

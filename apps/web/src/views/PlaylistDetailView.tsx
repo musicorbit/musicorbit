@@ -1,21 +1,42 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AlertCircle,
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  CheckCircle2,
+  Clock,
   Download,
   ListMusic,
+  Loader2,
   Pause,
   Play,
+  RefreshCw,
+  Search,
+  Square,
   Trash2,
+  X,
 } from "lucide-react";
-import type { PlaylistDetailResponse } from "@musicorbit/shared";
+import type {
+  AcquisitionStatusResponse,
+  MissingTrackBatchItemState,
+  MissingTrackBatchJobStatus,
+  MissingTrackSearchCandidate,
+  PlaylistDetailResponse,
+} from "@musicorbit/shared";
 import {
+  cancelMissingTracksBatchSearch,
   deletePlaylist,
+  dismissMissingPlaylistTrack,
+  downloadMissingPlaylistTrack,
+  fetchAcquisitionStatus,
+  fetchMissingTracksBatchStatus,
   fetchPlaylistDetail,
   getPlaylistExportUrl,
+  recheckMissingPlaylistTracks,
   removeTrackFromPlaylist,
   reorderPlaylistTracks,
+  startMissingTracksBatchSearch,
 } from "../api/client";
 import { AlbumCover } from "../components/AlbumCover";
 import { usePlayer } from "../context/PlayerContext";
@@ -29,6 +50,20 @@ interface PlaylistDetailViewProps {
   onPlaylistsChanged: () => void;
 }
 
+function formatBytesShort(bytes: number): string {
+  if (!bytes || bytes <= 0) return "";
+  const mb = bytes / (1024 * 1024);
+  return `${mb.toFixed(1)} MB`;
+}
+
+function formatCandidateLabel(c: MissingTrackSearchCandidate): string {
+  const fmt = c.extension.toUpperCase();
+  const br = c.bitRate ? `${c.bitRate} kbps` : c.isLossless ? "Lossless" : "";
+  const size = formatBytesShort(c.size);
+  const slot = c.hasFreeUploadSlot ? "free slot" : `queue ${c.queueLength}`;
+  return [fmt, br, size, `@${c.username}`, slot].filter(Boolean).join(" · ");
+}
+
 export function PlaylistDetailView({
   playlistId,
   onBack,
@@ -39,14 +74,31 @@ export function PlaylistDetailView({
   const [detail, setDetail] = useState<PlaylistDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [slskdStatus, setSlskdStatus] = useState<AcquisitionStatusResponse | null>(null);
+  const [batchJob, setBatchJob] = useState<MissingTrackBatchJobStatus | null>(null);
+  const [concurrency, setConcurrency] = useState<number>(2);
+  const [selectedCandidateIdx, setSelectedCandidateIdx] = useState<Record<number, number>>({});
+  const [downloadingIds, setDownloadingIds] = useState<Record<number, boolean>>({});
+  const [downloadingAll, setDownloadingAll] = useState(false);
+  const [rechecking, setRechecking] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [recheckNotice, setRecheckNotice] = useState<string | null>(null);
   const { currentTrack, isPlaying, playQueue, togglePlay } = usePlayer();
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchPlaylistDetail(playlistId);
+      const [res, acq, job] = await Promise.all([
+        fetchPlaylistDetail(playlistId),
+        fetchAcquisitionStatus().catch(() => null),
+        fetchMissingTracksBatchStatus(playlistId).catch(() => null),
+      ]);
       setDetail(res);
+      setSlskdStatus(acq);
+      if (job && job.items.length > 0) {
+        setBatchJob(job);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load playlist");
     } finally {
@@ -57,6 +109,25 @@ export function PlaylistDetailView({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Poll batch search status while running so per-song progress updates live
+  useEffect(() => {
+    if (batchJob?.state !== "running") return;
+    const timer = window.setInterval(() => {
+      void fetchMissingTracksBatchStatus(playlistId)
+        .then((next) => setBatchJob(next))
+        .catch(() => {});
+    }, 800);
+    return () => window.clearInterval(timer);
+  }, [batchJob?.state, playlistId]);
+
+  const batchItemsById = useMemo(() => {
+    const map = new Map<number, MissingTrackBatchItemState>();
+    for (const item of batchJob?.items ?? []) {
+      map.set(item.missingTrackId, item);
+    }
+    return map;
+  }, [batchJob]);
 
   const handleMove = async (index: number, delta: -1 | 1) => {
     if (!detail) return;
@@ -83,6 +154,128 @@ export function PlaylistDetailView({
     onBack();
   };
 
+  const handleStartBatchSearch = async (missingTrackIds?: number[]) => {
+    setBatchError(null);
+    try {
+      const next = await startMissingTracksBatchSearch(playlistId, {
+        missingTrackIds,
+        concurrency,
+      });
+      setBatchJob(next);
+    } catch (err) {
+      setBatchError(err instanceof Error ? err.message : "Could not start Soulseek search");
+    }
+  };
+
+  const handleCancelBatchSearch = async () => {
+    try {
+      const next = await cancelMissingTracksBatchSearch(playlistId);
+      setBatchJob(next);
+    } catch {
+      // Non-fatal
+    }
+  };
+
+  const handleDownloadCandidate = async (
+    missingTrackId: number,
+    candidate: MissingTrackSearchCandidate,
+  ) => {
+    setDownloadingIds((prev) => ({ ...prev, [missingTrackId]: true }));
+    setBatchError(null);
+    try {
+      await downloadMissingPlaylistTrack(playlistId, missingTrackId, {
+        username: candidate.username,
+        filename: candidate.filename,
+        size: candidate.size,
+      });
+      setDetail((prev) =>
+        prev
+          ? {
+              ...prev,
+              missingTracks: prev.missingTracks.map((m) =>
+                m.id === missingTrackId ? { ...m, status: "queued" } : m,
+              ),
+            }
+          : prev,
+      );
+      setBatchJob((prev) =>
+        prev
+          ? {
+              ...prev,
+              items: prev.items.map((item) =>
+                item.missingTrackId === missingTrackId ? { ...item, state: "queued" } : item,
+              ),
+            }
+          : prev,
+      );
+    } catch (err) {
+      setBatchError(err instanceof Error ? err.message : "Failed to enqueue download");
+    } finally {
+      setDownloadingIds((prev) => ({ ...prev, [missingTrackId]: false }));
+    }
+  };
+
+  const foundDownloadables = useMemo(() => {
+    if (!detail) return [];
+    const list: Array<{ missingTrackId: number; candidate: MissingTrackSearchCandidate }> = [];
+    for (const track of detail.missingTracks) {
+      if (track.status === "queued") continue;
+      const item = batchItemsById.get(track.id);
+      if (!item || item.state !== "found" || item.candidates.length === 0) continue;
+      const chosenIdx = selectedCandidateIdx[track.id] ?? 0;
+      const cand = item.candidates[chosenIdx] ?? item.candidates[0];
+      if (cand) list.push({ missingTrackId: track.id, candidate: cand });
+    }
+    return list;
+  }, [detail, batchItemsById, selectedCandidateIdx]);
+
+  const handleDownloadAllFound = async () => {
+    if (foundDownloadables.length === 0) return;
+    setDownloadingAll(true);
+    setBatchError(null);
+    try {
+      for (const entry of foundDownloadables) {
+        await handleDownloadCandidate(entry.missingTrackId, entry.candidate);
+      }
+    } finally {
+      setDownloadingAll(false);
+    }
+  };
+
+  const handleRecheckLibrary = async () => {
+    setRechecking(true);
+    setRecheckNotice(null);
+    setBatchError(null);
+    try {
+      const res = await recheckMissingPlaylistTracks(playlistId);
+      setDetail({
+        playlist: res.playlist,
+        tracks: res.tracks,
+        missingTracks: res.missingTracks,
+      });
+      onPlaylistsChanged();
+      setRecheckNotice(
+        res.newlyMatchedCount > 0
+          ? `Matched ${res.newlyMatchedCount} newly available ${res.newlyMatchedCount === 1 ? "track" : "tracks"} from your library!`
+          : "No newly scanned matches found yet.",
+      );
+    } catch (err) {
+      setBatchError(err instanceof Error ? err.message : "Could not re-check library");
+    } finally {
+      setRechecking(false);
+    }
+  };
+
+  const handleDismissMissing = async (missingId: number) => {
+    try {
+      const updated = await dismissMissingPlaylistTrack(playlistId, missingId);
+      setDetail(updated);
+      onPlaylistsChanged();
+    } catch (err) {
+      setBatchError(err instanceof Error ? err.message : "Could not dismiss track");
+    }
+  };
+
   if (loading) return <p className="text-sm text-zinc-400">Loading playlist…</p>;
   if (error || !detail) {
     return (
@@ -99,7 +292,15 @@ export function PlaylistDetailView({
     );
   }
 
-  const { playlist, tracks } = detail;
+  const { playlist, tracks, missingTracks } = detail;
+  const isBatchRunning = batchJob?.state === "running";
+  const batchPct =
+    batchJob && batchJob.total > 0
+      ? Math.round((batchJob.completed / batchJob.total) * 100)
+      : 0;
+  const activeSearchingCount =
+    batchJob?.items.filter((i) => i.state === "searching").length ?? 0;
+  const slskdReady = Boolean(slskdStatus?.configured);
 
   return (
     <div className="space-y-8">
@@ -135,6 +336,9 @@ export function PlaylistDetailView({
           <p className="text-sm text-zinc-500">
             {playlist.trackCount} {playlist.trackCount === 1 ? "track" : "tracks"} ·{" "}
             {formatTotalDuration(playlist.totalDurationSeconds)}
+            {missingTracks.length > 0 && (
+              <span className="ml-2 text-amber-400">· {missingTracks.length} missing</span>
+            )}
           </p>
 
           <div className="flex flex-wrap items-center gap-2.5 pt-3">
@@ -169,10 +373,12 @@ export function PlaylistDetailView({
         </div>
       </div>
 
+      {/* Matched Library Tracks */}
       {tracks.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/30 px-6 py-12 text-center text-sm text-zinc-400">
-          This playlist has no tracks yet. Click the playlist icon on any track in your library to
-          add songs here.
+        <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/30 px-6 py-10 text-center text-sm text-zinc-400">
+          {missingTracks.length > 0
+            ? "None of these songs are in your local library yet. Search for them on Soulseek below!"
+            : "This playlist has no tracks yet. Click the playlist icon on any track in your library to add songs here."}
         </div>
       ) : (
         <div className="divide-y divide-zinc-800/60 overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-900/40">
@@ -293,6 +499,279 @@ export function PlaylistDetailView({
             );
           })}
         </div>
+      )}
+
+      {/* Missing Tracks & Rate-Limited Soulseek Batch Search */}
+      {missingTracks.length > 0 && (
+        <section className="space-y-4 rounded-2xl border border-zinc-800/90 bg-zinc-900/40 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h3 className="flex items-center gap-2 text-base font-semibold text-zinc-100">
+                Missing Tracks
+                <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-300">
+                  {missingTracks.length}
+                </span>
+              </h3>
+              <p className="mt-0.5 text-xs text-zinc-400">
+                Songs from your imported playlist that aren&apos;t in your local library yet. Batch
+                search queries Soulseek politely a few tracks at a time to respect{" "}
+                <code className="text-zinc-300">slskd</code> limits.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-400">
+                <span>Limit:</span>
+                <select
+                  value={concurrency}
+                  disabled={isBatchRunning}
+                  onChange={(e) => setConcurrency(Number(e.target.value))}
+                  className="bg-transparent font-medium text-zinc-100 focus:outline-none disabled:opacity-50"
+                >
+                  <option value={1} className="bg-zinc-900">
+                    1 at a time
+                  </option>
+                  <option value={2} className="bg-zinc-900">
+                    2 at a time
+                  </option>
+                  <option value={3} className="bg-zinc-900">
+                    3 at a time
+                  </option>
+                </select>
+              </label>
+
+              {isBatchRunning ? (
+                <button
+                  type="button"
+                  onClick={() => void handleCancelBatchSearch()}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/40 bg-red-500/15 px-3.5 py-2 text-xs font-semibold text-red-200 transition hover:bg-red-500/25"
+                >
+                  <Square className="h-3.5 w-3.5 fill-current" />
+                  Stop Search
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={!slskdReady}
+                  onClick={() => void handleStartBatchSearch()}
+                  title={
+                    slskdReady
+                      ? "Search all missing tracks on Soulseek respecting the concurrency limit"
+                      : "Configure SLSKD_URL in .env to enable Soulseek search"
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400 disabled:opacity-45"
+                >
+                  <Search className="h-3.5 w-3.5" />
+                  Search All Missing
+                </button>
+              )}
+
+              {foundDownloadables.length > 0 && (
+                <button
+                  type="button"
+                  disabled={downloadingAll}
+                  onClick={() => void handleDownloadAllFound()}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3.5 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-45"
+                >
+                  {downloadingAll ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5" />
+                  )}
+                  Download All Found ({foundDownloadables.length})
+                </button>
+              )}
+
+              <button
+                type="button"
+                disabled={rechecking}
+                onClick={() => void handleRecheckLibrary()}
+                title="Re-match missing tracks against your local library after downloading & scanning"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-45"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${rechecking ? "animate-spin" : ""}`} />
+                Re-check Library
+              </button>
+            </div>
+          </div>
+
+          {!slskdReady && (
+            <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-200">
+              <code>slskd</code> is not configured in <code>.env</code>. Connect your{" "}
+              <code>slskd</code> instance to search and download missing tracks directly from here.
+            </div>
+          )}
+
+          {batchError && (
+            <div className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+              <span>{batchError}</span>
+            </div>
+          )}
+
+          {recheckNotice && (
+            <div className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+              <span>{recheckNotice}</span>
+            </div>
+          )}
+
+          {/* Batch Progress Bar */}
+          {batchJob && batchJob.total > 0 && (
+            <div className="space-y-1.5 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span className="font-medium text-zinc-200">
+                  {batchJob.state === "running"
+                    ? `Searching Soulseek (${activeSearchingCount}/${batchJob.concurrencyLimit} active) — ${batchJob.completed} of ${batchJob.total} finished`
+                    : batchJob.state === "cancelled"
+                      ? `Search stopped — ${batchJob.completed} of ${batchJob.total} checked`
+                      : `Search finished — ${batchJob.foundCount} found, ${batchJob.notFoundCount} no matches`}
+                </span>
+                <span className="font-mono text-zinc-400">{batchPct}%</span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                <div
+                  className={`h-full transition-all duration-300 ${
+                    batchJob.state === "cancelled" ? "bg-zinc-500" : "bg-amber-400"
+                  }`}
+                  style={{ width: `${batchPct}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Per-Song Missing Track Rows */}
+          <div className="divide-y divide-zinc-800/60 overflow-hidden rounded-xl border border-zinc-800/80 bg-zinc-950/40">
+            {missingTracks.map((mt) => {
+              const jobItem = batchItemsById.get(mt.id);
+              const effectiveState =
+                mt.status === "queued" ? "queued" : (jobItem?.state ?? "idle");
+              const candidates = jobItem?.candidates ?? [];
+              const chosenIdx = selectedCandidateIdx[mt.id] ?? 0;
+              const chosenCandidate = candidates[chosenIdx] ?? candidates[0] ?? null;
+              const isDownloading = Boolean(downloadingIds[mt.id]);
+
+              return (
+                <div
+                  key={mt.id}
+                  className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-zinc-100">{mt.title}</p>
+                    <p className="truncate text-xs text-zinc-400">
+                      {mt.artist}
+                      {mt.album ? ` · ${mt.album}` : ""}
+                    </p>
+                  </div>
+
+                  {/* Live Per-Song Status & Inline Actions */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {effectiveState === "pending" && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-800 px-2.5 py-1 text-xs text-zinc-400">
+                        <Clock className="h-3 w-3" />
+                        Waiting…
+                      </span>
+                    )}
+
+                    {effectiveState === "searching" && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-300 ring-1 ring-amber-500/30">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Searching…
+                      </span>
+                    )}
+
+                    {effectiveState === "found" && chosenCandidate && (
+                      <>
+                        <select
+                          value={chosenIdx}
+                          onChange={(e) =>
+                            setSelectedCandidateIdx((prev) => ({
+                              ...prev,
+                              [mt.id]: Number(e.target.value),
+                            }))
+                          }
+                          aria-label={`Select match for ${mt.title}`}
+                          className="max-w-[260px] truncate rounded-lg border border-emerald-500/30 bg-zinc-900 px-2.5 py-1 text-xs text-emerald-200 focus:border-emerald-400 focus:outline-none"
+                        >
+                          {candidates.map((cand, idx) => (
+                            <option
+                              key={`${cand.username}-${cand.filename}-${idx}`}
+                              value={idx}
+                              className="bg-zinc-900 text-zinc-100"
+                            >
+                              {formatCandidateLabel(cand)}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          disabled={isDownloading}
+                          onClick={() => void handleDownloadCandidate(mt.id, chosenCandidate)}
+                          className="inline-flex items-center gap-1 rounded-lg bg-emerald-500 px-2.5 py-1 text-xs font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-45"
+                        >
+                          {isDownloading ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Download className="h-3 w-3" />
+                          )}
+                          Download
+                        </button>
+                      </>
+                    )}
+
+                    {effectiveState === "queued" && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-300 ring-1 ring-emerald-500/30">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Queued in slskd
+                      </span>
+                    )}
+
+                    {effectiveState === "not_found" && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-800/80 px-2.5 py-1 text-xs text-zinc-400">
+                        No matches
+                      </span>
+                    )}
+
+                    {effectiveState === "error" && (
+                      <span
+                        title={jobItem?.error ?? "Search error"}
+                        className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2.5 py-1 text-xs text-red-300"
+                      >
+                        <AlertCircle className="h-3 w-3" />
+                        Error
+                      </span>
+                    )}
+
+                    {(effectiveState === "idle" ||
+                      effectiveState === "not_found" ||
+                      effectiveState === "error") && (
+                      <button
+                        type="button"
+                        disabled={!slskdReady || isBatchRunning}
+                        onClick={() => void handleStartBatchSearch([mt.id])}
+                        title="Search Soulseek for this track"
+                        className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-40"
+                      >
+                        <Search className="h-3 w-3" />
+                        Search
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => void handleDismissMissing(mt.id)}
+                      title="Dismiss from missing list"
+                      aria-label={`Dismiss ${mt.title}`}
+                      className="rounded-lg p-1 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
       )}
     </div>
   );

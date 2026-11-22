@@ -1,8 +1,9 @@
-import { useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, ListMusic, Play, Plus, Upload } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, ListMusic, Play, Plus, Upload } from "lucide-react";
 import type { ImportM3u8Response, PlaylistSummary } from "@musicorbit/shared";
-import { createPlaylist, fetchPlaylistDetail, importM3u8Playlist } from "../api/client";
+import { createPlaylist, fetchPlaylistDetail } from "../api/client";
 import { AlbumCover } from "../components/AlbumCover";
+import { ImportPlaylistModal } from "../components/ImportPlaylistModal";
 import { usePlayer } from "../context/PlayerContext";
 import { formatTotalDuration } from "../utils/format";
 
@@ -21,12 +22,11 @@ export function PlaylistsView({
 }: PlaylistsViewProps) {
   const { playQueue } = usePlayer();
   const [creating, setCreating] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [saving, setSaving] = useState(false);
-  const [importNotice, setImportNotice] = useState<ImportM3u8Response | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -46,19 +46,10 @@ export function PlaylistsView({
     }
   };
 
-  const handleImportFile = async (file: File | null) => {
-    if (!file) return;
-    setError(null);
-    setImportNotice(null);
-    try {
-      const text = await file.text();
-      const baseName = file.name.replace(/\.(m3u8|m3u)$/i, "").trim() || "Imported Playlist";
-      const res = await importM3u8Playlist(baseName, text);
-      setImportNotice(res);
-      onPlaylistsChanged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to import .m3u8 playlist");
-    }
+  const handleImported = (res: ImportM3u8Response) => {
+    onPlaylistsChanged();
+    // Jump directly into the newly imported playlist so matched tracks & any missing tracks are immediately visible
+    onSelectPlaylist(res.playlist.id);
   };
 
   const handleQuickPlay = async (e: React.MouseEvent, playlistId: number) => {
@@ -79,30 +70,22 @@ export function PlaylistsView({
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-zinc-50">Playlists</h2>
           <p className="mt-1 text-sm text-zinc-400">
-            Create playlists or import/export standard{" "}
+            Create playlists or import from{" "}
+            <code className="rounded bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-300">.csv</code>{" "}
+            (Spotify via Exportify) and{" "}
             <code className="rounded bg-zinc-900 px-1.5 py-0.5 text-xs text-zinc-300">.m3u8</code>{" "}
-            files compatible with Navidrome and Symfonium.
+            files.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".m3u8,.m3u,audio/x-mpegurl"
-            onChange={(e) => {
-              void handleImportFile(e.target.files?.[0] ?? null);
-              e.target.value = "";
-            }}
-            className="hidden"
-          />
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => setImportModalOpen(true)}
             className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3.5 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
           >
             <Upload className="h-4 w-4" />
-            Import .m3u8
+            Import Playlist
           </button>
           <button
             type="button"
@@ -156,23 +139,6 @@ export function PlaylistsView({
         </form>
       )}
 
-      {importNotice && (
-        <div className="flex items-start gap-2.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-xs text-emerald-200">
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
-          <div>
-            <p className="font-medium">
-              Imported &ldquo;{importNotice.playlist.name}&rdquo; — matched{" "}
-              {importNotice.matchedCount}{" "}
-              {importNotice.matchedCount === 1 ? "track" : "tracks"}
-              {importNotice.unmatchedEntries.length > 0
-                ? ` (${importNotice.unmatchedEntries.length} unmatched)`
-                : ""}
-              .
-            </p>
-          </div>
-        </div>
-      )}
-
       {error && (
         <div className="flex items-start gap-2.5 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-xs text-red-200">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
@@ -189,8 +155,8 @@ export function PlaylistsView({
           </div>
           <h3 className="mt-4 text-base font-medium text-zinc-200">No playlists yet</h3>
           <p className="mt-1 max-w-md text-xs text-zinc-500">
-            Create a playlist above, import an existing <code>.m3u8</code> file, or click the{" "}
-            <strong>Add to playlist</strong> icon on any song in your library.
+            Create a playlist above, import a <code>.csv</code> (Spotify via exportify.net) or{" "}
+            <code>.m3u8</code> file, or click the <strong>Add to playlist</strong> icon on any song.
           </p>
         </div>
       ) : (
@@ -242,14 +208,28 @@ export function PlaylistsView({
                 {pl.description && (
                   <p className="mt-0.5 truncate text-xs text-zinc-400">{pl.description}</p>
                 )}
-                <p className="mt-1 text-[11px] text-zinc-500">
-                  {pl.trackCount} {pl.trackCount === 1 ? "track" : "tracks"} ·{" "}
-                  {formatTotalDuration(pl.totalDurationSeconds)}
+                <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+                  <span>
+                    {pl.trackCount} {pl.trackCount === 1 ? "track" : "tracks"} ·{" "}
+                    {formatTotalDuration(pl.totalDurationSeconds)}
+                  </span>
+                  {pl.missingCount > 0 && (
+                    <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-300">
+                      {pl.missingCount} missing
+                    </span>
+                  )}
                 </p>
               </div>
             </div>
           ))}
         </div>
+      )}
+
+      {importModalOpen && (
+        <ImportPlaylistModal
+          onClose={() => setImportModalOpen(false)}
+          onImported={handleImported}
+        />
       )}
     </div>
   );

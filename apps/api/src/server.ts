@@ -10,27 +10,34 @@ import { registerLibraryRoutes } from "./routes/library.js";
 import { registerMediaRoutes } from "./routes/media.js";
 import { registerMetadataRoutes } from "./routes/metadata.js";
 import { registerPlaylistRoutes } from "./routes/playlists.js";
+import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerStaticWeb } from "./routes/staticWeb.js";
 import { SlskdClient } from "./services/acquisition/slskd.js";
 import { ArtistImageService } from "./services/artistImages.js";
 import { LibraryImporter } from "./services/importer.js";
 import { MetadataLookupService } from "./services/metadataLookup.js";
 import { MusicBrainzClient } from "./services/musicbrainz.js";
+import { PlaylistBatchSearchService } from "./services/playlistBatchSearch.js";
 import { LibraryScanner } from "./services/scanner.js";
+import { SettingsService } from "./services/settings.js";
 
 export interface ServerHandle {
   app: FastifyInstance;
   dbContext: DbContext;
+  settingsService: SettingsService;
   scanner: LibraryScanner;
   artistImageService: ArtistImageService;
   slskdClient: SlskdClient;
   musicBrainz: MusicBrainzClient;
   importer: LibraryImporter;
+  batchSearchService: PlaylistBatchSearchService;
 }
 
 export interface BuildServerOptions {
   fetchImpl?: typeof fetch;
   musicBrainzRateLimitMs?: number;
+  batchSearchStaggerMs?: number;
+  batchSearchPollMs?: number;
 }
 
 /**
@@ -53,9 +60,17 @@ export async function buildServer(
   });
 
   const dbContext = initDatabase(config.dbPath);
+  const settingsService = new SettingsService({
+    dbContext,
+    defaultMusicDir: config.musicDir,
+    downloadsDir: config.downloadsDir,
+  });
+  const getMusicDir = () => settingsService.getMusicDir();
+
   const scanner = new LibraryScanner({
     dbContext,
     musicDir: config.musicDir,
+    getMusicDir,
     coversDir: config.coversDir,
     logger: app.log,
   });
@@ -82,17 +97,24 @@ export async function buildServer(
   const importer = new LibraryImporter({
     dbContext,
     musicDir: config.musicDir,
+    getMusicDir,
     downloadsDir: config.downloadsDir,
     autoImportThreshold: config.autoImportThreshold,
     musicBrainz,
     scanner,
     logger: app.log,
   });
+  const batchSearchService = new PlaylistBatchSearchService({
+    slskdClient,
+    staggerMs: options?.batchSearchStaggerMs,
+    pollIntervalMs: options?.batchSearchPollMs,
+  });
 
   // Register auth routes & optional onRequest protection hook before protected routes
   await registerAuthRoutes(app, { dbContext, authEnabled: config.authEnabled });
 
-  await registerHealthRoutes(app, { config, dbContext });
+  await registerHealthRoutes(app, { config, dbContext, getMusicDir });
+  await registerSettingsRoutes(app, { settingsService, scanner });
   await registerLibraryRoutes(app, { dbContext, scanner });
   await registerMediaRoutes(app, {
     dbContext,
@@ -108,7 +130,13 @@ export async function buildServer(
     metadataLookup,
     fetchImpl: options?.fetchImpl,
   });
-  await registerPlaylistRoutes(app, { dbContext, musicDir: config.musicDir });
+  await registerPlaylistRoutes(app, {
+    dbContext,
+    musicDir: config.musicDir,
+    getMusicDir,
+    slskdClient,
+    batchSearchService,
+  });
 
   // Serve production frontend bundle when WEB_DIST_DIR is configured (e.g. Docker)
   if (config.webDistDir) {
@@ -123,10 +151,12 @@ export async function buildServer(
   return {
     app,
     dbContext,
+    settingsService,
     scanner,
     artistImageService,
     slskdClient,
     musicBrainz,
     importer,
+    batchSearchService,
   };
 }

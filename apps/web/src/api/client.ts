@@ -9,6 +9,7 @@ import type {
   ArtistImageUpdateResponse,
   ArtistSummary,
   AuthStatusResponse,
+  BrowseDirectoriesResponse,
   DownloadsListResponse,
   EditableTrackTags,
   EnqueueDownloadRequest,
@@ -18,14 +19,18 @@ import type {
   ImportsListResponse,
   InboxScanResult,
   MetadataProvider,
+  MissingTrackBatchJobStatus,
   MusicBrainzReleaseCandidate,
   MusicBrainzReleaseDetail,
   PlaylistDetailResponse,
+  PlaylistImportFormat,
   PlaylistSummary,
+  RecheckMissingTracksResponse,
   RetagAlbumResponse,
   ScanStatusResponse,
   SoulseekSearchResultsResponse,
   SoulseekSearchSummary,
+  SystemSettingsResponse,
   TrackMetadataResponse,
   TrackMetadataSuggestion,
   TrackSummary,
@@ -452,20 +457,126 @@ export async function reorderPlaylistTracks(
   return (await res.json()) as PlaylistDetailResponse;
 }
 
-export async function importM3u8Playlist(
+export async function importPlaylistFile(
   name: string,
   content: string,
+  format?: PlaylistImportFormat,
 ): Promise<ImportM3u8Response> {
   const res = await fetch("/api/playlists/import", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, content }),
+    body: JSON.stringify({ name, content, format }),
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ?? `Could not import playlist (HTTP ${res.status})`);
   }
   return (await res.json()) as ImportM3u8Response;
+}
+
+export async function recheckMissingPlaylistTracks(
+  playlistId: number,
+): Promise<RecheckMissingTracksResponse> {
+  const res = await fetch(`/api/playlists/${playlistId}/recheck-missing`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not re-check library (HTTP ${res.status})`);
+  }
+  return (await res.json()) as RecheckMissingTracksResponse;
+}
+
+export async function dismissMissingPlaylistTrack(
+  playlistId: number,
+  missingId: number,
+): Promise<PlaylistDetailResponse> {
+  const res = await fetch(`/api/playlists/${playlistId}/missing/${missingId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not remove missing track (HTTP ${res.status})`);
+  }
+  return (await res.json()) as PlaylistDetailResponse;
+}
+
+export async function startMissingTracksBatchSearch(
+  playlistId: number,
+  options?: { missingTrackIds?: number[]; concurrency?: number },
+): Promise<MissingTrackBatchJobStatus> {
+  const res = await fetch(`/api/playlists/${playlistId}/missing/search-batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options ?? {}),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not start Soulseek batch search (HTTP ${res.status})`);
+  }
+  return (await res.json()) as MissingTrackBatchJobStatus;
+}
+
+export function fetchMissingTracksBatchStatus(
+  playlistId: number,
+): Promise<MissingTrackBatchJobStatus> {
+  return getJson<MissingTrackBatchJobStatus>(
+    `/api/playlists/${playlistId}/missing/search-batch`,
+  );
+}
+
+export async function cancelMissingTracksBatchSearch(
+  playlistId: number,
+): Promise<MissingTrackBatchJobStatus> {
+  const res = await fetch(`/api/playlists/${playlistId}/missing/search-batch`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    throw new Error(`Could not cancel batch search (HTTP ${res.status})`);
+  }
+  return (await res.json()) as MissingTrackBatchJobStatus;
+}
+
+export async function downloadMissingPlaylistTrack(
+  playlistId: number,
+  missingId: number,
+  candidate: { username: string; filename: string; size: number },
+): Promise<{ queued: boolean; missingTrackId: number }> {
+  const res = await fetch(`/api/playlists/${playlistId}/missing/${missingId}/download`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(candidate),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not enqueue download (HTTP ${res.status})`);
+  }
+  return (await res.json()) as { queued: boolean; missingTrackId: number };
+}
+
+export function fetchSystemSettings(): Promise<SystemSettingsResponse> {
+  return getJson<SystemSettingsResponse>("/api/system/settings");
+}
+
+export function browseServerDirectories(dirPath?: string): Promise<BrowseDirectoriesResponse> {
+  const qs = dirPath ? `?path=${encodeURIComponent(dirPath)}` : "";
+  return getJson<BrowseDirectoriesResponse>(`/api/system/browse-dirs${qs}`);
+}
+
+export async function updateMusicDirectory(
+  dirPath: string,
+  scanNow = true,
+): Promise<SystemSettingsResponse> {
+  const res = await fetch("/api/system/music-dir", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: dirPath, scanNow }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not update music directory (HTTP ${res.status})`);
+  }
+  return (await res.json()) as SystemSettingsResponse;
 }
 
 export function getPlaylistExportUrl(playlistId: number): string {

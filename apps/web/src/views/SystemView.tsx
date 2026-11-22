@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -8,6 +9,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import type { HealthResponse, ScanStatusResponse } from "@musicorbit/shared";
+import { DirectoryPickerModal } from "../components/DirectoryPickerModal";
 
 interface SystemViewProps {
   health: HealthResponse | null;
@@ -16,6 +18,7 @@ interface SystemViewProps {
   startingScan: boolean;
   onScan: (force: boolean) => void;
   onRefresh: () => void;
+  onMusicDirChanged: () => void;
 }
 
 export function SystemView({
@@ -25,7 +28,9 @@ export function SystemView({
   startingScan,
   onScan,
   onRefresh,
+  onMusicDirChanged,
 }: SystemViewProps) {
+  const [pickerOpen, setPickerOpen] = useState(false);
   const isScanning = scanStatus?.state === "running";
   const progressPct =
     scanStatus && scanStatus.filesTotal > 0
@@ -122,9 +127,18 @@ export function SystemView({
                   }`}
                 />
               </div>
-              <p className="mt-3 text-xl font-semibold text-zinc-50">
-                {health.musicDir.exists ? "Ready" : "Not Found Yet"}
-              </p>
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <p className="text-xl font-semibold text-zinc-50">
+                  {health.musicDir.exists ? "Ready" : "Not Found Yet"}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen(true)}
+                  className="rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-200 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-300"
+                >
+                  Change Folder
+                </button>
+              </div>
               <p className="mt-1 truncate text-xs text-zinc-500" title={health.musicDir.path}>
                 {health.musicDir.path}
               </p>
@@ -132,20 +146,28 @@ export function SystemView({
           </div>
 
           {!health.musicDir.exists && (
-            <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
-              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
-              <div>
-                <p className="font-medium">Point MusicOrbit at a music folder to scan</p>
-                <p className="mt-1 text-amber-200/80">
-                  Add audio files to{" "}
-                  <code className="rounded bg-zinc-900/80 px-1.5 py-0.5 text-xs">
-                    {health.musicDir.path}
-                  </code>{" "}
-                  or set{" "}
-                  <code className="rounded bg-zinc-900/80 px-1.5 py-0.5 text-xs">MUSIC_DIR</code>{" "}
-                  in <code className="rounded bg-zinc-900/80 px-1.5 py-0.5 text-xs">.env</code>.
-                </p>
+            <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+                <div>
+                  <p className="font-medium">Point MusicOrbit at a music folder to scan</p>
+                  <p className="mt-1 text-amber-200/80">
+                    Current folder{" "}
+                    <code className="rounded bg-zinc-900/80 px-1.5 py-0.5 text-xs">
+                      {health.musicDir.path}
+                    </code>{" "}
+                    does not exist yet. Click <strong>Select Music Folder</strong> to choose your
+                    library directory directly from the UI.
+                  </p>
+                </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setPickerOpen(true)}
+                className="shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400"
+              >
+                Select Music Folder
+              </button>
             </div>
           )}
 
@@ -241,6 +263,13 @@ export function SystemView({
             )}
           </div>
         </>
+      )}
+      {pickerOpen && (
+        <DirectoryPickerModal
+          initialPath={health?.musicDir.path ?? ""}
+          onClose={() => setPickerOpen(false)}
+          onSaved={() => onMusicDirChanged()}
+        />
       )}
     </div>
   );
