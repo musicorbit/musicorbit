@@ -16,9 +16,14 @@ if (fs.existsSync(rootEnvPath)) {
   dotenv.config();
 }
 
-const booleanFromEnv = z
+const booleanDefaultTrue = z
   .enum(["true", "false", "1", "0"])
   .default("true")
+  .transform((v) => v === "true" || v === "1");
+
+const booleanDefaultFalse = z
+  .enum(["true", "false", "1", "0"])
+  .default("false")
   .transform((v) => v === "true" || v === "1");
 
 const optionalUrl = z
@@ -43,7 +48,9 @@ const envSchema = z.object({
   DATA_DIR: z.string().min(1).default("./data"),
   DOWNLOADS_DIR: z.string().min(1).default("./downloads"),
   AUTO_IMPORT_THRESHOLD: z.coerce.number().int().min(0).max(100).default(85),
-  FETCH_ARTIST_IMAGES: booleanFromEnv,
+  FETCH_ARTIST_IMAGES: booleanDefaultTrue,
+  AUTH_ENABLED: booleanDefaultFalse,
+  WEB_DIST_DIR: optionalString,
   SLSKD_URL: optionalUrl,
   SLSKD_API_KEY: optionalString,
 });
@@ -70,6 +77,8 @@ export const config = {
   coversDir: path.join(resolveFromRoot(parsed.data.DATA_DIR), "covers"),
   artistImagesDir: path.join(resolveFromRoot(parsed.data.DATA_DIR), "artist-images"),
   fetchArtistImages: parsed.data.FETCH_ARTIST_IMAGES,
+  authEnabled: parsed.data.AUTH_ENABLED,
+  webDistDir: parsed.data.WEB_DIST_DIR ? resolveFromRoot(parsed.data.WEB_DIST_DIR) : null,
   slskdUrl: parsed.data.SLSKD_URL,
   slskdApiKey: parsed.data.SLSKD_API_KEY,
   version: "0.1.0",

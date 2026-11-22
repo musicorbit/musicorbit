@@ -23,6 +23,8 @@ interface PlayerContextValue {
   isMuted: boolean;
   repeatMode: RepeatMode;
   shuffle: boolean;
+  canGoNext: boolean;
+  canGoPrev: boolean;
   playbackError: string | null;
   playQueue: (tracks: TrackSummary[], startIndex?: number) => void;
   playTrack: (track: TrackSummary, contextTracks?: TrackSummary[]) => void;
@@ -57,6 +59,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const currentTrack =
     currentIndex >= 0 && currentIndex < queue.length ? (queue[currentIndex] ?? null) : null;
+
+  const canGoNext =
+    queue.length > 0 &&
+    (currentIndex < queue.length - 1 ||
+      repeatMode === "all" ||
+      (shuffle && queue.length > 1));
+
+  const canGoPrev = queue.length > 0 && (currentIndex > 0 || repeatMode === "all");
 
   // Keep refs of latest queue/index/modes for audio event listeners
   const stateRef = useRef({ queue, currentIndex, repeatMode, shuffle });
@@ -202,14 +212,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         setCurrentIndex(0);
         loadAndPlay(firstTrack);
       }
-    } else {
-      setIsPlaying(false);
     }
+    // No next track available: leave current playback state untouched
   }, [loadAndPlay]);
 
   const prev = useCallback(() => {
     const audio = audioRef.current;
-    const { queue: q, currentIndex: idx } = stateRef.current;
+    const { queue: q, currentIndex: idx, repeatMode: rep } = stateRef.current;
     if (q.length === 0) return;
 
     // Standard player behavior: if more than 3s into a track, restart it instead of skipping back
@@ -219,11 +228,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const prevIdx = idx > 0 ? idx - 1 : q.length - 1;
-    const prevTrack = q[prevIdx];
-    if (prevTrack) {
-      setCurrentIndex(prevIdx);
-      loadAndPlay(prevTrack);
+    if (idx > 0) {
+      const prevTrack = q[idx - 1];
+      if (prevTrack) {
+        setCurrentIndex(idx - 1);
+        loadAndPlay(prevTrack);
+      }
+    } else if (rep === "all") {
+      const lastTrack = q[q.length - 1];
+      if (lastTrack) {
+        setCurrentIndex(q.length - 1);
+        loadAndPlay(lastTrack);
+      }
     }
   }, [loadAndPlay]);
 
@@ -279,9 +295,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
     navigator.mediaSession.setActionHandler("play", () => togglePlay());
     navigator.mediaSession.setActionHandler("pause", () => togglePlay());
-    navigator.mediaSession.setActionHandler("previoustrack", () => prev());
-    navigator.mediaSession.setActionHandler("nexttrack", () => next());
-  }, [currentTrack, togglePlay, prev, next]);
+    navigator.mediaSession.setActionHandler("previoustrack", canGoPrev ? () => prev() : null);
+    navigator.mediaSession.setActionHandler("nexttrack", canGoNext ? () => next() : null);
+  }, [currentTrack, togglePlay, prev, next, canGoPrev, canGoNext]);
 
   // Spacebar toggles play/pause when not typing in an input
   useEffect(() => {
@@ -317,6 +333,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         isMuted,
         repeatMode,
         shuffle,
+        canGoNext,
+        canGoPrev,
         playbackError,
         playQueue,
         playTrack,
@@ -348,11 +366,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           }
         }}
         onEnded={() => {
-          if (stateRef.current.repeatMode === "one" && audioRef.current) {
+          const { queue: q, currentIndex: idx, repeatMode: rep, shuffle: shuf } = stateRef.current;
+          if (rep === "one" && audioRef.current) {
             audioRef.current.currentTime = 0;
             void audioRef.current.play();
-          } else {
+          } else if (idx < q.length - 1 || rep === "all" || (shuf && q.length > 1)) {
             next();
+          } else {
+            setIsPlaying(false);
           }
         }}
         onError={() => {

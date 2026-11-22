@@ -25,7 +25,7 @@ export const albums = sqliteTable(
       .references(() => artists.id, { onDelete: "cascade" }),
     year: integer("year"),
     genre: text("genre"),
-    coverHash: text("cover_hash"), // Cached filename in DATA_DIR/covers (e.g. "a1b2c3d4e5f60718.jpg")
+    coverHash: text("cover_hash"), // Cached filename in DATA_DIR/covers
     mbid: text("mbid"), // MusicBrainz Release ID
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
@@ -90,4 +90,41 @@ export const importItems = sqliteTable("import_items", {
   errorMessage: text("error_message"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const playlists = sqliteTable("playlists", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const playlistTracks = sqliteTable("playlist_tracks", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  playlistId: integer("playlist_id")
+    .notNull()
+    .references(() => playlists.id, { onDelete: "cascade" }),
+  trackId: integer("track_id")
+    .notNull()
+    .references(() => tracks.id, { onDelete: "cascade" }),
+  position: integer("position").notNull(),
+  addedAt: integer("added_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const users = sqliteTable("users", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  username: text("username").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  role: text("role").notNull().default("admin"), // "admin" | "user"
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const sessions = sqliteTable("sessions", {
+  tokenHash: text("token_hash").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });

@@ -387,3 +387,44 @@ export interface TrackMetadataSuggestion {
   coverArtUrl: string | null;
   fields: Partial<EditableTrackTags>;
 }
+
+/**
+ * Playlists & M3U8 import/export (Step 6).
+ */
+export interface PlaylistSummary {
+  id: number;
+  name: string;
+  description: string;
+  trackCount: number;
+  totalDurationSeconds: number;
+  coverAlbumId: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlaylistDetailResponse {
+  playlist: PlaylistSummary;
+  tracks: TrackSummary[];
+}
+
+export interface ImportM3u8Response {
+  playlist: PlaylistSummary;
+  matchedCount: number;
+  unmatchedEntries: string[];
+}
+
+/**
+ * Optional authentication & first-run setup (Step 6).
+ */
+export interface AuthUser {
+  id: number;
+  username: string;
+  role: "admin" | "user";
+}
+
+export interface AuthStatusResponse {
+  authEnabled: boolean;
+  needsSetup: boolean;
+  authenticated: boolean;
+  user: AuthUser | null;
+}

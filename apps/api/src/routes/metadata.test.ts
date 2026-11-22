@@ -143,6 +143,8 @@ describe("On-Demand Track Metadata Editor Routes", () => {
         coversDir: path.join(dataDir, "covers"),
         artistImagesDir: path.join(dataDir, "artist-images"),
         fetchArtistImages: false,
+        authEnabled: false,
+        webDistDir: null,
         slskdUrl: null,
         slskdApiKey: null,
         version: "0.1.0",

@@ -8,16 +8,20 @@ import type {
   ArtistImageCandidate,
   ArtistImageUpdateResponse,
   ArtistSummary,
+  AuthStatusResponse,
   DownloadsListResponse,
   EditableTrackTags,
   EnqueueDownloadRequest,
   HealthResponse,
   ImportItemStatus,
+  ImportM3u8Response,
   ImportsListResponse,
   InboxScanResult,
   MetadataProvider,
   MusicBrainzReleaseCandidate,
   MusicBrainzReleaseDetail,
+  PlaylistDetailResponse,
+  PlaylistSummary,
   RetagAlbumResponse,
   ScanStatusResponse,
   SoulseekSearchResultsResponse,
@@ -371,4 +375,139 @@ export async function embedTrackCoverFromUrl(
     throw new Error(body?.error ?? `Failed to embed remote cover art (HTTP ${res.status})`);
   }
   return (await res.json()) as TrackMetadataResponse;
+}
+
+export function fetchPlaylists(): Promise<PlaylistSummary[]> {
+  return getJson<PlaylistSummary[]>("/api/playlists");
+}
+
+export function fetchPlaylistDetail(playlistId: number): Promise<PlaylistDetailResponse> {
+  return getJson<PlaylistDetailResponse>(`/api/playlists/${playlistId}`);
+}
+
+export async function createPlaylist(
+  name: string,
+  description = "",
+): Promise<PlaylistSummary> {
+  const res = await fetch("/api/playlists", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, description }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not create playlist (HTTP ${res.status})`);
+  }
+  return (await res.json()) as PlaylistSummary;
+}
+
+export async function deletePlaylist(playlistId: number): Promise<void> {
+  const res = await fetch(`/api/playlists/${playlistId}`, { method: "DELETE" });
+  if (!res.ok) {
+    throw new Error(`Could not delete playlist (HTTP ${res.status})`);
+  }
+}
+
+export async function addTracksToPlaylist(
+  playlistId: number,
+  trackIds: number[],
+): Promise<PlaylistDetailResponse> {
+  const res = await fetch(`/api/playlists/${playlistId}/tracks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ trackIds }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not add tracks to playlist (HTTP ${res.status})`);
+  }
+  return (await res.json()) as PlaylistDetailResponse;
+}
+
+export async function removeTrackFromPlaylist(
+  playlistId: number,
+  trackId: number,
+): Promise<PlaylistDetailResponse> {
+  const res = await fetch(`/api/playlists/${playlistId}/tracks/${trackId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    throw new Error(`Could not remove track from playlist (HTTP ${res.status})`);
+  }
+  return (await res.json()) as PlaylistDetailResponse;
+}
+
+export async function reorderPlaylistTracks(
+  playlistId: number,
+  trackIds: number[],
+): Promise<PlaylistDetailResponse> {
+  const res = await fetch(`/api/playlists/${playlistId}/tracks/reorder`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ trackIds }),
+  });
+  if (!res.ok) {
+    throw new Error(`Could not reorder playlist (HTTP ${res.status})`);
+  }
+  return (await res.json()) as PlaylistDetailResponse;
+}
+
+export async function importM3u8Playlist(
+  name: string,
+  content: string,
+): Promise<ImportM3u8Response> {
+  const res = await fetch("/api/playlists/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, content }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not import playlist (HTTP ${res.status})`);
+  }
+  return (await res.json()) as ImportM3u8Response;
+}
+
+export function getPlaylistExportUrl(playlistId: number): string {
+  return `/api/playlists/${playlistId}/export.m3u8`;
+}
+
+export function fetchAuthStatus(): Promise<AuthStatusResponse> {
+  return getJson<AuthStatusResponse>("/api/auth/status");
+}
+
+export async function setupAdmin(
+  username: string,
+  password: string,
+): Promise<AuthStatusResponse> {
+  const res = await fetch("/api/auth/setup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Setup failed (HTTP ${res.status})`);
+  }
+  return (await res.json()) as AuthStatusResponse;
+}
+
+export async function loginUser(
+  username: string,
+  password: string,
+): Promise<AuthStatusResponse> {
+  const res = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Login failed (HTTP ${res.status})`);
+  }
+  return (await res.json()) as AuthStatusResponse;
+}
+
+export async function logoutUser(): Promise<void> {
+  await fetch("/api/auth/logout", { method: "POST" });
 }

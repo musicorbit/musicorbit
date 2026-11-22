@@ -1,0 +1,44 @@
+services:
+  musicorbit:
+    build: .
+    container_name: musicorbit
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: "3001"
+      MUSIC_DIR: /music
+      DATA_DIR: /data
+      DOWNLOADS_DIR: /downloads
+      # Set to false only on a private localhost-only machine
+      AUTH_ENABLED: "true"
+      FETCH_ARTIST_IMAGES: "true"
+      AUTO_IMPORT_THRESHOLD: "85"
+      # Optional: connect to an existing or bundled slskd instance
+      # SLSKD_URL: http://slskd:5030
+      # SLSKD_API_KEY: your_slskd_api_key
+    volumes:
+      - ./music:/music
+      - ./data:/data
+      - ./downloads:/downloads
+
+  # Optional bundled slskd daemon — enable with:
+  #   docker compose --profile soulseek up -d
+  slskd:
+    image: slskd/slskd:latest
+    container_name: slskd
+    profiles: ["soulseek"]
+    restart: unless-stopped
+    ports:
+      - "5030:5030"
+      - "50300:50300"
+    environment:
+      SLSKD_REMOTE_CONFIGURATION: "true"
+      # Set your Soulseek credentials in a local .env file (never commit secrets)
+      SLSKD_SLSK_USERNAME: ${SLSKD_SLSK_USERNAME:-}
+      SLSKD_SLSK_PASSWORD: ${SLSKD_SLSK_PASSWORD:-}
+      SLSKD_API_KEY: ${SLSKD_API_KEY:-}
+    volumes:
+      - ./slskd:/app
+      - ./downloads:/downloads
+      - ./music:/music:ro

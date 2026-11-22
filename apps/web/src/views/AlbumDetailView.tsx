@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, ListPlus, Pause, Pencil, Play, Sparkles } from "lucide-react";
-import type { AlbumDetailResponse } from "@musicorbit/shared";
+import { ArrowLeft, ListMusic, ListPlus, Pause, Pencil, Play, Sparkles } from "lucide-react";
+import type { AlbumDetailResponse, TrackSummary } from "@musicorbit/shared";
 import { fetchAlbumDetail, retagAlbum } from "../api/client";
+import { AddToPlaylistModal } from "../components/AddToPlaylistModal";
 import { AlbumCover } from "../components/AlbumCover";
 import { EditTrackMetadataModal } from "../components/EditTrackMetadataModal";
 import { RetagAlbumModal } from "../components/RetagAlbumModal";
@@ -13,6 +14,7 @@ interface AlbumDetailViewProps {
   onBack: () => void;
   onSelectArtist: (artistId: number) => void;
   onAlbumRetagged: () => void;
+  onPlaylistsChanged?: () => void;
 }
 
 export function AlbumDetailView({
@@ -20,12 +22,14 @@ export function AlbumDetailView({
   onBack,
   onSelectArtist,
   onAlbumRetagged,
+  onPlaylistsChanged,
 }: AlbumDetailViewProps) {
   const [detail, setDetail] = useState<AlbumDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retagOpen, setRetagOpen] = useState(false);
   const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
+  const [playlistTrack, setPlaylistTrack] = useState<TrackSummary | null>(null);
   const { currentTrack, isPlaying, playQueue, togglePlay, addToQueue } = usePlayer();
 
   const loadDetail = useCallback(async () => {
@@ -224,6 +228,18 @@ export function AlbumDetailView({
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
+                      setPlaylistTrack(track);
+                    }}
+                    title="Add to playlist"
+                    aria-label={`Add ${track.title} to playlist`}
+                    className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                  >
+                    <ListMusic className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
                       addToQueue(track);
                     }}
                     title="Add to queue"
@@ -281,6 +297,14 @@ export function AlbumDetailView({
             onAlbumRetagged();
             void loadDetail();
           }}
+        />
+      )}
+
+      {playlistTrack && (
+        <AddToPlaylistModal
+          track={playlistTrack}
+          onClose={() => setPlaylistTrack(null)}
+          onChanged={() => onPlaylistsChanged?.()}
         />
       )}
     </div>

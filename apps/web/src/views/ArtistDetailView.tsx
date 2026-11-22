@@ -14,6 +14,7 @@ interface ArtistDetailViewProps {
   onSelectArtist: (artistId: number) => void;
   onGoToScanner: () => void;
   onArtistImageChanged: () => void;
+  onPlaylistsChanged?: () => void;
 }
 
 export function ArtistDetailView({
@@ -23,6 +24,7 @@ export function ArtistDetailView({
   onSelectArtist,
   onGoToScanner,
   onArtistImageChanged,
+  onPlaylistsChanged,
 }: ArtistDetailViewProps) {
   const [detail, setDetail] = useState<ArtistDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -174,6 +176,7 @@ export function ArtistDetailView({
               onArtistImageChanged();
               void fetchArtistDetail(artistId).then(setDetail).catch(() => {});
             }}
+            onPlaylistsChanged={onPlaylistsChanged}
           />
         </div>
       )}

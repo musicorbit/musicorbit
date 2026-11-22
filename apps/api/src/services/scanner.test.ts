@@ -123,6 +123,8 @@ describe("LibraryScanner & Library API", () => {
       coversDir,
       artistImagesDir: path.join(dataDir, "artist-images"),
       fetchArtistImages: false,
+      authEnabled: false,
+      webDistDir: null,
       slskdUrl: null,
       slskdApiKey: null,
       version: "0.1.0",

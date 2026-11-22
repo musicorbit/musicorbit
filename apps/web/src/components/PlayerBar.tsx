@@ -35,6 +35,8 @@ export function PlayerBar({ onSelectAlbum, onSelectArtist }: PlayerBarProps) {
     isMuted,
     repeatMode,
     shuffle,
+    canGoNext,
+    canGoPrev,
     playbackError,
     togglePlay,
     next,
@@ -200,8 +202,10 @@ export function PlayerBar({ onSelectAlbum, onSelectArtist }: PlayerBarProps) {
               <button
                 type="button"
                 onClick={prev}
+                disabled={!canGoPrev}
                 aria-label="Previous track"
-                className="rounded-lg p-1.5 text-zinc-300 transition hover:text-zinc-50"
+                title={canGoPrev ? "Previous track" : "No previous track"}
+                className="rounded-lg p-1.5 text-zinc-300 transition hover:text-zinc-50 disabled:text-zinc-600 disabled:opacity-40 disabled:hover:text-zinc-600"
               >
                 <SkipBack className="h-4 w-4 fill-current" />
               </button>
@@ -222,8 +226,10 @@ export function PlayerBar({ onSelectAlbum, onSelectArtist }: PlayerBarProps) {
               <button
                 type="button"
                 onClick={next}
+                disabled={!canGoNext}
                 aria-label="Next track"
-                className="rounded-lg p-1.5 text-zinc-300 transition hover:text-zinc-50"
+                title={canGoNext ? "Next track" : "No next track"}
+                className="rounded-lg p-1.5 text-zinc-300 transition hover:text-zinc-50 disabled:text-zinc-600 disabled:opacity-40 disabled:hover:text-zinc-600"
               >
                 <SkipForward className="h-4 w-4 fill-current" />
               </button>

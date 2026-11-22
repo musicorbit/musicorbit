@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Disc3,
   ListMusic,
+  LogOut,
   Music,
   RefreshCw,
   Search,
@@ -14,25 +15,33 @@ import {
 import type {
   AlbumSummary,
   ArtistSummary,
+  AuthStatusResponse,
   HealthResponse,
+  PlaylistSummary,
   ScanStatusResponse,
   TrackSummary,
 } from "@musicorbit/shared";
 import {
   fetchAlbums,
   fetchArtists,
+  fetchAuthStatus,
   fetchHealth,
   fetchImports,
+  fetchPlaylists,
   fetchScanStatus,
   fetchTracks,
+  logoutUser,
   triggerScan,
 } from "./api/client";
+import { AuthGate } from "./components/AuthGate";
 import { PlayerBar } from "./components/PlayerBar";
 import { PlayerProvider, usePlayer } from "./context/PlayerContext";
 import { AlbumDetailView } from "./views/AlbumDetailView";
 import { AlbumsView } from "./views/AlbumsView";
 import { ArtistDetailView } from "./views/ArtistDetailView";
 import { ArtistsView } from "./views/ArtistsView";
+import { PlaylistDetailView } from "./views/PlaylistDetailView";
+import { PlaylistsView } from "./views/PlaylistsView";
 import { ReviewQueueView } from "./views/ReviewQueueView";
 import { SearchView } from "./views/SearchView";
 import { SystemView } from "./views/SystemView";
@@ -44,36 +53,58 @@ type Route =
   | { view: "artists" }
   | { view: "artist-detail"; artistId: number }
   | { view: "tracks" }
+  | { view: "playlists" }
+  | { view: "playlist-detail"; playlistId: number }
   | { view: "search" }
   | { view: "review" }
   | { view: "system" };
-
-const UPCOMING_NAV = [{ label: "Playlists", icon: ListMusic, step: "Step 6" }];
 
 function MusicOrbitShell() {
   const { currentTrack } = usePlayer();
   const [route, setRoute] = useState<Route>({ view: "albums" });
   const [searchQuery, setSearchQuery] = useState("");
+  const [authStatus, setAuthStatus] = useState<AuthStatusResponse | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [scanStatus, setScanStatus] = useState<ScanStatusResponse | null>(null);
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
   const [artists, setArtists] = useState<ArtistSummary[]>([]);
   const [tracks, setTracks] = useState<TrackSummary[]>([]);
+  const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [needsReviewCount, setNeedsReviewCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [startingScan, setStartingScan] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Check optional authentication status first
+  useEffect(() => {
+    void fetchAuthStatus()
+      .then(setAuthStatus)
+      .catch(() => {
+        // Fallback so API offline errors render inside the main shell
+        setAuthStatus({
+          authEnabled: false,
+          authenticated: true,
+          needsSetup: false,
+          user: null,
+        });
+      })
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  const isAuthorized = !authStatus?.authEnabled || authStatus.authenticated;
+
   const loadLibrary = useCallback(async (q: string) => {
     setLoading(true);
     setError(null);
     try {
-      const [h, s, al, ar, tr, imp] = await Promise.all([
+      const [h, s, al, ar, tr, pl, imp] = await Promise.all([
         fetchHealth(),
         fetchScanStatus(),
         fetchAlbums(q),
         fetchArtists(q),
         fetchTracks(q, 200),
+        fetchPlaylists(),
         fetchImports("needs_review"),
       ]);
       setHealth(h);
@@ -81,6 +112,7 @@ function MusicOrbitShell() {
       setAlbums(al);
       setArtists(ar);
       setTracks(tr);
+      setPlaylists(pl);
       setNeedsReviewCount(imp.needsReviewCount);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reach MusicOrbit API");
@@ -89,17 +121,27 @@ function MusicOrbitShell() {
     }
   }, []);
 
-  // Re-fetch when search query changes (debounced 180ms for smooth typing)
+  const refreshPlaylists = useCallback(async () => {
+    try {
+      const pl = await fetchPlaylists();
+      setPlaylists(pl);
+    } catch {
+      // Non-fatal
+    }
+  }, []);
+
+  // Re-fetch when search query changes or after login (debounced 180ms for smooth typing)
   useEffect(() => {
+    if (!authChecked || !isAuthorized) return;
     const timer = window.setTimeout(() => {
       void loadLibrary(searchQuery);
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [searchQuery, loadLibrary]);
+  }, [authChecked, isAuthorized, searchQuery, loadLibrary]);
 
   // Poll scan status while a scan is running
   useEffect(() => {
-    if (scanStatus?.state !== "running") return;
+    if (!isAuthorized || scanStatus?.state !== "running") return;
     const timer = window.setInterval(() => {
       void fetchScanStatus()
         .then((next) => {
@@ -111,7 +153,7 @@ function MusicOrbitShell() {
         .catch(() => {});
     }, 500);
     return () => window.clearInterval(timer);
-  }, [scanStatus?.state, searchQuery, loadLibrary]);
+  }, [isAuthorized, scanStatus?.state, searchQuery, loadLibrary]);
 
   const handleScan = async (force = false) => {
     setStartingScan(true);
@@ -129,10 +171,42 @@ function MusicOrbitShell() {
     }
   };
 
+  const handleLogout = async () => {
+    try {
+      await logoutUser();
+    } finally {
+      const next = await fetchAuthStatus().catch(() => ({
+        authEnabled: true,
+        authenticated: false,
+        needsSetup: false,
+        user: null,
+      }));
+      setAuthStatus(next);
+    }
+  };
+
+  if (!authChecked) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-sm text-zinc-400">
+        Loading MusicOrbit…
+      </div>
+    );
+  }
+
+  if (authStatus?.authEnabled && !authStatus.authenticated) {
+    return (
+      <AuthGate
+        needsSetup={authStatus.needsSetup}
+        onAuthenticated={(next) => setAuthStatus(next)}
+      />
+    );
+  }
+
   const navItems = [
     { id: "albums" as const, label: "Albums", icon: Disc3, count: health?.counts.albums },
     { id: "artists" as const, label: "Artists", icon: Users, count: health?.counts.artists },
     { id: "tracks" as const, label: "Tracks", icon: Music, count: health?.counts.tracks },
+    { id: "playlists" as const, label: "Playlists", icon: ListMusic, count: playlists.length },
     { id: "search" as const, label: "Soulseek Search", icon: Search, count: undefined },
     {
       id: "review" as const,
@@ -145,11 +219,12 @@ function MusicOrbitShell() {
   ];
 
   const isNavActive = (
-    id: "albums" | "artists" | "tracks" | "search" | "review" | "system",
+    id: "albums" | "artists" | "tracks" | "playlists" | "search" | "review" | "system",
   ) => {
     if (route.view === id) return true;
     if (id === "albums" && route.view === "album-detail") return true;
     if (id === "artists" && route.view === "artist-detail") return true;
+    if (id === "playlists" && route.view === "playlist-detail") return true;
     return false;
   };
 
@@ -210,29 +285,29 @@ function MusicOrbitShell() {
               </button>
             );
           })}
-
-          <p className="mt-6 mb-1.5 px-3 text-[11px] font-medium tracking-wider text-zinc-500 uppercase">
-            Coming Next
-          </p>
-
-          {UPCOMING_NAV.map(({ label, icon: Icon, step }) => (
-            <div
-              key={label}
-              className="flex items-center justify-between rounded-lg px-3 py-2 text-sm text-zinc-500"
-            >
-              <span className="flex items-center gap-3">
-                <Icon className="h-4 w-4 text-zinc-600" />
-                {label}
-              </span>
-              <span className="rounded bg-zinc-900 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 ring-1 ring-zinc-800">
-                {step}
-              </span>
-            </div>
-          ))}
         </nav>
 
-        <div className="mt-6 rounded-lg border border-zinc-800/80 bg-zinc-900/60 p-3 text-xs text-zinc-400">
-          Open-source self-hosted music hub (AGPL-3.0).
+        <div className="mt-6 space-y-2.5">
+          {authStatus?.authEnabled && authStatus.user && (
+            <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs">
+              <span className="truncate text-zinc-300">
+                Signed in as <strong className="text-zinc-100">{authStatus.user.username}</strong>
+              </span>
+              <button
+                type="button"
+                onClick={() => void handleLogout()}
+                title="Sign out"
+                aria-label="Sign out"
+                className="ml-2 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+
+          <div className="rounded-lg border border-zinc-800/80 bg-zinc-900/60 p-3 text-xs text-zinc-400">
+            Open-source self-hosted music hub (AGPL-3.0).
+          </div>
         </div>
       </aside>
 
@@ -323,6 +398,7 @@ function MusicOrbitShell() {
               onBack={() => setRoute({ view: "albums" })}
               onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
               onAlbumRetagged={() => void loadLibrary(searchQuery)}
+              onPlaylistsChanged={() => void refreshPlaylists()}
             />
           )}
 
@@ -344,6 +420,7 @@ function MusicOrbitShell() {
               onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
               onGoToScanner={() => setRoute({ view: "system" })}
               onArtistImageChanged={() => void loadLibrary(searchQuery)}
+              onPlaylistsChanged={() => void refreshPlaylists()}
             />
           )}
 
@@ -356,6 +433,26 @@ function MusicOrbitShell() {
               onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
               onGoToScanner={() => setRoute({ view: "system" })}
               onTrackMetadataSaved={() => void loadLibrary(searchQuery)}
+              onPlaylistsChanged={() => void refreshPlaylists()}
+            />
+          )}
+
+          {route.view === "playlists" && (
+            <PlaylistsView
+              playlists={playlists}
+              loading={loading}
+              onSelectPlaylist={(playlistId) => setRoute({ view: "playlist-detail", playlistId })}
+              onPlaylistsChanged={() => void refreshPlaylists()}
+            />
+          )}
+
+          {route.view === "playlist-detail" && (
+            <PlaylistDetailView
+              playlistId={route.playlistId}
+              onBack={() => setRoute({ view: "playlists" })}
+              onSelectAlbum={(albumId) => setRoute({ view: "album-detail", albumId })}
+              onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
+              onPlaylistsChanged={() => void refreshPlaylists()}
             />
           )}
 

@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { ListPlus, Music, Pause, Pencil, Play } from "lucide-react";
+import { ListMusic, ListPlus, Music, Pause, Pencil, Play } from "lucide-react";
 import type { TrackSummary } from "@musicorbit/shared";
+import { AddToPlaylistModal } from "../components/AddToPlaylistModal";
 import { AlbumCover } from "../components/AlbumCover";
 import { EditTrackMetadataModal } from "../components/EditTrackMetadataModal";
 import { usePlayer } from "../context/PlayerContext";
@@ -14,6 +15,7 @@ interface TracksViewProps {
   onSelectArtist: (artistId: number) => void;
   onGoToScanner: () => void;
   onTrackMetadataSaved?: () => void;
+  onPlaylistsChanged?: () => void;
 }
 
 export function TracksView({
@@ -24,9 +26,11 @@ export function TracksView({
   onSelectArtist,
   onGoToScanner,
   onTrackMetadataSaved,
+  onPlaylistsChanged,
 }: TracksViewProps) {
   const { currentTrack, isPlaying, playQueue, togglePlay, addToQueue } = usePlayer();
   const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
+  const [playlistTrack, setPlaylistTrack] = useState<TrackSummary | null>(null);
 
   if (loading && tracks.length === 0) {
     return <p className="text-sm text-zinc-400">Loading tracks…</p>;
@@ -155,6 +159,18 @@ export function TracksView({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
+                    setPlaylistTrack(track);
+                  }}
+                  title="Add to playlist"
+                  aria-label={`Add ${track.title} to playlist`}
+                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                >
+                  <ListMusic className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
                     addToQueue(track);
                   }}
                   title="Add to queue"
@@ -174,6 +190,14 @@ export function TracksView({
           trackId={editingTrackId}
           onClose={() => setEditingTrackId(null)}
           onSaved={() => onTrackMetadataSaved?.()}
+        />
+      )}
+
+      {playlistTrack && (
+        <AddToPlaylistModal
+          track={playlistTrack}
+          onClose={() => setPlaylistTrack(null)}
+          onChanged={() => onPlaylistsChanged?.()}
         />
       )}
     </div>

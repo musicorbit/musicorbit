@@ -127,6 +127,8 @@ describe("Media streaming & cover art routes", () => {
         coversDir,
         artistImagesDir,
         fetchArtistImages: true,
+        authEnabled: false,
+        webDistDir: null,
         slskdUrl: null,
         slskdApiKey: null,
         version: "0.1.0",

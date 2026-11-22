@@ -3,11 +3,14 @@ import cors from "@fastify/cors";
 import type { AppConfig } from "./config.js";
 import { initDatabase, type DbContext } from "./db/index.js";
 import { registerAcquisitionRoutes } from "./routes/acquisition.js";
+import { registerAuthRoutes } from "./routes/auth.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerImportRoutes } from "./routes/imports.js";
 import { registerLibraryRoutes } from "./routes/library.js";
 import { registerMediaRoutes } from "./routes/media.js";
 import { registerMetadataRoutes } from "./routes/metadata.js";
+import { registerPlaylistRoutes } from "./routes/playlists.js";
+import { registerStaticWeb } from "./routes/staticWeb.js";
 import { SlskdClient } from "./services/acquisition/slskd.js";
 import { ArtistImageService } from "./services/artistImages.js";
 import { LibraryImporter } from "./services/importer.js";
@@ -46,6 +49,7 @@ export async function buildServer(
 
   await app.register(cors, {
     origin: true,
+    credentials: true,
   });
 
   const dbContext = initDatabase(config.dbPath);
@@ -85,6 +89,9 @@ export async function buildServer(
     logger: app.log,
   });
 
+  // Register auth routes & optional onRequest protection hook before protected routes
+  await registerAuthRoutes(app, { dbContext, authEnabled: config.authEnabled });
+
   await registerHealthRoutes(app, { config, dbContext });
   await registerLibraryRoutes(app, { dbContext, scanner });
   await registerMediaRoutes(app, {
@@ -101,6 +108,12 @@ export async function buildServer(
     metadataLookup,
     fetchImpl: options?.fetchImpl,
   });
+  await registerPlaylistRoutes(app, { dbContext, musicDir: config.musicDir });
+
+  // Serve production frontend bundle when WEB_DIST_DIR is configured (e.g. Docker)
+  if (config.webDistDir) {
+    await registerStaticWeb(app, config.webDistDir);
+  }
 
   // Cleanly close SQLite when Fastify shuts down
   app.addHook("onClose", async () => {
