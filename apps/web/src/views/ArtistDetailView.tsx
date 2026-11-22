@@ -170,6 +170,10 @@ export function ArtistDetailView({
             onSelectAlbum={onSelectAlbum}
             onSelectArtist={onSelectArtist}
             onGoToScanner={onGoToScanner}
+            onTrackMetadataSaved={() => {
+              onArtistImageChanged();
+              void fetchArtistDetail(artistId).then(setDetail).catch(() => {});
+            }}
           />
         </div>
       )}

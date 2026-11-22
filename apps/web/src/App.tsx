@@ -22,6 +22,7 @@ import {
   fetchAlbums,
   fetchArtists,
   fetchHealth,
+  fetchImports,
   fetchScanStatus,
   fetchTracks,
   triggerScan,
@@ -32,6 +33,7 @@ import { AlbumDetailView } from "./views/AlbumDetailView";
 import { AlbumsView } from "./views/AlbumsView";
 import { ArtistDetailView } from "./views/ArtistDetailView";
 import { ArtistsView } from "./views/ArtistsView";
+import { ReviewQueueView } from "./views/ReviewQueueView";
 import { SearchView } from "./views/SearchView";
 import { SystemView } from "./views/SystemView";
 import { TracksView } from "./views/TracksView";
@@ -43,12 +45,10 @@ type Route =
   | { view: "artist-detail"; artistId: number }
   | { view: "tracks" }
   | { view: "search" }
+  | { view: "review" }
   | { view: "system" };
 
-const UPCOMING_NAV = [
-  { label: "Review Queue", icon: Sparkles, step: "Step 5" },
-  { label: "Playlists", icon: ListMusic, step: "Step 6" },
-];
+const UPCOMING_NAV = [{ label: "Playlists", icon: ListMusic, step: "Step 6" }];
 
 function MusicOrbitShell() {
   const { currentTrack } = usePlayer();
@@ -59,6 +59,7 @@ function MusicOrbitShell() {
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
   const [artists, setArtists] = useState<ArtistSummary[]>([]);
   const [tracks, setTracks] = useState<TrackSummary[]>([]);
+  const [needsReviewCount, setNeedsReviewCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [startingScan, setStartingScan] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,18 +68,20 @@ function MusicOrbitShell() {
     setLoading(true);
     setError(null);
     try {
-      const [h, s, al, ar, tr] = await Promise.all([
+      const [h, s, al, ar, tr, imp] = await Promise.all([
         fetchHealth(),
         fetchScanStatus(),
         fetchAlbums(q),
         fetchArtists(q),
         fetchTracks(q, 200),
+        fetchImports("needs_review"),
       ]);
       setHealth(h);
       setScanStatus(s);
       setAlbums(al);
       setArtists(ar);
       setTracks(tr);
+      setNeedsReviewCount(imp.needsReviewCount);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reach MusicOrbit API");
     } finally {
@@ -131,10 +134,19 @@ function MusicOrbitShell() {
     { id: "artists" as const, label: "Artists", icon: Users, count: health?.counts.artists },
     { id: "tracks" as const, label: "Tracks", icon: Music, count: health?.counts.tracks },
     { id: "search" as const, label: "Soulseek Search", icon: Search, count: undefined },
+    {
+      id: "review" as const,
+      label: "Review Queue",
+      icon: Sparkles,
+      count: needsReviewCount > 0 ? needsReviewCount : undefined,
+      highlightBadge: needsReviewCount > 0,
+    },
     { id: "system" as const, label: "System & Scanner", icon: Activity, count: undefined },
   ];
 
-  const isNavActive = (id: "albums" | "artists" | "tracks" | "search" | "system") => {
+  const isNavActive = (
+    id: "albums" | "artists" | "tracks" | "search" | "review" | "system",
+  ) => {
     if (route.view === id) return true;
     if (id === "albums" && route.view === "album-detail") return true;
     if (id === "artists" && route.view === "artist-detail") return true;
@@ -167,7 +179,7 @@ function MusicOrbitShell() {
             Library
           </p>
 
-          {navItems.map(({ id, label, icon: Icon, count }) => {
+          {navItems.map(({ id, label, icon: Icon, count, highlightBadge }) => {
             const active = isNavActive(id);
             return (
               <button
@@ -185,7 +197,15 @@ function MusicOrbitShell() {
                   {label}
                 </span>
                 {count !== undefined && (
-                  <span className="text-xs font-normal text-zinc-500">{count}</span>
+                  <span
+                    className={
+                      highlightBadge
+                        ? "rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[11px] font-semibold text-amber-300"
+                        : "text-xs font-normal text-zinc-500"
+                    }
+                  >
+                    {count}
+                  </span>
                 )}
               </button>
             );
@@ -302,6 +322,7 @@ function MusicOrbitShell() {
               albumId={route.albumId}
               onBack={() => setRoute({ view: "albums" })}
               onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
+              onAlbumRetagged={() => void loadLibrary(searchQuery)}
             />
           )}
 
@@ -334,10 +355,15 @@ function MusicOrbitShell() {
               onSelectAlbum={(albumId) => setRoute({ view: "album-detail", albumId })}
               onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
               onGoToScanner={() => setRoute({ view: "system" })}
+              onTrackMetadataSaved={() => void loadLibrary(searchQuery)}
             />
           )}
 
           {route.view === "search" && <SearchView />}
+
+          {route.view === "review" && (
+            <ReviewQueueView onLibraryChanged={() => void loadLibrary(searchQuery)} />
+          )}
 
           {route.view === "system" && (
             <SystemView

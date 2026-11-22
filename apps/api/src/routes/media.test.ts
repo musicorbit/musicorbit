@@ -121,6 +121,8 @@ describe("Media streaming & cover art routes", () => {
         logLevel: "silent",
         musicDir,
         dataDir,
+        downloadsDir: path.join(tmpRoot, "downloads"),
+        autoImportThreshold: 85,
         dbPath: path.join(dataDir, "musicorbit.db"),
         coversDir,
         artistImagesDir,

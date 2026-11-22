@@ -4,10 +4,14 @@ import type { AppConfig } from "./config.js";
 import { initDatabase, type DbContext } from "./db/index.js";
 import { registerAcquisitionRoutes } from "./routes/acquisition.js";
 import { registerHealthRoutes } from "./routes/health.js";
+import { registerImportRoutes } from "./routes/imports.js";
 import { registerLibraryRoutes } from "./routes/library.js";
 import { registerMediaRoutes } from "./routes/media.js";
+import { registerMetadataRoutes } from "./routes/metadata.js";
 import { SlskdClient } from "./services/acquisition/slskd.js";
 import { ArtistImageService } from "./services/artistImages.js";
+import { LibraryImporter } from "./services/importer.js";
+import { MusicBrainzClient } from "./services/musicbrainz.js";
 import { LibraryScanner } from "./services/scanner.js";
 
 export interface ServerHandle {
@@ -16,10 +20,13 @@ export interface ServerHandle {
   scanner: LibraryScanner;
   artistImageService: ArtistImageService;
   slskdClient: SlskdClient;
+  musicBrainz: MusicBrainzClient;
+  importer: LibraryImporter;
 }
 
 export interface BuildServerOptions {
   fetchImpl?: typeof fetch;
+  musicBrainzRateLimitMs?: number;
 }
 
 /**
@@ -59,6 +66,19 @@ export async function buildServer(
     apiKey: config.slskdApiKey,
     fetchImpl: options?.fetchImpl,
   });
+  const musicBrainz = new MusicBrainzClient({
+    fetchImpl: options?.fetchImpl,
+    rateLimitMs: options?.musicBrainzRateLimitMs,
+  });
+  const importer = new LibraryImporter({
+    dbContext,
+    musicDir: config.musicDir,
+    downloadsDir: config.downloadsDir,
+    autoImportThreshold: config.autoImportThreshold,
+    musicBrainz,
+    scanner,
+    logger: app.log,
+  });
 
   await registerHealthRoutes(app, { config, dbContext });
   await registerLibraryRoutes(app, { dbContext, scanner });
@@ -69,11 +89,21 @@ export async function buildServer(
     artistImageService,
   });
   await registerAcquisitionRoutes(app, { slskdClient });
+  await registerImportRoutes(app, { importer, musicBrainz });
+  await registerMetadataRoutes(app, { dbContext, scanner });
 
   // Cleanly close SQLite when Fastify shuts down
   app.addHook("onClose", async () => {
     dbContext.sqlite.close();
   });
 
-  return { app, dbContext, scanner, artistImageService, slskdClient };
+  return {
+    app,
+    dbContext,
+    scanner,
+    artistImageService,
+    slskdClient,
+    musicBrainz,
+    importer,
+  };
 }

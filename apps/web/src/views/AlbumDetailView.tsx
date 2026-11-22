@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
-import { ArrowLeft, ListPlus, Pause, Play } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, ListPlus, Pause, Pencil, Play, Sparkles } from "lucide-react";
 import type { AlbumDetailResponse } from "@musicorbit/shared";
-import { fetchAlbumDetail } from "../api/client";
+import { fetchAlbumDetail, retagAlbum } from "../api/client";
 import { AlbumCover } from "../components/AlbumCover";
+import { EditTrackMetadataModal } from "../components/EditTrackMetadataModal";
+import { RetagAlbumModal } from "../components/RetagAlbumModal";
 import { usePlayer } from "../context/PlayerContext";
 import { formatCodec, formatDuration, formatTotalDuration } from "../utils/format";
 
@@ -10,32 +12,38 @@ interface AlbumDetailViewProps {
   albumId: number;
   onBack: () => void;
   onSelectArtist: (artistId: number) => void;
+  onAlbumRetagged: () => void;
 }
 
-export function AlbumDetailView({ albumId, onBack, onSelectArtist }: AlbumDetailViewProps) {
+export function AlbumDetailView({
+  albumId,
+  onBack,
+  onSelectArtist,
+  onAlbumRetagged,
+}: AlbumDetailViewProps) {
   const [detail, setDetail] = useState<AlbumDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retagOpen, setRetagOpen] = useState(false);
+  const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
   const { currentTrack, isPlaying, playQueue, togglePlay, addToQueue } = usePlayer();
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadDetail = useCallback(async () => {
     setLoading(true);
     setError(null);
-    void fetchAlbumDetail(albumId)
-      .then((res) => {
-        if (!cancelled) setDetail(res);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load album");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const res = await fetchAlbumDetail(albumId);
+      setDetail(res);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load album");
+    } finally {
+      setLoading(false);
+    }
   }, [albumId]);
+
+  useEffect(() => {
+    void loadDetail();
+  }, [loadDetail]);
 
   if (loading) {
     return <p className="text-sm text-zinc-400">Loading album…</p>;
@@ -98,7 +106,7 @@ export function AlbumDetailView({ albumId, onBack, onSelectArtist }: AlbumDetail
             <span>· {formatTotalDuration(album.totalDurationSeconds)}</span>
           </div>
 
-          <div className="pt-3">
+          <div className="flex flex-wrap items-center gap-2.5 pt-3">
             <button
               type="button"
               onClick={() => {
@@ -122,6 +130,16 @@ export function AlbumDetailView({ albumId, onBack, onSelectArtist }: AlbumDetail
                   Play Album
                 </>
               )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setRetagOpen(true)}
+              disabled={tracks.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-4 py-2.5 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-45"
+            >
+              <Sparkles className="h-4 w-4 text-amber-400" />
+              Fix Tags
             </button>
           </div>
         </div>
@@ -189,23 +207,82 @@ export function AlbumDetailView({ albumId, onBack, onSelectArtist }: AlbumDetail
                   {formatDuration(track.durationSeconds)}
                 </span>
 
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    addToQueue(track);
-                  }}
-                  title="Add to queue"
-                  aria-label={`Add ${track.title} to queue`}
-                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-zinc-100"
-                >
-                  <ListPlus className="h-4 w-4" />
-                </button>
+                <div className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingTrackId(track.id);
+                    }}
+                    title="Edit track metadata"
+                    aria-label={`Edit metadata for ${track.title}`}
+                    className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      addToQueue(track);
+                    }}
+                    title="Add to queue"
+                    aria-label={`Add ${track.title} to queue`}
+                    className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-zinc-100"
+                  >
+                    <ListPlus className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             );
           })}
         </div>
       </div>
+
+      {retagOpen && (
+        <RetagAlbumModal
+          mode="retag"
+          heading={`Fix Tags — ${album.title}`}
+          subheading={`${album.artistName} · ${tracks.length} ${tracks.length === 1 ? "track" : "tracks"}`}
+          initialArtist={album.artistName}
+          initialAlbum={album.title}
+          initialYear={album.year && album.year > 0 ? album.year : null}
+          initialGenre={album.genre}
+          initialTracks={tracks.map((t, idx) => ({
+            filePath: t.filePath,
+            basename: t.filePath.split(/[\\/]/).pop() ?? t.title,
+            title: t.title,
+            artist: t.artistName,
+            trackNumber: t.trackNumber ?? idx + 1,
+            discNumber: t.discNumber ?? 1,
+          }))}
+          onClose={() => setRetagOpen(false)}
+          onSubmit={async (payload) => {
+            await retagAlbum(album.id, payload);
+            onAlbumRetagged();
+            // If album title/artist changed, a new album row may exist; return to Albums cleanly
+            if (
+              payload.album.trim() !== album.title ||
+              payload.artist.trim() !== album.artistName
+            ) {
+              onBack();
+            } else {
+              await loadDetail();
+            }
+          }}
+        />
+      )}
+
+      {editingTrackId !== null && (
+        <EditTrackMetadataModal
+          trackId={editingTrackId}
+          onClose={() => setEditingTrackId(null)}
+          onSaved={() => {
+            onAlbumRetagged();
+            void loadDetail();
+          }}
+        />
+      )}
     </div>
   );
 }

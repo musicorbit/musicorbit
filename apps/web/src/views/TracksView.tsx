@@ -1,6 +1,8 @@
-import { ListPlus, Music, Pause, Play } from "lucide-react";
+import { useState } from "react";
+import { ListPlus, Music, Pause, Pencil, Play } from "lucide-react";
 import type { TrackSummary } from "@musicorbit/shared";
 import { AlbumCover } from "../components/AlbumCover";
+import { EditTrackMetadataModal } from "../components/EditTrackMetadataModal";
 import { usePlayer } from "../context/PlayerContext";
 import { formatCodec, formatDuration } from "../utils/format";
 
@@ -11,6 +13,7 @@ interface TracksViewProps {
   onSelectAlbum: (albumId: number) => void;
   onSelectArtist: (artistId: number) => void;
   onGoToScanner: () => void;
+  onTrackMetadataSaved?: () => void;
 }
 
 export function TracksView({
@@ -20,8 +23,10 @@ export function TracksView({
   onSelectAlbum,
   onSelectArtist,
   onGoToScanner,
+  onTrackMetadataSaved,
 }: TracksViewProps) {
   const { currentTrack, isPlaying, playQueue, togglePlay, addToQueue } = usePlayer();
+  const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
 
   if (loading && tracks.length === 0) {
     return <p className="text-sm text-zinc-400">Loading tracks…</p>;
@@ -133,22 +138,44 @@ export function TracksView({
                 {formatDuration(track.durationSeconds)}
               </span>
 
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  addToQueue(track);
-                }}
-                title="Add to queue"
-                aria-label={`Add ${track.title} to queue`}
-                className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-zinc-100"
-              >
-                <ListPlus className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditingTrackId(track.id);
+                  }}
+                  title="Edit metadata"
+                  aria-label={`Edit metadata for ${track.title}`}
+                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    addToQueue(track);
+                  }}
+                  title="Add to queue"
+                  aria-label={`Add ${track.title} to queue`}
+                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 hover:bg-zinc-800 hover:text-zinc-100"
+                >
+                  <ListPlus className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           );
         })}
       </div>
+
+      {editingTrackId !== null && (
+        <EditTrackMetadataModal
+          trackId={editingTrackId}
+          onClose={() => setEditingTrackId(null)}
+          onSaved={() => onTrackMetadataSaved?.()}
+        />
+      )}
     </div>
   );
 }

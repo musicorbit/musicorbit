@@ -117,6 +117,8 @@ describe("LibraryScanner & Library API", () => {
       logLevel: "silent",
       musicDir,
       dataDir,
+      downloadsDir: path.join(tmpRoot, "downloads"),
+      autoImportThreshold: 85,
       dbPath: path.join(dataDir, "musicorbit.db"),
       coversDir,
       artistImagesDir: path.join(dataDir, "artist-images"),

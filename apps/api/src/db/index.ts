@@ -94,6 +94,28 @@ export function initDatabase(dbPath: string): DbContext {
       error_message TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS import_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_dir TEXT NOT NULL UNIQUE,
+      folder_name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      detected_artist TEXT NOT NULL,
+      detected_album TEXT NOT NULL,
+      detected_year INTEGER,
+      track_count INTEGER NOT NULL DEFAULT 0,
+      confidence REAL NOT NULL DEFAULT 0,
+      matched_mbid TEXT,
+      matched_artist TEXT,
+      matched_album TEXT,
+      matched_year INTEGER,
+      matched_cover_url TEXT,
+      candidates_json TEXT NOT NULL DEFAULT '[]',
+      files_json TEXT NOT NULL DEFAULT '[]',
+      error_message TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON albums(artist_id);
     CREATE INDEX IF NOT EXISTS idx_tracks_album_id ON tracks(album_id);
     CREATE INDEX IF NOT EXISTS idx_tracks_artist_id ON tracks(artist_id);

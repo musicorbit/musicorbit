@@ -2,16 +2,26 @@ import type {
   AcquisitionStatusResponse,
   AlbumDetailResponse,
   AlbumSummary,
+  ApplyImportResponse,
+  ApplyTaggingRequest,
   ArtistDetailResponse,
   ArtistImageCandidate,
   ArtistImageUpdateResponse,
   ArtistSummary,
   DownloadsListResponse,
+  EditableTrackTags,
   EnqueueDownloadRequest,
   HealthResponse,
+  ImportItemStatus,
+  ImportsListResponse,
+  InboxScanResult,
+  MusicBrainzReleaseCandidate,
+  MusicBrainzReleaseDetail,
+  RetagAlbumResponse,
   ScanStatusResponse,
   SoulseekSearchResultsResponse,
   SoulseekSearchSummary,
+  TrackMetadataResponse,
   TrackSummary,
 } from "@musicorbit/shared";
 
@@ -23,7 +33,8 @@ import type {
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) {
-    throw new Error(`Request to ${url} failed with status ${res.status}`);
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Request to ${url} failed with status ${res.status}`);
   }
   return (await res.json()) as T;
 }
@@ -210,4 +221,123 @@ export async function clearCompletedDownloads(): Promise<void> {
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ?? `Could not clear completed downloads (HTTP ${res.status})`);
   }
+}
+
+export function fetchImports(status?: ImportItemStatus): Promise<ImportsListResponse> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  return getJson<ImportsListResponse>(`/api/imports${qs}`);
+}
+
+export async function scanInbox(): Promise<InboxScanResult> {
+  const res = await fetch("/api/imports/scan", { method: "POST" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Inbox scan failed (HTTP ${res.status})`);
+  }
+  return (await res.json()) as InboxScanResult;
+}
+
+export async function applyImport(
+  importId: number,
+  payload: ApplyTaggingRequest,
+): Promise<ApplyImportResponse> {
+  const res = await fetch(`/api/imports/${importId}/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Import failed (HTTP ${res.status})`);
+  }
+  return (await res.json()) as ApplyImportResponse;
+}
+
+export async function dismissImport(importId: number): Promise<void> {
+  const res = await fetch(`/api/imports/${importId}/dismiss`, { method: "POST" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Dismiss failed (HTTP ${res.status})`);
+  }
+}
+
+export function searchMusicBrainz(params: {
+  artist?: string;
+  album?: string;
+  trackCount?: number;
+}): Promise<MusicBrainzReleaseCandidate[]> {
+  const sp = new URLSearchParams();
+  if (params.artist?.trim()) sp.set("artist", params.artist.trim());
+  if (params.album?.trim()) sp.set("album", params.album.trim());
+  if (params.trackCount) sp.set("trackCount", String(params.trackCount));
+  return getJson<MusicBrainzReleaseCandidate[]>(`/api/musicbrainz/search?${sp.toString()}`);
+}
+
+export function fetchMusicBrainzRelease(mbid: string): Promise<MusicBrainzReleaseDetail> {
+  return getJson<MusicBrainzReleaseDetail>(
+    `/api/musicbrainz/releases/${encodeURIComponent(mbid)}`,
+  );
+}
+
+export async function retagAlbum(
+  albumId: number,
+  payload: ApplyTaggingRequest,
+): Promise<RetagAlbumResponse> {
+  const res = await fetch(`/api/albums/${albumId}/retag`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Retag failed (HTTP ${res.status})`);
+  }
+  return (await res.json()) as RetagAlbumResponse;
+}
+
+export function fetchTrackMetadata(trackId: number): Promise<TrackMetadataResponse> {
+  return getJson<TrackMetadataResponse>(`/api/tracks/${trackId}/metadata`);
+}
+
+export async function updateTrackMetadata(
+  trackId: number,
+  tags: EditableTrackTags,
+): Promise<TrackMetadataResponse> {
+  const res = await fetch(`/api/tracks/${trackId}/metadata`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(tags),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Failed to save metadata (HTTP ${res.status})`);
+  }
+  return (await res.json()) as TrackMetadataResponse;
+}
+
+export async function uploadTrackCover(
+  trackId: number,
+  file: File,
+): Promise<TrackMetadataResponse> {
+  const res = await fetch(`/api/tracks/${trackId}/cover`, {
+    method: "PUT",
+    headers: { "Content-Type": file.type || "image/jpeg" },
+    body: file,
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Failed to embed cover art (HTTP ${res.status})`);
+  }
+  return (await res.json()) as TrackMetadataResponse;
+}
+
+export async function deleteTrackCover(trackId: number): Promise<TrackMetadataResponse> {
+  const res = await fetch(`/api/tracks/${trackId}/cover`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Failed to remove embedded cover art (HTTP ${res.status})`);
+  }
+  return (await res.json()) as TrackMetadataResponse;
 }

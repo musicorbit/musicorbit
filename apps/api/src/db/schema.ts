@@ -69,3 +69,25 @@ export const scanJobs = sqliteTable("scan_jobs", {
   filesRemoved: integer("files_removed").notNull().default(0),
   errorMessage: text("error_message"),
 });
+
+export const importItems = sqliteTable("import_items", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  sourceDir: text("source_dir").notNull().unique(),
+  folderName: text("folder_name").notNull(),
+  status: text("status").notNull(), // "needs_review" | "imported" | "failed" | "dismissed"
+  detectedArtist: text("detected_artist").notNull(),
+  detectedAlbum: text("detected_album").notNull(),
+  detectedYear: integer("detected_year"),
+  trackCount: integer("track_count").notNull().default(0),
+  confidence: real("confidence").notNull().default(0),
+  matchedMbid: text("matched_mbid"),
+  matchedArtist: text("matched_artist"),
+  matchedAlbum: text("matched_album"),
+  matchedYear: integer("matched_year"),
+  matchedCoverUrl: text("matched_cover_url"),
+  candidatesJson: text("candidates_json").notNull().default("[]"),
+  filesJson: text("files_json").notNull().default("[]"),
+  errorMessage: text("error_message"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});

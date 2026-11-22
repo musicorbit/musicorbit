@@ -207,3 +207,172 @@ export interface DownloadsListResponse {
   failedCount: number;
   transfers: DownloadTransferItem[];
 }
+
+/**
+ * Import pipeline, MusicBrainz matching, and "Fix This Album" review queue (Step 5).
+ */
+export type ImportItemStatus = "needs_review" | "imported" | "failed" | "dismissed";
+
+export interface MusicBrainzReleaseCandidate {
+  mbid: string;
+  title: string;
+  artist: string;
+  artistMbid: string | null;
+  year: number | null;
+  country: string | null;
+  trackCount: number;
+  score: number;
+  coverArtUrl: string;
+}
+
+export interface MusicBrainzTrackInfo {
+  discNumber: number;
+  trackNumber: number;
+  title: string;
+  artist: string;
+  recordingMbid: string;
+  durationSeconds: number | null;
+}
+
+export interface MusicBrainzReleaseDetail {
+  mbid: string;
+  title: string;
+  artist: string;
+  artistMbid: string | null;
+  year: number | null;
+  country: string | null;
+  coverArtUrl: string;
+  tracks: MusicBrainzTrackInfo[];
+}
+
+export interface ImportSourceFile {
+  filePath: string;
+  basename: string;
+  extension: string;
+  currentTitle: string;
+  currentArtist: string;
+  currentAlbum: string;
+  trackNumber: number | null;
+  discNumber: number | null;
+  durationSeconds: number | null;
+}
+
+export interface ImportItemSummary {
+  id: number;
+  sourceDir: string;
+  folderName: string;
+  status: ImportItemStatus;
+  detectedArtist: string;
+  detectedAlbum: string;
+  detectedYear: number | null;
+  trackCount: number;
+  confidence: number;
+  matchedMbid: string | null;
+  matchedArtist: string | null;
+  matchedAlbum: string | null;
+  matchedYear: number | null;
+  matchedCoverUrl: string | null;
+  candidates: MusicBrainzReleaseCandidate[];
+  files: ImportSourceFile[];
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ImportsListResponse {
+  downloadsDir: {
+    path: string;
+    exists: boolean;
+  };
+  needsReviewCount: number;
+  items: ImportItemSummary[];
+}
+
+export interface InboxScanResult {
+  discoveredFolders: number;
+  autoImported: number;
+  needsReview: number;
+  skipped: number;
+  failed: number;
+}
+
+export interface RetagTrackOverride {
+  filePath: string;
+  title: string;
+  artist?: string;
+  trackNumber: number | null;
+  discNumber: number | null;
+  recordingMbid?: string | null;
+}
+
+export interface ApplyTaggingRequest {
+  artist: string;
+  album: string;
+  year: number | null;
+  genre?: string | null;
+  mbid?: string | null;
+  artistMbid?: string | null;
+  tracks: RetagTrackOverride[];
+}
+
+export interface ApplyImportResponse {
+  importId: number;
+  status: ImportItemStatus;
+  destinationDir: string;
+  filesImported: number;
+}
+
+export interface RetagAlbumResponse {
+  albumId: number;
+  filesUpdated: number;
+}
+
+/**
+ * Full on-demand track metadata inspection & editing.
+ */
+export interface EditableTrackTags {
+  title: string;
+  artists: string;
+  albumArtist: string;
+  album: string;
+  trackNumber: number | null;
+  trackTotal: number | null;
+  discNumber: number | null;
+  discTotal: number | null;
+  year: number | null;
+  genres: string;
+  composers: string;
+  bpm: number | null;
+  grouping: string;
+  publisher: string;
+  comment: string;
+  lyrics: string;
+  musicBrainzTrackId: string;
+  musicBrainzReleaseId: string;
+  musicBrainzArtistId: string;
+  musicBrainzReleaseArtistId: string;
+}
+
+export interface TrackTechnicalInfo {
+  codec: string | null;
+  container: string | null;
+  bitrate: number | null;
+  sampleRate: number | null;
+  bitsPerSample: number | null;
+  channels: number | null;
+  durationSeconds: number | null;
+  tagTypes: string[];
+}
+
+export interface TrackMetadataResponse {
+  trackId: number;
+  albumId: number;
+  filePath: string;
+  basename: string;
+  fileSize: number;
+  technical: TrackTechnicalInfo;
+  tags: EditableTrackTags;
+  hasEmbeddedCover: boolean;
+  embeddedCoverMime: string | null;
+  embeddedCoverSizeBytes: number | null;
+}
