@@ -7,20 +7,29 @@ import type { FastifyBaseLogger } from "fastify";
 import type {
   ApplyImportResponse,
   ApplyTaggingRequest,
+  ImportDuplicateMatch,
   ImportItemStatus,
   ImportItemSummary,
   ImportSourceFile,
   ImportsListResponse,
   InboxScanResult,
   MusicBrainzReleaseCandidate,
+  PostProcessingSettings,
   RetagAlbumResponse,
   RetagTrackOverride,
 } from "@musicorbit/shared";
 import type { DbContext } from "../db/index.js";
 import { albums, importItems, tracks } from "../db/schema.js";
+import { isAllowedCoverArtUrl, type MetadataLookupService } from "./metadataLookup.js";
 import type { MusicBrainzClient } from "./musicbrainz.js";
+import type { PlaylistBatchSearchService } from "./playlistBatchSearch.js";
+import {
+  extractArtistVariants,
+  normalizeForMatching,
+  recheckAllPlaylistsMissingTracks,
+} from "./playlistImport.js";
 import { SUPPORTED_AUDIO_EXTENSIONS, type LibraryScanner } from "./scanner.js";
-import { writeAudioTags } from "./tagWriter.js";
+import { writeAudioTags, writeEmbeddedCover } from "./tagWriter.js";
 
 const COVER_IMAGE_NAMES = new Set([
   "cover.jpg",
@@ -34,6 +43,10 @@ const COVER_IMAGE_NAMES = new Set([
   "front.jpeg",
   "front.png",
 ]);
+
+const INCOMPLETE_EXTENSIONS = new Set([".part", ".tmp", ".incomplete", ".crdownload", ".downloading"]);
+const OS_JUNK_FILES = new Set([".ds_store", "thumbs.db", "desktop.ini"]);
+const DEFAULT_STABILITY_WINDOW_MS = 10_000;
 
 export class ImporterError extends Error {
   readonly statusCode: number;
@@ -68,7 +81,6 @@ export function parseFolderHints(folderName: string): {
   year: number | null;
 } {
   let clean = folderName.trim();
-  // Strip trailing format/release tags in brackets like [FLAC], [24-96], [WEB]
   clean = clean.replace(/\s*\[[^\]]*\]\s*/g, " ").trim();
 
   let year: number | null = null;
@@ -94,31 +106,77 @@ export function parseFolderHints(folderName: string): {
 }
 
 /**
+ * Computes a deterministic quality score so MusicOrbit can compare duplicates
+ * (FLAC/WAV lossless > high-bitrate Opus/AAC/MP3 > lower bitrate).
+ */
+export function computeAudioQualityScore(
+  codecOrExt: string | null | undefined,
+  bitrateKbpsOrBps: number | null | undefined,
+): number {
+  const raw = (codecOrExt ?? "").toLowerCase().replace(/^\./, "");
+  const rawBr = bitrateKbpsOrBps ?? 0;
+  const kbps = rawBr > 5000 ? Math.round(rawBr / 1000) : Math.round(rawBr);
+
+  if (raw.includes("flac") || raw.includes("wav") || raw.includes("pcm") || raw.includes("alac")) {
+    return 1000 + Math.min(500, Math.round((kbps || 1000) / 5));
+  }
+  if (raw.includes("opus")) {
+    return Math.round((kbps || 160) * 1.35);
+  }
+  return kbps || 192;
+}
+
+/**
  * Moves a file safely across filesystems (handles Docker EXDEV when /downloads
  * and /music are mounted on different volumes).
  */
 async function moveFileSafe(src: string, dest: string): Promise<void> {
+  if (path.resolve(src) === path.resolve(dest)) return;
   await fsp.mkdir(path.dirname(dest), { recursive: true });
   try {
     await fsp.rename(src, dest);
-  } catch (err) {
+  } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException)?.code;
-    if (code !== "EXDEV") throw err;
-    await fsp.copyFile(src, dest);
-    await fsp.unlink(src);
+    if (code === "EXDEV") {
+      await fsp.copyFile(src, dest);
+      await fsp.unlink(src);
+    } else {
+      throw err;
+    }
   }
 }
 
+async function copyFileSafe(src: string, dest: string): Promise<void> {
+  if (path.resolve(src) === path.resolve(dest)) return;
+  await fsp.mkdir(path.dirname(dest), { recursive: true });
+  await fsp.copyFile(src, dest);
+}
+
+function isOsJunkFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  return OS_JUNK_FILES.has(lower) || lower.startsWith("._");
+}
+
 /**
- * Removes empty directories up to (but never including) stopDir.
+ * Cleans up empty staging directories inside downloadsDir after files are moved out,
+ * removing macOS/Windows junk files (.DS_Store, Thumbs.db) if nothing else remains.
  */
-async function removeEmptyDir(dir: string, stopDir: string): Promise<void> {
-  const resolvedStop = path.resolve(stopDir);
+async function removeEmptyDir(dir: string, stopAt: string): Promise<void> {
   let current = path.resolve(dir);
-  while (current !== resolvedStop && current.startsWith(resolvedStop + path.sep)) {
+  const boundary = path.resolve(stopAt);
+  while (current !== boundary && current.startsWith(`${boundary}${path.sep}`)) {
     try {
-      const remaining = await fsp.readdir(current);
-      if (remaining.length > 0) break;
+      const entries = await fsp.readdir(current, { withFileTypes: true });
+      const realEntries = entries.filter((e) => !(e.isFile() && isOsJunkFile(e.name)));
+      if (realEntries.length > 0) break;
+
+      // Delete leftover OS metadata files before removing the folder
+      for (const junk of entries) {
+        if (junk.isFile() && isOsJunkFile(junk.name)) {
+          await fsp.unlink(path.join(current, junk.name)).catch(() => {});
+        }
+      }
+
       await fsp.rmdir(current);
       current = path.dirname(current);
     } catch {
@@ -127,11 +185,51 @@ async function removeEmptyDir(dir: string, stopDir: string): Promise<void> {
   }
 }
 
+async function areFilesStable(
+  folderPath: string,
+  audioFiles: string[],
+  stabilityWindowMs: number,
+  isLooseFile: boolean,
+): Promise<boolean> {
+  try {
+    const now = Date.now();
+    if (!isLooseFile) {
+      const entries = await fsp.readdir(folderPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        const ext = path.extname(entry.name).toLowerCase();
+        if (INCOMPLETE_EXTENSIONS.has(ext)) return false;
+      }
+    }
+    for (const filePath of audioFiles) {
+      const stat = await fsp.stat(filePath);
+      if (now - stat.mtimeMs < stabilityWindowMs) {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface DiscoveredInboxItem {
+  sourceKey: string;
+  folderPath: string;
+  folderName: string;
+  audioFiles: string[];
+  isLooseFile: boolean;
+}
+
 /**
- * Finds all directories inside downloadsDir that directly contain at least one audio file.
+ * Discovers audio items inside downloadsDir:
+ * - Loose audio files directly at the root of downloadsDir become individual single-track items
+ *   (so unrelated loose downloads never collide or get grouped into a fake album).
+ * - Audio files inside subfolders are grouped by their containing subfolder.
  */
-async function discoverInboxFolders(downloadsDir: string): Promise<Map<string, string[]>> {
-  const folderMap = new Map<string, string[]>();
+async function discoverInboxItems(downloadsDir: string): Promise<DiscoveredInboxItem[]> {
+  const items: DiscoveredInboxItem[] = [];
+  const rootResolved = path.resolve(downloadsDir);
 
   async function walk(dir: string): Promise<void> {
     const entries = await fsp.readdir(dir, { withFileTypes: true });
@@ -150,14 +248,33 @@ async function discoverInboxFolders(downloadsDir: string): Promise<Map<string, s
       }
     }
 
-    if (audioFiles.length > 0) {
-      audioFiles.sort((a, b) => a.localeCompare(b));
-      folderMap.set(dir, audioFiles);
+    if (audioFiles.length === 0) return;
+    audioFiles.sort((a, b) => a.localeCompare(b));
+
+    if (path.resolve(dir) === rootResolved) {
+      // Treat each loose root file as its own single-track import item
+      for (const filePath of audioFiles) {
+        items.push({
+          sourceKey: filePath,
+          folderPath: dir,
+          folderName: path.basename(filePath),
+          audioFiles: [filePath],
+          isLooseFile: true,
+        });
+      }
+    } else {
+      items.push({
+        sourceKey: dir,
+        folderPath: dir,
+        folderName: path.basename(dir),
+        audioFiles,
+        isLooseFile: false,
+      });
     }
   }
 
   await walk(downloadsDir);
-  return folderMap;
+  return items;
 }
 
 function mostCommonString(values: Array<string | null | undefined>): string | null {
@@ -192,32 +309,90 @@ function formatTrackFilename(
   return numPart ? `${discPrefix}${numPart} - ${safeTitle}${ext}` : `${safeTitle}${ext}`;
 }
 
+function stripLeadingTrackNumber(raw: string): string {
+  return raw.replace(/^\d{1,3}[\s._-]+/, "").trim();
+}
+
+function isCompilationArtist(name: string): boolean {
+  const lower = name.trim().toLowerCase();
+  return (
+    lower === "various artists" ||
+    lower === "various" ||
+    lower === "va" ||
+    lower === "compilation"
+  );
+}
+
 export interface LibraryImporterDeps {
   dbContext: DbContext;
   musicDir: string;
   getMusicDir?: () => string;
   downloadsDir: string;
+  dataDir?: string;
   autoImportThreshold: number;
+  getPostProcessingSettings?: () => PostProcessingSettings;
   musicBrainz: MusicBrainzClient;
+  metadataLookup?: MetadataLookupService;
+  batchSearchService?: PlaylistBatchSearchService;
+  fetchImpl?: typeof fetch;
   scanner: LibraryScanner;
   logger?: FastifyBaseLogger;
+}
+
+export interface ScanInboxOptions {
+  requireStableFiles?: boolean;
+  stabilityWindowMs?: number;
+}
+
+interface ExistingDuplicateTrack {
+  id: number;
+  title: string;
+  artistName: string;
+  albumTitle: string;
+  filePath: string;
+  codec: string | null;
+  bitrate: number | null;
 }
 
 export class LibraryImporter {
   private readonly dbContext: DbContext;
   private readonly getMusicDirFn: () => string;
-  private readonly downloadsDir: string;
-  private readonly autoImportThreshold: number;
+  private readonly defaultDownloadsDir: string;
+  private readonly dataDir: string;
+  private readonly defaultAutoImportThreshold: number;
+  private readonly getPostProcessingSettingsFn: () => PostProcessingSettings;
   private readonly musicBrainz: MusicBrainzClient;
+  private readonly metadataLookup?: MetadataLookupService;
+  private readonly batchSearchService?: PlaylistBatchSearchService;
+  private readonly fetchImpl: typeof fetch;
   private readonly scanner: LibraryScanner;
   private readonly logger?: FastifyBaseLogger;
 
   constructor(deps: LibraryImporterDeps) {
     this.dbContext = deps.dbContext;
     this.getMusicDirFn = deps.getMusicDir ?? (() => deps.musicDir);
-    this.downloadsDir = deps.downloadsDir;
-    this.autoImportThreshold = deps.autoImportThreshold;
+    this.defaultDownloadsDir = deps.downloadsDir;
+    this.dataDir = deps.dataDir ?? path.dirname(deps.dbContext.dbPath);
+    this.defaultAutoImportThreshold = deps.autoImportThreshold;
+    this.getPostProcessingSettingsFn =
+      deps.getPostProcessingSettings ??
+      (() => ({
+        downloadsDir: this.defaultDownloadsDir,
+        defaultDownloadsDir: this.defaultDownloadsDir,
+        downloadsDirExists: fs.existsSync(this.defaultDownloadsDir),
+        fileAction: "move",
+        duplicatePolicy: "upgrade",
+        autoWatchEnabled: false,
+        autoWatchIntervalSeconds: 60,
+        autoImportThreshold: this.defaultAutoImportThreshold,
+        includeYearInAlbumFolder: false,
+        autoEmbedCoverArt: true,
+        autoFetchLyrics: false,
+      }));
     this.musicBrainz = deps.musicBrainz;
+    this.metadataLookup = deps.metadataLookup;
+    this.batchSearchService = deps.batchSearchService;
+    this.fetchImpl = deps.fetchImpl ?? fetch;
     this.scanner = deps.scanner;
     this.logger = deps.logger;
   }
@@ -226,7 +401,12 @@ export class LibraryImporter {
     return this.getMusicDirFn();
   }
 
+  private get settings(): PostProcessingSettings {
+    return this.getPostProcessingSettingsFn();
+  }
+
   listItems(statusFilter?: ImportItemStatus): ImportsListResponse {
+    const pp = this.settings;
     const rows = statusFilter
       ? this.dbContext.db
           .select()
@@ -236,27 +416,55 @@ export class LibraryImporter {
           .all()
       : this.dbContext.db.select().from(importItems).orderBy(desc(importItems.updatedAt)).all();
 
-    const items: ImportItemSummary[] = rows.map((row) => ({
-      id: row.id,
-      sourceDir: row.sourceDir,
-      folderName: row.folderName,
-      status: row.status as ImportItemStatus,
-      detectedArtist: row.detectedArtist,
-      detectedAlbum: row.detectedAlbum,
-      detectedYear: row.detectedYear,
-      trackCount: row.trackCount,
-      confidence: row.confidence,
-      matchedMbid: row.matchedMbid,
-      matchedArtist: row.matchedArtist,
-      matchedAlbum: row.matchedAlbum,
-      matchedYear: row.matchedYear,
-      matchedCoverUrl: row.matchedCoverUrl,
-      candidates: this.safeParseJson<MusicBrainzReleaseCandidate[]>(row.candidatesJson, []),
-      files: this.safeParseJson<ImportSourceFile[]>(row.filesJson, []),
-      errorMessage: row.errorMessage,
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    }));
+    const items: ImportItemSummary[] = rows.map((row) => {
+      const files = this.safeParseJson<ImportSourceFile[]>(row.filesJson, []);
+      const duplicates: ImportDuplicateMatch[] = [];
+
+      if (row.status === "needs_review") {
+        for (const f of files) {
+          const trackArtist = f.currentArtist || row.detectedArtist;
+          const dup = this.findExistingDuplicate(trackArtist, f.currentTitle);
+          if (dup) {
+            const incomingScore = computeAudioQualityScore(f.codec ?? f.extension, f.bitrate);
+            const existingScore = computeAudioQualityScore(dup.codec, dup.bitrate);
+            duplicates.push({
+              sourceFilePath: f.filePath,
+              existingTrackId: dup.id,
+              existingTitle: dup.title,
+              existingArtist: dup.artistName,
+              existingAlbum: dup.albumTitle,
+              existingCodec: dup.codec,
+              existingBitrate: dup.bitrate,
+              existingFilePath: dup.filePath,
+              isUpgrade: incomingScore > existingScore,
+            });
+          }
+        }
+      }
+
+      return {
+        id: row.id,
+        sourceDir: row.sourceDir,
+        folderName: row.folderName,
+        status: row.status as ImportItemStatus,
+        detectedArtist: row.detectedArtist,
+        detectedAlbum: row.detectedAlbum,
+        detectedYear: row.detectedYear,
+        trackCount: row.trackCount,
+        confidence: row.confidence,
+        matchedMbid: row.matchedMbid,
+        matchedArtist: row.matchedArtist,
+        matchedAlbum: row.matchedAlbum,
+        matchedYear: row.matchedYear,
+        matchedCoverUrl: row.matchedCoverUrl,
+        candidates: this.safeParseJson<MusicBrainzReleaseCandidate[]>(row.candidatesJson, []),
+        files,
+        duplicates,
+        errorMessage: row.errorMessage,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+      };
+    });
 
     const needsReviewRow = this.dbContext.sqlite
       .prepare("SELECT COUNT(*) AS cnt FROM import_items WHERE status = 'needs_review'")
@@ -264,8 +472,8 @@ export class LibraryImporter {
 
     return {
       downloadsDir: {
-        path: this.downloadsDir,
-        exists: fs.existsSync(this.downloadsDir),
+        path: pp.downloadsDir,
+        exists: fs.existsSync(pp.downloadsDir),
       },
       needsReviewCount: needsReviewRow?.cnt ?? 0,
       items,
@@ -273,44 +481,72 @@ export class LibraryImporter {
   }
 
   /**
-   * Scans DOWNLOADS_DIR for album folders, looks up MusicBrainz candidates,
-   * auto-imports high-confidence exact matches, and queues uncertain ones for review.
+   * Scans DOWNLOADS_DIR for album folders and loose single files, matches via Deezer (singles)
+   * and MusicBrainz (albums), respects duplicate policies & stability checks,
+   * auto-imports high-confidence matches, and queues uncertain ones for review.
    */
-  async scanInbox(): Promise<InboxScanResult> {
-    if (!fs.existsSync(this.downloadsDir)) {
+  async scanInbox(options?: ScanInboxOptions): Promise<InboxScanResult> {
+    const pp = this.settings;
+    if (!fs.existsSync(pp.downloadsDir)) {
       return { discoveredFolders: 0, autoImported: 0, needsReview: 0, skipped: 0, failed: 0 };
     }
 
-    const folders = await discoverInboxFolders(this.downloadsDir);
+    const discovered = await discoverInboxItems(pp.downloadsDir);
     const result: InboxScanResult = {
-      discoveredFolders: folders.size,
+      discoveredFolders: discovered.length,
       autoImported: 0,
       needsReview: 0,
       skipped: 0,
       failed: 0,
     };
 
-    for (const [folderPath, audioFiles] of folders.entries()) {
+    for (const item of discovered) {
       const existing = this.dbContext.db
         .select()
         .from(importItems)
-        .where(eq(importItems.sourceDir, folderPath))
+        .where(eq(importItems.sourceDir, item.sourceKey))
         .get();
 
-      // Skip folders already queued for review or explicitly dismissed with the same file count
-      if (
-        existing &&
-        (existing.status === "needs_review" || existing.status === "dismissed") &&
-        existing.trackCount === audioFiles.length
-      ) {
-        result.skipped += 1;
-        continue;
+      // Skip only when the exact same file paths were already queued/dismissed/copied-imported
+      if (existing) {
+        const prevFiles = this.safeParseJson<ImportSourceFile[]>(existing.filesJson, []).map(
+          (f) => f.filePath,
+        );
+        const sameFiles =
+          prevFiles.length === item.audioFiles.length &&
+          prevFiles.every((fp, i) => fp === item.audioFiles[i]);
+
+        if (
+          sameFiles &&
+          (existing.status === "needs_review" ||
+            existing.status === "dismissed" ||
+            (existing.status === "imported" && pp.fileAction === "copy"))
+        ) {
+          result.skipped += 1;
+          continue;
+        }
+      }
+
+      if (options?.requireStableFiles) {
+        const stable = await areFilesStable(
+          item.folderPath,
+          item.audioFiles,
+          options.stabilityWindowMs ?? DEFAULT_STABILITY_WINDOW_MS,
+          item.isLooseFile,
+        );
+        if (!stable) {
+          result.skipped += 1;
+          continue;
+        }
       }
 
       try {
-        const files = await this.inspectSourceFiles(audioFiles);
-        const folderName = path.basename(folderPath);
-        const hints = parseFolderHints(folderName);
+        const files = await this.inspectSourceFiles(item.audioFiles);
+        const isSingleTrack = files.length === 1;
+        const folderName = item.folderName;
+        const hints = parseFolderHints(
+          item.isLooseFile ? path.basename(folderName, path.extname(folderName)) : folderName,
+        );
 
         const detectedArtist =
           mostCommonString(files.map((f) => f.currentArtist)) ?? hints.artist ?? "Unknown Artist";
@@ -334,7 +570,7 @@ export class LibraryImporter {
         const now = new Date();
 
         const itemId = this.upsertImportItem({
-          sourceDir: folderPath,
+          sourceDir: item.sourceKey,
           folderName,
           status: "needs_review",
           detectedArtist,
@@ -353,17 +589,103 @@ export class LibraryImporter {
           now,
         });
 
-        // Auto-import only when confidence clears the threshold AND track count matches exactly
-        const canAutoImport =
+        // 1. Single-Track Mode FIRST when there is 1 audio file (prevents renaming songs like
+        //    "Doin' Time" or "West Coast" to a 1-track single release named after the album!)
+        if (isSingleTrack && this.metadataLookup) {
+          const singleFile = files[0]!;
+          const singleMatch = await this.tryMatchSingleTrack(
+            singleFile,
+            detectedArtist,
+            detectedAlbum,
+            pp.autoImportThreshold,
+          );
+
+          if (singleMatch) {
+            if (
+              pp.duplicatePolicy === "review" &&
+              this.findExistingDuplicate(singleMatch.artist, singleMatch.title)
+            ) {
+              result.needsReview += 1;
+              continue;
+            }
+
+            try {
+              await this.applyImport(
+                itemId,
+                {
+                  artist: singleMatch.albumArtist,
+                  album: singleMatch.album,
+                  year: singleMatch.year,
+                  genre: singleMatch.genre,
+                  coverArtUrl: singleMatch.coverArtUrl,
+                  tracks: [
+                    {
+                      filePath: singleFile.filePath,
+                      title: singleMatch.title,
+                      artist: singleMatch.artist,
+                      trackNumber: singleMatch.trackNumber,
+                      discNumber: singleMatch.discNumber,
+                    },
+                  ],
+                },
+                { coverArtUrl: singleMatch.coverArtUrl },
+              );
+              result.autoImported += 1;
+              continue;
+            } catch (err) {
+              this.logger?.warn(
+                { err, folderName },
+                "Single-track auto-import failed; leaving in Review Queue",
+              );
+            }
+          }
+        }
+
+        // 2. Album Auto-Import (MusicBrainz release match with exact track count)
+        const canAutoImportAlbum =
           top !== null &&
-          confidence >= this.autoImportThreshold &&
+          confidence >= pp.autoImportThreshold &&
           top.trackCount === files.length;
 
-        if (canAutoImport) {
+        if (canAutoImportAlbum) {
           try {
             const detail = await this.musicBrainz.getReleaseDetail(top.mbid);
+
+            // Safety guard for 1-track releases: NEVER blindly overwrite a single track's title
+            // with an album title unless the MusicBrainz track title actually matches the song!
+            if (isSingleTrack) {
+              const fileTitleNorm = normalizeForMatching(stripLeadingTrackNumber(files[0]!.currentTitle));
+              const mbTitleNorm = normalizeForMatching(detail.tracks[0]?.title ?? "");
+              if (!fileTitleNorm || !mbTitleNorm || fileTitleNorm !== mbTitleNorm) {
+                result.needsReview += 1;
+                continue;
+              }
+            }
+
+            // Map MusicBrainz release tracks by title similarity FIRST, then trackNumber, then index
+            const usedMbIndices = new Set<number>();
             const trackOverrides: RetagTrackOverride[] = files.map((file, idx) => {
-              const mbTrack = detail.tracks[idx];
+              const normFileTitle = normalizeForMatching(stripLeadingTrackNumber(file.currentTitle));
+              let matchedIdx = detail.tracks.findIndex(
+                (t, ti) =>
+                  !usedMbIndices.has(ti) &&
+                  normFileTitle.length > 0 &&
+                  normalizeForMatching(t.title) === normFileTitle,
+              );
+              if (matchedIdx === -1 && file.trackNumber !== null) {
+                matchedIdx = detail.tracks.findIndex(
+                  (t, ti) =>
+                    !usedMbIndices.has(ti) &&
+                    t.trackNumber === file.trackNumber &&
+                    t.discNumber === (file.discNumber ?? 1),
+                );
+              }
+              if (matchedIdx === -1 && idx < detail.tracks.length && !usedMbIndices.has(idx)) {
+                matchedIdx = idx;
+              }
+              if (matchedIdx >= 0) usedMbIndices.add(matchedIdx);
+              const mbTrack = matchedIdx >= 0 ? detail.tracks[matchedIdx] : undefined;
+
               return {
                 filePath: file.filePath,
                 title: mbTrack?.title ?? file.currentTitle,
@@ -374,14 +696,29 @@ export class LibraryImporter {
               };
             });
 
-            await this.applyImport(itemId, {
-              artist: detail.artist,
-              album: detail.title,
-              year: detail.year,
-              mbid: detail.mbid,
-              artistMbid: detail.artistMbid,
-              tracks: trackOverrides,
-            });
+            if (
+              pp.duplicatePolicy === "review" &&
+              trackOverrides.some((t) =>
+                Boolean(this.findExistingDuplicate(t.artist ?? detail.artist, t.title)),
+              )
+            ) {
+              result.needsReview += 1;
+              continue;
+            }
+
+            await this.applyImport(
+              itemId,
+              {
+                artist: detail.artist,
+                album: detail.title,
+                year: detail.year,
+                mbid: detail.mbid,
+                artistMbid: detail.artistMbid,
+                coverArtUrl: top.coverArtUrl,
+                tracks: trackOverrides,
+              },
+              { coverArtUrl: top.coverArtUrl },
+            );
             result.autoImported += 1;
             continue;
           } catch (err) {
@@ -395,16 +732,16 @@ export class LibraryImporter {
         result.needsReview += 1;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        this.logger?.error({ err, folderPath }, "Failed to inspect inbox folder");
+        this.logger?.error({ err, sourceKey: item.sourceKey }, "Failed to inspect inbox item");
         result.failed += 1;
         this.upsertImportItem({
-          sourceDir: folderPath,
-          folderName: path.basename(folderPath),
+          sourceDir: item.sourceKey,
+          folderName: item.folderName,
           status: "failed",
           detectedArtist: "Unknown Artist",
-          detectedAlbum: path.basename(folderPath),
+          detectedAlbum: item.folderName,
           detectedYear: null,
-          trackCount: audioFiles.length,
+          trackCount: item.audioFiles.length,
           confidence: 0,
           matchedMbid: null,
           matchedArtist: null,
@@ -423,10 +760,16 @@ export class LibraryImporter {
   }
 
   /**
-   * Tags every file in a Review Queue item, moves them into MUSIC_DIR/Artist/Album/Track,
-   * cleans up the empty inbox folder, and triggers a library scan.
+   * Tags every file in a Review Queue item, handles duplicates according to policy/resolution,
+   * moves/copies them into MUSIC_DIR/Artist/Album/Track, embeds cover/lyrics if enabled,
+   * rescans the library, and automatically backfills missing tracks on all playlists.
    */
-  async applyImport(importId: number, payload: ApplyTaggingRequest): Promise<ApplyImportResponse> {
+  async applyImport(
+    importId: number,
+    payload: ApplyTaggingRequest,
+    extra?: { coverArtUrl?: string | null },
+  ): Promise<ApplyImportResponse> {
+    const pp = this.settings;
     const row = this.dbContext.db
       .select()
       .from(importItems)
@@ -446,16 +789,32 @@ export class LibraryImporter {
     }
 
     const safeArtist = sanitizePathSegment(payload.artist, "Unknown Artist");
-    const safeAlbum = sanitizePathSegment(payload.album, "Unknown Album");
-    const destinationDir = path.join(this.musicDir, safeArtist, safeAlbum);
-    await fsp.mkdir(destinationDir, { recursive: true });
+    const albumFolderName =
+      pp.includeYearInAlbumFolder && payload.year && payload.year > 0
+        ? `${sanitizePathSegment(payload.album, "Unknown Album")} (${payload.year})`
+        : sanitizePathSegment(payload.album, "Unknown Album");
+    const destinationDir = path.join(this.musicDir, safeArtist, albumFolderName);
 
     const discNumbers = new Set(
       tracksToProcess.map((t) => t.discNumber ?? 1).filter((d) => d > 0),
     );
     const hasMultipleDiscs = discNumbers.size > 1;
 
+    let remoteCover: { bytes: Uint8Array; mimeType: string } | null = null;
+    const coverCandidateUrl = extra?.coverArtUrl ?? payload.coverArtUrl ?? row.matchedCoverUrl;
+    if (pp.autoEmbedCoverArt && coverCandidateUrl) {
+      remoteCover = await this.tryDownloadCoverArt(coverCandidateUrl);
+    }
+
+    const dupResolution = payload.duplicateResolution ?? "policy";
     let filesImported = 0;
+    let duplicatesSkipped = 0;
+    let duplicatesUpgraded = 0;
+    // Preserve playlist memberships when a track is upgraded/replaced at a different file path
+    const playlistMigrations: Array<{
+      newDestPath: string;
+      entries: Array<{ playlistId: number; position: number; addedAt: number }>;
+    }> = [];
 
     for (let idx = 0; idx < tracksToProcess.length; idx++) {
       const track = tracksToProcess[idx]!;
@@ -463,25 +822,23 @@ export class LibraryImporter {
         throw new ImporterError(`Source file no longer exists: ${path.basename(track.filePath)}`);
       }
 
+      const trackArtist = track.artist?.trim() || payload.artist;
       const trackNumber = track.trackNumber ?? idx + 1;
       const discNumber = track.discNumber ?? 1;
-
-      // Write clean tags before moving into the library
-      writeAudioTags(track.filePath, {
-        title: track.title,
-        artist: track.artist?.trim() || payload.artist,
-        albumArtist: payload.artist,
-        album: payload.album,
-        trackNumber,
-        discNumber,
-        year: payload.year,
-        genre: payload.genre ?? null,
-        musicBrainzReleaseId: payload.mbid ?? null,
-        musicBrainzArtistId: payload.artistMbid ?? null,
-        musicBrainzTrackId: track.recordingMbid ?? null,
-      });
-
       const ext = path.extname(track.filePath).toLowerCase();
+
+      let incomingBitrate: number | null = null;
+      let incomingCodec: string | null = ext.slice(1);
+      let hasEmbeddedCover = false;
+      try {
+        const parsedMeta = await parseFile(track.filePath, { duration: false });
+        incomingBitrate = parsedMeta.format.bitrate ?? null;
+        incomingCodec = parsedMeta.format.codec ?? parsedMeta.format.container ?? ext.slice(1);
+        hasEmbeddedCover = Boolean(parsedMeta.common.picture && parsedMeta.common.picture.length > 0);
+      } catch {
+        // Fallback to extension
+      }
+
       const destName = formatTrackFilename(
         trackNumber,
         discNumber,
@@ -490,13 +847,134 @@ export class LibraryImporter {
         ext,
       );
       const destPath = path.join(destinationDir, destName);
-      await moveFileSafe(track.filePath, destPath);
+
+      // Duplicate & Quality-Upgrade Handling
+      const existingDup = this.findExistingDuplicate(trackArtist, track.title);
+      if (existingDup && dupResolution !== "keep_both") {
+        const incomingScore = computeAudioQualityScore(incomingCodec, incomingBitrate);
+        const existingScore = computeAudioQualityScore(existingDup.codec, existingDup.bitrate);
+
+        const shouldSkip =
+          dupResolution === "skip" ||
+          (dupResolution === "policy" &&
+            (pp.duplicatePolicy === "skip" ||
+              (pp.duplicatePolicy === "upgrade" && incomingScore <= existingScore)));
+
+        const shouldReplace =
+          dupResolution === "replace" ||
+          (dupResolution === "policy" &&
+            pp.duplicatePolicy === "upgrade" &&
+            incomingScore > existingScore);
+
+        if (shouldSkip) {
+          duplicatesSkipped += 1;
+          if (pp.fileAction === "move") {
+            const dupDest = path.join(
+              this.dataDir,
+              "duplicates",
+              sanitizePathSegment(`${safeArtist} - ${payload.album}`),
+              path.basename(track.filePath),
+            );
+            await moveFileSafe(track.filePath, dupDest).catch(() => {});
+          }
+          continue;
+        }
+
+        if (shouldReplace) {
+          // Snapshot all playlist occurrences BEFORE scanner deletes the replaced track (ON DELETE CASCADE)
+          const savedEntries = this.dbContext.sqlite
+            .prepare(
+              `
+              SELECT playlist_id AS playlistId, position, added_at AS addedAt
+              FROM playlist_tracks
+              WHERE track_id = ?
+              ORDER BY playlist_id ASC, position ASC
+            `,
+            )
+            .all(existingDup.id) as Array<{ playlistId: number; position: number; addedAt: number }>;
+
+          if (savedEntries.length > 0 && path.resolve(existingDup.filePath) !== path.resolve(destPath)) {
+            playlistMigrations.push({ newDestPath: destPath, entries: savedEntries });
+          }
+
+          if (fs.existsSync(existingDup.filePath)) {
+            const oldDir = path.dirname(existingDup.filePath);
+            const archiveDest = path.join(
+              this.dataDir,
+              "replaced",
+              sanitizePathSegment(`${existingDup.artistName} - ${existingDup.albumTitle}`),
+              `${Date.now()}-${path.basename(existingDup.filePath)}`,
+            );
+            await moveFileSafe(existingDup.filePath, archiveDest).catch(() => {});
+            // Clean up now-empty old album/artist folder inside MUSIC_DIR
+            await removeEmptyDir(oldDir, this.musicDir);
+            duplicatesUpgraded += 1;
+          }
+        }
+      }
+
+      if (pp.fileAction === "copy") {
+        await copyFileSafe(track.filePath, destPath);
+      } else {
+        await moveFileSafe(track.filePath, destPath);
+      }
+
+      let fetchedLyrics: string | null = null;
+      if (pp.autoFetchLyrics && this.metadataLookup) {
+        try {
+          const lrc = await this.metadataLookup.lookup({
+            provider: "lrclib",
+            title: track.title,
+            artist: trackArtist,
+            album: payload.album,
+          });
+          fetchedLyrics = lrc[0]?.fields.lyrics ?? null;
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      writeAudioTags(destPath, {
+        title: track.title,
+        artist: trackArtist,
+        albumArtist: payload.artist,
+        album: payload.album,
+        trackNumber,
+        discNumber,
+        year: payload.year,
+        genre: payload.genre ?? null,
+        lyrics: fetchedLyrics,
+        musicBrainzReleaseId: payload.mbid ?? null,
+        musicBrainzArtistId: payload.artistMbid ?? null,
+        musicBrainzTrackId: track.recordingMbid ?? null,
+      });
+
+      if (pp.autoEmbedCoverArt && !hasEmbeddedCover && remoteCover) {
+        try {
+          writeEmbeddedCover(destPath, remoteCover.bytes, remoteCover.mimeType);
+        } catch {
+          // Non-fatal
+        }
+      }
+
       filesImported += 1;
     }
 
-    // Also bring along any folder artwork (cover.jpg / folder.png) if present in the source folder
-    await this.moveFolderCovers(row.sourceDir, destinationDir);
-    await removeEmptyDir(row.sourceDir, this.downloadsDir);
+    // Only transfer folder covers / remove empty folder when source was a subfolder (not loose file)
+    const sourceParentDir =
+      fs.existsSync(row.sourceDir) && fs.statSync(row.sourceDir).isDirectory()
+        ? row.sourceDir
+        : path.dirname(row.sourceDir);
+    const isSubfolder = path.resolve(sourceParentDir) !== path.resolve(pp.downloadsDir);
+
+    if (isSubfolder) {
+      if (filesImported > 0) {
+        await this.transferFolderCovers(sourceParentDir, destinationDir, pp.fileAction);
+      }
+      if (pp.fileAction === "move") {
+        await removeEmptyDir(sourceParentDir, pp.downloadsDir);
+      }
+    }
 
     const now = new Date();
     this.dbContext.db
@@ -513,14 +991,51 @@ export class LibraryImporter {
       .where(eq(importItems.id, importId))
       .run();
 
-    // Index the newly moved album into SQLite right away
     await this.scanner.runScan();
+
+    // Restore playlist memberships for any upgraded/replaced tracks at their exact original positions
+    if (playlistMigrations.length > 0) {
+      const findTrackByPathStmt = this.dbContext.sqlite.prepare(
+        "SELECT id FROM tracks WHERE file_path = ?",
+      );
+      const insertPlTrackStmt = this.dbContext.sqlite.prepare(
+        "INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)",
+      );
+      const touchPlStmt = this.dbContext.sqlite.prepare(
+        "UPDATE playlists SET updated_at = ? WHERE id = ?",
+      );
+      const nowMs = Date.now();
+      const tx = this.dbContext.sqlite.transaction(() => {
+        for (const mig of playlistMigrations) {
+          const newRow = findTrackByPathStmt.get(mig.newDestPath) as { id: number } | undefined;
+          if (!newRow) continue;
+          const touched = new Set<number>();
+          for (const entry of mig.entries) {
+            insertPlTrackStmt.run(entry.playlistId, newRow.id, entry.position, entry.addedAt);
+            touched.add(entry.playlistId);
+          }
+          for (const plId of touched) {
+            touchPlStmt.run(nowMs, plId);
+          }
+        }
+      });
+      tx();
+    }
+
+    const playlistsBackfilled = recheckAllPlaylistsMissingTracks(
+      this.dbContext.sqlite,
+      this.musicDir,
+      this.batchSearchService,
+    );
 
     return {
       importId,
       status: "imported",
       destinationDir,
       filesImported,
+      duplicatesSkipped,
+      duplicatesUpgraded,
+      playlistsBackfilled,
     };
   }
 
@@ -542,10 +1057,6 @@ export class LibraryImporter {
       .run();
   }
 
-  /**
-   * "Fix This Album" for albums already in the library: rewrites embedded audio tags
-   * in place and triggers a forced re-scan so SQLite reflects the cleaned tags.
-   */
   async retagExistingAlbum(
     albumId: number,
     payload: ApplyTaggingRequest,
@@ -589,34 +1100,193 @@ export class LibraryImporter {
       filesUpdated += 1;
     }
 
-    // Re-scan so SQLite picks up the rewritten tags and merges/prunes old artist/album names
     await this.scanner.runScan({ force: true });
 
     return { albumId, filesUpdated };
   }
 
+  private findExistingDuplicate(artist: string, title: string): ExistingDuplicateTrack | null {
+    const normTitle = normalizeForMatching(title);
+    if (!normTitle) return null;
+
+    const entryArtists = extractArtistVariants(artist);
+    const allRows = this.dbContext.sqlite
+      .prepare(
+        `
+        SELECT
+          t.id,
+          t.title,
+          ar.name AS artistName,
+          al.title AS albumTitle,
+          t.file_path AS filePath,
+          t.codec,
+          t.bitrate
+        FROM tracks t
+        JOIN artists ar ON ar.id = t.artist_id
+        JOIN albums al ON al.id = t.album_id
+      `,
+      )
+      .all() as ExistingDuplicateTrack[];
+
+    for (const row of allRows) {
+      // Ignore stale SQLite entries whose files were already removed on disk
+      if (!fs.existsSync(row.filePath)) continue;
+      if (normalizeForMatching(row.title) !== normTitle) continue;
+      if (entryArtists.length === 0) return row;
+
+      const rowArtistNorm = normalizeForMatching(row.artistName);
+      const rowVariants = extractArtistVariants(row.artistName);
+      if (
+        rowVariants.some((v) => entryArtists.includes(v)) ||
+        entryArtists.some(
+          (ea) => ea.length >= 3 && (rowArtistNorm.includes(ea) || ea.includes(rowArtistNorm)),
+        )
+      ) {
+        return row;
+      }
+    }
+
+    return null;
+  }
+
+  private async tryMatchSingleTrack(
+    file: ImportSourceFile,
+    detectedArtist: string,
+    detectedAlbum: string,
+    threshold: number,
+  ): Promise<{
+    title: string;
+    artist: string;
+    albumArtist: string;
+    album: string;
+    year: number | null;
+    genre: string | null;
+    trackNumber: number | null;
+    discNumber: number | null;
+    coverArtUrl: string | null;
+  } | null> {
+    if (!this.metadataLookup) return null;
+
+    const cleanTitle = stripLeadingTrackNumber(file.currentTitle);
+    const rawArtist =
+      file.currentArtist.trim() ||
+      (detectedArtist !== "Unknown Artist" && !isCompilationArtist(detectedArtist)
+        ? detectedArtist
+        : "");
+    const cleanArtist = isCompilationArtist(rawArtist) ? "" : rawArtist;
+    if (!cleanTitle || !cleanArtist) return null;
+
+    let suggestions;
+    try {
+      suggestions = await this.metadataLookup.lookup({
+        provider: "deezer",
+        title: cleanTitle,
+        artist: cleanArtist,
+        album:
+          file.currentAlbum && !file.currentAlbum.toLowerCase().includes("now that")
+            ? file.currentAlbum
+            : undefined,
+      });
+    } catch {
+      return null;
+    }
+
+    const normQueryTitle = normalizeForMatching(cleanTitle);
+    const queryArtists = extractArtistVariants(cleanArtist);
+
+    for (const s of suggestions) {
+      const sTitle = s.fields.title?.trim() ?? "";
+      const sArtist = s.fields.artists?.trim() || s.fields.albumArtist?.trim() || "";
+      const sAlbum = s.fields.album?.trim() || "";
+      if (!sTitle || !sArtist || !sAlbum) continue;
+
+      const normSTitle = normalizeForMatching(sTitle);
+      const sArtistNorm = normalizeForMatching(sArtist);
+      const titleExact = normSTitle === normQueryTitle;
+      const artistMatches = queryArtists.some(
+        (qa) =>
+          qa === sArtistNorm ||
+          (qa.length >= 3 && (sArtistNorm.includes(qa) || qa.includes(sArtistNorm))),
+      );
+
+      const score = (titleExact ? 55 : 0) + (artistMatches ? 40 : 0);
+      if (score >= threshold) {
+        return {
+          title: sTitle,
+          artist: sArtist,
+          albumArtist: s.fields.albumArtist?.trim() || sArtist,
+          album: sAlbum,
+          year: s.fields.year ?? null,
+          genre: s.fields.genres?.trim() || null,
+          trackNumber: s.fields.trackNumber ?? file.trackNumber ?? 1,
+          discNumber: s.fields.discNumber ?? file.discNumber ?? 1,
+          coverArtUrl: s.coverArtUrl,
+        };
+      }
+    }
+
+    // Silence unused parameter lint
+    void detectedAlbum;
+    return null;
+  }
+
+  private async tryDownloadCoverArt(
+    url: string,
+  ): Promise<{ bytes: Uint8Array; mimeType: string } | null> {
+    if (!isAllowedCoverArtUrl(url)) return null;
+    try {
+      const res = await this.fetchImpl(url, {
+        headers: { "User-Agent": "MusicOrbit/0.1.0 (https://github.com/musicorbit)" },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return null;
+      const buf = new Uint8Array(await res.arrayBuffer());
+      if (buf.length < 16 || buf.length > 5 * 1024 * 1024) return null;
+      const mime = res.headers.get("content-type")?.split(";")[0]?.trim() || "image/jpeg";
+      return { bytes: buf, mimeType: mime };
+    } catch {
+      return null;
+    }
+  }
+
   private async inspectSourceFiles(filePaths: string[]): Promise<ImportSourceFile[]> {
     const results: ImportSourceFile[] = [];
+    const isSingle = filePaths.length === 1;
 
     for (const filePath of filePaths) {
       const basename = path.basename(filePath);
       const extension = path.extname(filePath).toLowerCase();
-      let currentTitle = path.basename(filePath, extension);
-      let currentArtist = "";
+      const rawBase = path.basename(filePath, extension);
+      const fileHints = parseFolderHints(rawBase);
+
+      let currentTitle = fileHints.album || stripLeadingTrackNumber(rawBase) || rawBase;
+      let currentArtist = fileHints.artist ?? "";
       let currentAlbum = "";
       let trackNumber: number | null = null;
       let discNumber: number | null = null;
       let durationSeconds: number | null = null;
+      let codec: string | null = extension.slice(1).toUpperCase() || null;
+      let bitrate: number | null = null;
 
       try {
         const meta = await parseFile(filePath, { duration: true });
-        if (meta.common.title?.trim()) currentTitle = meta.common.title.trim();
-        currentArtist =
-          meta.common.albumartist?.trim() || meta.common.artist?.trim() || "";
+        if (meta.common.title?.trim()) {
+          currentTitle = meta.common.title.trim();
+        }
+        const trackArt = meta.common.artist?.trim() || "";
+        const albumArt = meta.common.albumartist?.trim() || "";
+        // Prefer track artist on single tracks or compilations ("Various Artists")
+        if (isSingle || !albumArt || isCompilationArtist(albumArt)) {
+          currentArtist = trackArt || albumArt || currentArtist;
+        } else {
+          currentArtist = albumArt || trackArt || currentArtist;
+        }
         currentAlbum = meta.common.album?.trim() || "";
         trackNumber = meta.common.track.no ?? null;
         discNumber = meta.common.disk.no ?? null;
         durationSeconds = meta.format.duration ?? null;
+        codec = meta.format.codec ?? meta.format.container ?? codec;
+        bitrate = meta.format.bitrate ? Math.round(meta.format.bitrate) : null;
       } catch {
         // Fall back to filename hints when tags are unreadable or missing
       }
@@ -631,6 +1301,8 @@ export class LibraryImporter {
         trackNumber,
         discNumber,
         durationSeconds,
+        codec,
+        bitrate,
       });
     }
 
@@ -645,7 +1317,11 @@ export class LibraryImporter {
     return results;
   }
 
-  private async moveFolderCovers(sourceDir: string, destinationDir: string): Promise<void> {
+  private async transferFolderCovers(
+    sourceDir: string,
+    destinationDir: string,
+    fileAction: "move" | "copy",
+  ): Promise<void> {
     try {
       const entries = await fsp.readdir(sourceDir, { withFileTypes: true });
       for (const entry of entries) {
@@ -654,11 +1330,15 @@ export class LibraryImporter {
         const src = path.join(sourceDir, entry.name);
         const dest = path.join(destinationDir, entry.name);
         if (!fs.existsSync(dest)) {
-          await moveFileSafe(src, dest);
+          if (fileAction === "copy") {
+            await copyFileSafe(src, dest);
+          } else {
+            await moveFileSafe(src, dest);
+          }
         }
       }
     } catch {
-      // Non-fatal if cover copy fails
+      // Non-fatal
     }
   }
 

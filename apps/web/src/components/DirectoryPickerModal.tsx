@@ -9,16 +9,22 @@ import {
   X,
 } from "lucide-react";
 import type { BrowseDirectoriesResponse } from "@musicorbit/shared";
-import { browseServerDirectories, updateMusicDirectory } from "../api/client";
+import {
+  browseServerDirectories,
+  updateMusicDirectory,
+  updatePostProcessingSettings,
+} from "../api/client";
 import { useModalAccessibility } from "../hooks/useModalAccessibility";
 
 interface DirectoryPickerModalProps {
+  mode?: "music" | "downloads";
   initialPath: string;
   onClose: () => void;
   onSaved: (newPath: string, scannedNow: boolean) => void;
 }
 
 export function DirectoryPickerModal({
+  mode = "music",
   initialPath,
   onClose,
   onSaved,
@@ -32,6 +38,13 @@ export function DirectoryPickerModal({
   const [error, setError] = useState<string | null>(null);
 
   useModalAccessibility(dialogRef, onClose);
+
+  const heading =
+    mode === "downloads" ? "Select Downloads / Watch Folder" : "Select Music Directory";
+  const subheading =
+    mode === "downloads"
+      ? "Choose the folder where slskd or external downloads land before MusicOrbit post-processes them."
+      : "Browse folders on this server or enter a path directly. Saved automatically across restarts.";
 
   const loadPath = useCallback(async (target?: string) => {
     setLoading(true);
@@ -63,11 +76,16 @@ export function DirectoryPickerModal({
     setSaving(true);
     setError(null);
     try {
-      const updated = await updateMusicDirectory(chosen, scanNow);
-      onSaved(updated.musicDir, scanNow);
+      if (mode === "downloads") {
+        const updated = await updatePostProcessingSettings({ downloadsDir: chosen });
+        onSaved(updated.postProcessing.downloadsDir, false);
+      } else {
+        const updated = await updateMusicDirectory(chosen, scanNow);
+        onSaved(updated.musicDir, scanNow);
+      }
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save music directory");
+      setError(err instanceof Error ? err.message : "Failed to save directory");
     } finally {
       setSaving(false);
     }
@@ -82,7 +100,7 @@ export function DirectoryPickerModal({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Select Music Directory"
+        aria-label={heading}
         tabIndex={-1}
         className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 shadow-2xl focus:outline-none"
         onClick={(e) => e.stopPropagation()}
@@ -91,11 +109,8 @@ export function DirectoryPickerModal({
           <div className="flex items-center gap-2.5">
             <FolderOpen className="h-5 w-5 text-amber-400" />
             <div>
-              <h3 className="text-sm font-semibold text-zinc-50">Select Music Directory</h3>
-              <p className="text-xs text-zinc-400">
-                Browse folders on this server or enter a path directly. Saved automatically across
-                restarts.
-              </p>
+              <h3 className="text-sm font-semibold text-zinc-50">{heading}</h3>
+              <p className="text-xs text-zinc-400">{subheading}</p>
             </div>
           </div>
           <button
@@ -199,15 +214,21 @@ export function DirectoryPickerModal({
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-800 bg-zinc-950/50 px-5 py-3.5">
-          <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-300">
-            <input
-              type="checkbox"
-              checked={scanNow}
-              onChange={(e) => setScanNow(e.target.checked)}
-              className="h-3.5 w-3.5 rounded accent-amber-500"
-            />
-            Scan this folder immediately after saving
-          </label>
+          {mode === "music" ? (
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-300">
+              <input
+                type="checkbox"
+                checked={scanNow}
+                onChange={(e) => setScanNow(e.target.checked)}
+                className="h-3.5 w-3.5 rounded accent-amber-500"
+              />
+              Scan this folder immediately after saving
+            </label>
+          ) : (
+            <span className="text-xs text-zinc-500">
+              Files in this folder will be organized into your Music Directory.
+            </span>
+          )}
 
           <div className="flex items-center gap-2">
             <button

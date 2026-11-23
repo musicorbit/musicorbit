@@ -255,6 +255,20 @@ export interface ImportSourceFile {
   trackNumber: number | null;
   discNumber: number | null;
   durationSeconds: number | null;
+  codec?: string | null;
+  bitrate?: number | null;
+}
+
+export interface ImportDuplicateMatch {
+  sourceFilePath: string;
+  existingTrackId: number;
+  existingTitle: string;
+  existingArtist: string;
+  existingAlbum: string;
+  existingCodec: string | null;
+  existingBitrate: number | null;
+  existingFilePath: string;
+  isUpgrade: boolean;
 }
 
 export interface ImportItemSummary {
@@ -274,6 +288,7 @@ export interface ImportItemSummary {
   matchedCoverUrl: string | null;
   candidates: MusicBrainzReleaseCandidate[];
   files: ImportSourceFile[];
+  duplicates?: ImportDuplicateMatch[];
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
@@ -312,6 +327,8 @@ export interface ApplyTaggingRequest {
   genre?: string | null;
   mbid?: string | null;
   artistMbid?: string | null;
+  coverArtUrl?: string | null;
+  duplicateResolution?: "policy" | "replace" | "keep_both" | "skip";
   tracks: RetagTrackOverride[];
 }
 
@@ -320,6 +337,9 @@ export interface ApplyImportResponse {
   status: ImportItemStatus;
   destinationDir: string;
   filesImported: number;
+  duplicatesSkipped?: number;
+  duplicatesUpgraded?: number;
+  playlistsBackfilled?: number;
 }
 
 export interface RetagAlbumResponse {
@@ -485,14 +505,42 @@ export interface MissingTrackBatchJobStatus {
 }
 
 /**
- * Dynamic system settings & server folder browser.
+ * Dynamic system settings, post-processing pipeline & server folder browser.
  */
+export type ImportFileAction = "move" | "copy";
+export type DuplicatePolicy = "upgrade" | "review" | "skip";
+
+export interface PostProcessingSettings {
+  downloadsDir: string;
+  defaultDownloadsDir: string;
+  downloadsDirExists: boolean;
+  fileAction: ImportFileAction;
+  duplicatePolicy: DuplicatePolicy;
+  autoWatchEnabled: boolean;
+  autoWatchIntervalSeconds: number;
+  autoImportThreshold: number;
+  includeYearInAlbumFolder: boolean;
+  autoEmbedCoverArt: boolean;
+  autoFetchLyrics: boolean;
+}
+
+export interface InboxWatcherStatus {
+  enabled: boolean;
+  running: boolean;
+  intervalSeconds: number;
+  lastCheckAt: string | null;
+  lastError: string | null;
+  lastResult: InboxScanResult | null;
+}
+
 export interface SystemSettingsResponse {
   musicDir: string;
   defaultMusicDir: string;
   musicDirExists: boolean;
   isOverridden: boolean;
   downloadsDir: string;
+  postProcessing: PostProcessingSettings;
+  watcher: InboxWatcherStatus;
 }
 
 export interface DirectoryEntry {

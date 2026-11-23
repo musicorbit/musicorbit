@@ -8,13 +8,16 @@ import type {
   MusicBrainzReleaseCandidate,
   MusicBrainzReleaseDetail,
   RetagAlbumResponse,
+  TrackMetadataSuggestion,
 } from "@musicorbit/shared";
 import { ImporterError, type LibraryImporter } from "../services/importer.js";
+import type { MetadataLookupService } from "../services/metadataLookup.js";
 import type { MusicBrainzClient } from "../services/musicbrainz.js";
 
 export interface ImportRouteDeps {
   importer: LibraryImporter;
   musicBrainz: MusicBrainzClient;
+  metadataLookup?: MetadataLookupService;
 }
 
 const idParamSchema = z.object({
@@ -35,6 +38,13 @@ const mbSearchQuerySchema = z.object({
   trackCount: z.coerce.number().int().positive().optional(),
 });
 
+const trackLookupQuerySchema = z.object({
+  provider: z.enum(["deezer", "musicbrainz"]).default("deezer"),
+  title: z.string().trim().optional(),
+  artist: z.string().trim().optional(),
+  album: z.string().trim().optional(),
+});
+
 const applyTaggingBodySchema = z.object({
   artist: z.string().trim().min(1),
   album: z.string().trim().min(1),
@@ -42,6 +52,8 @@ const applyTaggingBodySchema = z.object({
   genre: z.string().trim().nullable().optional(),
   mbid: z.string().trim().nullable().optional(),
   artistMbid: z.string().trim().nullable().optional(),
+  coverArtUrl: z.string().trim().nullable().optional(),
+  duplicateResolution: z.enum(["policy", "replace", "keep_both", "skip"]).optional(),
   tracks: z
     .array(
       z.object({
@@ -67,7 +79,35 @@ export async function registerImportRoutes(
   app: FastifyInstance,
   deps: ImportRouteDeps,
 ): Promise<void> {
-  const { importer, musicBrainz } = deps;
+  const { importer, musicBrainz, metadataLookup } = deps;
+
+  // Lookup individual track suggestions (Deezer / MusicBrainz) for Review Queue items
+  app.get(
+    "/api/imports/lookup-track",
+    async (request, reply): Promise<TrackMetadataSuggestion[]> => {
+      if (!metadataLookup) {
+        return reply.code(503).send({ error: "Track metadata lookup is unavailable." });
+      }
+      const parsed = trackLookupQuerySchema.safeParse(request.query);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "Invalid lookup parameters." });
+      }
+      if (!parsed.data.title && !parsed.data.artist) {
+        return reply.code(400).send({ error: "Provide at least a title or artist." });
+      }
+      try {
+        return await metadataLookup.lookup({
+          provider: parsed.data.provider,
+          title: parsed.data.title,
+          artist: parsed.data.artist,
+          album: parsed.data.album,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Track lookup failed";
+        return reply.code(502).send({ error: msg });
+      }
+    },
+  );
 
   // List Review Queue & import history
   app.get("/api/imports", async (request): Promise<ImportsListResponse> => {

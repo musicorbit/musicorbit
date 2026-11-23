@@ -16,6 +16,7 @@ import type {
 } from "@musicorbit/shared";
 import { applyImport, dismissImport, fetchImports, scanInbox } from "../api/client";
 import { RetagAlbumModal } from "../components/RetagAlbumModal";
+import { formatBitrate, formatCodec } from "../utils/format";
 
 interface ReviewQueueViewProps {
   onLibraryChanged: () => void;
@@ -213,90 +214,159 @@ export function ReviewQueueView({ onLibraryChanged }: ReviewQueueViewProps) {
         </div>
       ) : (
         <div className="space-y-3">
-          {items.map((item) => (
-            <div
-              key={item.id}
-              className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-zinc-800/80 bg-zinc-900/45 p-4"
-            >
-              <div className="min-w-0 flex-1 space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="truncate text-sm font-semibold text-zinc-100">{item.folderName}</p>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                      item.status === "needs_review"
-                        ? "bg-amber-500/15 text-amber-300"
-                        : item.status === "imported"
-                          ? "bg-emerald-500/15 text-emerald-300"
-                          : item.status === "failed"
-                            ? "bg-red-500/15 text-red-300"
-                            : "bg-zinc-800 text-zinc-400"
-                    }`}
-                  >
-                    {item.status.replace("_", " ")}
-                  </span>
-                  {item.confidence > 0 && (
-                    <span className="text-[11px] text-zinc-500">
-                      Best match: {Math.round(item.confidence)}%
+          {items.map((item) => {
+            const isSingle = item.files.length === 1;
+            const singleFile = isSingle ? item.files[0] : null;
+            const headline = singleFile
+              ? `${singleFile.currentTitle}${singleFile.currentArtist ? ` — ${singleFile.currentArtist}` : ""}`
+              : item.folderName;
+            const dupList = item.duplicates ?? [];
+
+            return (
+              <div
+                key={item.id}
+                className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-zinc-800/80 bg-zinc-900/45 p-4"
+              >
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="truncate text-sm font-semibold text-zinc-100">{headline}</p>
+                    <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-medium text-zinc-300">
+                      {isSingle ? "Single Track" : `${item.trackCount} tracks`}
                     </span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                        item.status === "needs_review"
+                          ? "bg-amber-500/15 text-amber-300"
+                          : item.status === "imported"
+                            ? "bg-emerald-500/15 text-emerald-300"
+                            : item.status === "failed"
+                              ? "bg-red-500/15 text-red-300"
+                              : "bg-zinc-800 text-zinc-400"
+                      }`}
+                    >
+                      {item.status.replace("_", " ")}
+                    </span>
+                    {singleFile?.codec && (
+                      <span className="rounded bg-zinc-950 px-1.5 py-0.5 text-[10px] text-zinc-400 ring-1 ring-zinc-800">
+                        {formatCodec(singleFile.codec)}
+                        {singleFile.bitrate ? ` · ${formatBitrate(singleFile.bitrate)}` : ""}
+                      </span>
+                    )}
+                    {item.confidence > 0 && (
+                      <span className="text-[11px] text-zinc-500">
+                        Best match: {Math.round(item.confidence)}%
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-zinc-400">
+                    {isSingle ? (
+                      <>
+                        File: <span className="text-zinc-300">{singleFile?.basename}</span>
+                        {item.detectedAlbum ? (
+                          <>
+                            {" "}
+                            · Album tag: <span className="text-zinc-300">{item.detectedAlbum}</span>
+                          </>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        Detected: <span className="text-zinc-200">{item.detectedArtist}</span> —{" "}
+                        <span className="text-zinc-200">{item.detectedAlbum}</span>
+                        {item.files.length > 0 && (
+                          <span className="text-zinc-500">
+                            {" "}
+                            ({item.files
+                              .slice(0, 3)
+                              .map((f) => f.currentTitle)
+                              .join(", ")}
+                            {item.files.length > 3 ? `, +${item.files.length - 3} more` : ""})
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </p>
+
+                  {dupList.length > 0 && (
+                    <p className="text-xs text-amber-300">
+                      Duplicate in library:{" "}
+                      {dupList
+                        .slice(0, 2)
+                        .map(
+                          (d) =>
+                            `${d.existingTitle} (${formatCodec(d.existingCodec)}${
+                              d.existingBitrate ? ` ${formatBitrate(d.existingBitrate)}` : ""
+                            }${d.isUpgrade ? " → Upgrade available" : ""})`,
+                        )
+                        .join(", ")}
+                    </p>
+                  )}
+
+                  {item.matchedAlbum && !isSingle && (
+                    <p className="text-xs text-zinc-500">
+                      MusicBrainz suggestion:{" "}
+                      <span className="text-zinc-300">
+                        {item.matchedArtist} — {item.matchedAlbum}
+                        {item.matchedYear ? ` (${item.matchedYear})` : ""}
+                      </span>
+                    </p>
+                  )}
+
+                  {item.errorMessage && (
+                    <p className="text-xs text-red-400">{item.errorMessage}</p>
                   )}
                 </div>
 
-                <p className="text-xs text-zinc-400">
-                  Detected: <span className="text-zinc-200">{item.detectedArtist}</span> —{" "}
-                  <span className="text-zinc-200">{item.detectedAlbum}</span> · {item.trackCount}{" "}
-                  {item.trackCount === 1 ? "track" : "tracks"}
-                </p>
-
-                {item.matchedAlbum && (
-                  <p className="text-xs text-zinc-500">
-                    MusicBrainz suggestion:{" "}
-                    <span className="text-zinc-300">
-                      {item.matchedArtist} — {item.matchedAlbum}
-                      {item.matchedYear ? ` (${item.matchedYear})` : ""}
-                    </span>
-                  </p>
-                )}
-
-                {item.errorMessage && (
-                  <p className="text-xs text-red-400">{item.errorMessage}</p>
+                {item.status === "needs_review" && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveItem(item)}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      Review &amp; Tag
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDismiss(item.id)}
+                      title="Dismiss without deleting files"
+                      className="inline-flex items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-2 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
+                    >
+                      <XCircle className="h-3.5 w-3.5" />
+                      Dismiss
+                    </button>
+                  </div>
                 )}
               </div>
-
-              {item.status === "needs_review" && (
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setActiveItem(item)}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400"
-                  >
-                    <Sparkles className="h-3.5 w-3.5" />
-                    Review &amp; Tag
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleDismiss(item.id)}
-                    title="Dismiss without deleting files"
-                    className="inline-flex items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-2 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
-                  >
-                    <XCircle className="h-3.5 w-3.5" />
-                    Dismiss
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {activeItem && (
         <RetagAlbumModal
           mode="import"
-          heading="Review & Tag Album"
+          heading={
+            activeItem.files.length === 1
+              ? `Review Song — ${activeItem.files[0]?.currentTitle ?? activeItem.folderName}`
+              : `Review & Tag Album — ${activeItem.folderName}`
+          }
           subheading={activeItem.sourceDir}
-          initialArtist={activeItem.matchedArtist ?? activeItem.detectedArtist}
-          initialAlbum={activeItem.matchedAlbum ?? activeItem.detectedAlbum}
+          initialArtist={
+            activeItem.files.length === 1 && activeItem.files[0]?.currentArtist
+              ? activeItem.files[0].currentArtist
+              : (activeItem.matchedArtist ?? activeItem.detectedArtist)
+          }
+          initialAlbum={
+            activeItem.files.length === 1
+              ? activeItem.detectedAlbum
+              : (activeItem.matchedAlbum ?? activeItem.detectedAlbum)
+          }
           initialYear={activeItem.matchedYear ?? activeItem.detectedYear}
           initialCandidates={activeItem.candidates}
+          duplicates={activeItem.duplicates ?? []}
           initialTracks={activeItem.files.map((f, idx) => ({
             filePath: f.filePath,
             basename: f.basename,
@@ -304,6 +374,8 @@ export function ReviewQueueView({ onLibraryChanged }: ReviewQueueViewProps) {
             artist: f.currentArtist || activeItem.detectedArtist,
             trackNumber: f.trackNumber ?? idx + 1,
             discNumber: f.discNumber ?? 1,
+            codec: f.codec ?? null,
+            bitrate: f.bitrate ?? null,
           }))}
           onClose={() => setActiveItem(null)}
           onSubmit={(payload) => handleApply(activeItem.id, payload)}

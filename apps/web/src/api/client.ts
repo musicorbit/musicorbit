@@ -25,6 +25,7 @@ import type {
   PlaylistDetailResponse,
   PlaylistImportFormat,
   PlaylistSummary,
+  PostProcessingSettings,
   RecheckMissingTracksResponse,
   RetagAlbumResponse,
   ScanStatusResponse,
@@ -246,6 +247,19 @@ export async function scanInbox(): Promise<InboxScanResult> {
     throw new Error(body?.error ?? `Inbox scan failed (HTTP ${res.status})`);
   }
   return (await res.json()) as InboxScanResult;
+}
+
+export function lookupImportTrack(params: {
+  provider: "deezer" | "musicbrainz";
+  title?: string;
+  artist?: string;
+  album?: string;
+}): Promise<TrackMetadataSuggestion[]> {
+  const sp = new URLSearchParams({ provider: params.provider });
+  if (params.title?.trim()) sp.set("title", params.title.trim());
+  if (params.artist?.trim()) sp.set("artist", params.artist.trim());
+  if (params.album?.trim()) sp.set("album", params.album.trim());
+  return getJson<TrackMetadataSuggestion[]>(`/api/imports/lookup-track?${sp.toString()}`);
 }
 
 export async function applyImport(
@@ -575,6 +589,36 @@ export async function updateMusicDirectory(
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ?? `Could not update music directory (HTTP ${res.status})`);
+  }
+  return (await res.json()) as SystemSettingsResponse;
+}
+
+export async function updatePostProcessingSettings(
+  updates: Partial<
+    Pick<
+      PostProcessingSettings,
+      | "downloadsDir"
+      | "fileAction"
+      | "duplicatePolicy"
+      | "autoWatchEnabled"
+      | "autoWatchIntervalSeconds"
+      | "autoImportThreshold"
+      | "includeYearInAlbumFolder"
+      | "autoEmbedCoverArt"
+      | "autoFetchLyrics"
+    >
+  >,
+): Promise<SystemSettingsResponse> {
+  const res = await fetch("/api/system/post-processing", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(
+      body?.error ?? `Could not update post-processing settings (HTTP ${res.status})`,
+    );
   }
   return (await res.json()) as SystemSettingsResponse;
 }

@@ -1,14 +1,30 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   Database,
+  FolderInput,
   FolderOpen,
+  Loader2,
   Play,
   RefreshCw,
   RotateCcw,
+  Sparkles,
 } from "lucide-react";
-import type { HealthResponse, ScanStatusResponse } from "@musicorbit/shared";
+import type {
+  DuplicatePolicy,
+  HealthResponse,
+  ImportFileAction,
+  InboxScanResult,
+  ScanStatusResponse,
+  SystemSettingsResponse,
+} from "@musicorbit/shared";
+import {
+  fetchSystemSettings,
+  scanInbox,
+  updatePostProcessingSettings,
+} from "../api/client";
 import { DirectoryPickerModal } from "../components/DirectoryPickerModal";
 
 interface SystemViewProps {
@@ -30,7 +46,84 @@ export function SystemView({
   onRefresh,
   onMusicDirChanged,
 }: SystemViewProps) {
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerMode, setPickerMode] = useState<"music" | "downloads" | null>(null);
+  const [sysSettings, setSysSettings] = useState<SystemSettingsResponse | null>(null);
+  const [fileAction, setFileAction] = useState<ImportFileAction>("move");
+  const [duplicatePolicy, setDuplicatePolicy] = useState<DuplicatePolicy>("upgrade");
+  const [autoWatchEnabled, setAutoWatchEnabled] = useState(false);
+  const [autoWatchIntervalSeconds, setAutoWatchIntervalSeconds] = useState(60);
+  const [autoImportThreshold, setAutoImportThreshold] = useState(85);
+  const [includeYearInAlbumFolder, setIncludeYearInAlbumFolder] = useState(false);
+  const [autoEmbedCoverArt, setAutoEmbedCoverArt] = useState(true);
+  const [autoFetchLyrics, setAutoFetchLyrics] = useState(false);
+  const [savingPp, setSavingPp] = useState(false);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const [ppError, setPpError] = useState<string | null>(null);
+  const [runningInbox, setRunningInbox] = useState(false);
+  const [inboxResult, setInboxResult] = useState<InboxScanResult | null>(null);
+
+  const loadSettings = useCallback(async () => {
+    try {
+      const next = await fetchSystemSettings();
+      setSysSettings(next);
+      setFileAction(next.postProcessing.fileAction);
+      setDuplicatePolicy(next.postProcessing.duplicatePolicy);
+      setAutoWatchEnabled(next.postProcessing.autoWatchEnabled);
+      setAutoWatchIntervalSeconds(next.postProcessing.autoWatchIntervalSeconds);
+      setAutoImportThreshold(next.postProcessing.autoImportThreshold);
+      setIncludeYearInAlbumFolder(next.postProcessing.includeYearInAlbumFolder);
+      setAutoEmbedCoverArt(next.postProcessing.autoEmbedCoverArt);
+      setAutoFetchLyrics(next.postProcessing.autoFetchLyrics);
+    } catch {
+      // Non-fatal; health banner handles offline state
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
+
+  const handleSavePostProcessing = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingPp(true);
+    setPpError(null);
+    setSavedNotice(null);
+    try {
+      const updated = await updatePostProcessingSettings({
+        fileAction,
+        duplicatePolicy,
+        autoWatchEnabled,
+        autoWatchIntervalSeconds,
+        autoImportThreshold,
+        includeYearInAlbumFolder,
+        autoEmbedCoverArt,
+        autoFetchLyrics,
+      });
+      setSysSettings(updated);
+      setSavedNotice("Post-processing settings saved.");
+    } catch (err) {
+      setPpError(err instanceof Error ? err.message : "Could not save post-processing settings");
+    } finally {
+      setSavingPp(false);
+    }
+  };
+
+  const handleRunPostProcessing = async () => {
+    setRunningInbox(true);
+    setPpError(null);
+    setInboxResult(null);
+    try {
+      const res = await scanInbox();
+      setInboxResult(res);
+      await loadSettings();
+      onMusicDirChanged();
+    } catch (err) {
+      setPpError(err instanceof Error ? err.message : "Post-processing scan failed");
+    } finally {
+      setRunningInbox(false);
+    }
+  };
+
   const isScanning = scanStatus?.state === "running";
   const progressPct =
     scanStatus && scanStatus.filesTotal > 0
@@ -45,7 +138,7 @@ export function SystemView({
             System &amp; Library Scanner
           </h2>
           <p className="mt-1 text-sm text-zinc-400">
-            Manage incremental audio scanning, database status, and library paths.
+            Manage incremental audio scanning, library paths, and automated post-processing.
           </p>
         </div>
 
@@ -71,7 +164,10 @@ export function SystemView({
           </button>
           <button
             type="button"
-            onClick={onRefresh}
+            onClick={() => {
+              onRefresh();
+              void loadSettings();
+            }}
             disabled={loading}
             className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50"
           >
@@ -133,7 +229,7 @@ export function SystemView({
                 </p>
                 <button
                   type="button"
-                  onClick={() => setPickerOpen(true)}
+                  onClick={() => setPickerMode("music")}
                   className="rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-200 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-300"
                 >
                   Change Folder
@@ -163,7 +259,7 @@ export function SystemView({
               </div>
               <button
                 type="button"
-                onClick={() => setPickerOpen(true)}
+                onClick={() => setPickerMode("music")}
                 className="shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400"
               >
                 Select Music Folder
@@ -171,6 +267,7 @@ export function SystemView({
             </div>
           )}
 
+          {/* Indexed Library */}
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -262,13 +359,269 @@ export function SystemView({
               </div>
             )}
           </div>
+
+          {/* Post-Processing & Automated Downloads Pipeline */}
+          {sysSettings && (
+            <form
+              onSubmit={(e) => void handleSavePostProcessing(e)}
+              className="space-y-5 rounded-xl border border-zinc-800 bg-zinc-900/50 p-6"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 className="flex items-center gap-2 text-base font-semibold text-zinc-100">
+                    <Sparkles className="h-4 w-4 text-amber-400" />
+                    Post-Processing &amp; Downloads Pipeline
+                  </h3>
+                  <p className="mt-0.5 text-xs text-zinc-400">
+                    Automatically match albums &amp; single tracks landing in your downloads folder,
+                    write clean tags, handle duplicates, organize into your Music Directory, and
+                    backfill missing playlist tracks.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                      sysSettings.watcher.enabled
+                        ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30"
+                        : "bg-zinc-800 text-zinc-400"
+                    }`}
+                  >
+                    {sysSettings.watcher.enabled
+                      ? `Watching every ${sysSettings.watcher.intervalSeconds}s`
+                      : "Auto-watch off"}
+                  </span>
+
+                  <button
+                    type="button"
+                    disabled={runningInbox}
+                    onClick={() => void handleRunPostProcessing()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-45"
+                  >
+                    {runningInbox ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
+                    ) : (
+                      <FolderInput className="h-3.5 w-3.5 text-amber-400" />
+                    )}
+                    Run Now
+                  </button>
+                </div>
+              </div>
+
+              {/* Downloads / Watch Folder Picker Row */}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800/90 bg-zinc-950/60 p-4">
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium text-zinc-300">
+                    Downloads / Watch Folder (staging area)
+                  </p>
+                  <p
+                    className="mt-0.5 truncate font-mono text-xs text-zinc-400"
+                    title={sysSettings.postProcessing.downloadsDir}
+                  >
+                    {sysSettings.postProcessing.downloadsDir}
+                  </p>
+                  {!sysSettings.postProcessing.downloadsDirExists && (
+                    <p className="mt-1 text-[11px] text-amber-400">
+                      Folder does not exist yet — pick an existing slskd downloads folder or create
+                      this path on disk.
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPickerMode("downloads")}
+                  className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-300"
+                >
+                  Change Folder
+                </button>
+              </div>
+
+              {/* Core Post-Processing Controls */}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-zinc-300">File Action</span>
+                  <select
+                    value={fileAction}
+                    onChange={(e) => setFileAction(e.target.value as ImportFileAction)}
+                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none"
+                  >
+                    <option value="move">Move into Music Directory (keeps staging clean)</option>
+                    <option value="copy">Copy into Music Directory (keep originals intact)</option>
+                  </select>
+                </label>
+
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-zinc-300">Duplicate Policy</span>
+                  <select
+                    value={duplicatePolicy}
+                    onChange={(e) => setDuplicatePolicy(e.target.value as DuplicatePolicy)}
+                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none"
+                  >
+                    <option value="upgrade">Upgrade if higher quality (archive old copy)</option>
+                    <option value="review">Send duplicates to Review Queue</option>
+                    <option value="skip">Skip duplicates automatically</option>
+                  </select>
+                </label>
+
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-zinc-300">
+                    Auto-Import Confidence Threshold ({autoImportThreshold}%)
+                  </span>
+                  <input
+                    type="range"
+                    min={50}
+                    max={100}
+                    step={5}
+                    value={autoImportThreshold}
+                    onChange={(e) => setAutoImportThreshold(Number(e.target.value))}
+                    className="w-full cursor-pointer accent-amber-400"
+                  />
+                  <span className="block text-[11px] text-zinc-500">
+                    Matches below this score go to the Review Queue instead of auto-importing.
+                  </span>
+                </label>
+
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-medium text-zinc-300">Watcher Check Interval</span>
+                  <select
+                    value={autoWatchIntervalSeconds}
+                    disabled={!autoWatchEnabled}
+                    onChange={(e) => setAutoWatchIntervalSeconds(Number(e.target.value))}
+                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none disabled:opacity-45"
+                  >
+                    <option value={30}>Every 30 seconds</option>
+                    <option value={60}>Every 1 minute</option>
+                    <option value={300}>Every 5 minutes</option>
+                    <option value={900}>Every 15 minutes</option>
+                  </select>
+                </label>
+              </div>
+
+              {/* Toggles */}
+              <div className="grid gap-3 border-t border-zinc-800/80 pt-4 sm:grid-cols-2">
+                <label className="flex cursor-pointer items-start gap-2.5 text-xs text-zinc-200">
+                  <input
+                    type="checkbox"
+                    checked={autoWatchEnabled}
+                    onChange={(e) => setAutoWatchEnabled(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded accent-amber-500"
+                  />
+                  <span>
+                    <strong className="block font-medium">Auto-watch downloads folder</strong>
+                    <span className="text-zinc-500">
+                      Waits until downloads finish writing, then post-processes automatically.
+                    </span>
+                  </span>
+                </label>
+
+                <label className="flex cursor-pointer items-start gap-2.5 text-xs text-zinc-200">
+                  <input
+                    type="checkbox"
+                    checked={includeYearInAlbumFolder}
+                    onChange={(e) => setIncludeYearInAlbumFolder(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded accent-amber-500"
+                  />
+                  <span>
+                    <strong className="block font-medium">Include year in album folders</strong>
+                    <span className="text-zinc-500">
+                      Organizes as <code>Artist/Album (Year)/01 - Title</code>.
+                    </span>
+                  </span>
+                </label>
+
+                <label className="flex cursor-pointer items-start gap-2.5 text-xs text-zinc-200">
+                  <input
+                    type="checkbox"
+                    checked={autoEmbedCoverArt}
+                    onChange={(e) => setAutoEmbedCoverArt(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded accent-amber-500"
+                  />
+                  <span>
+                    <strong className="block font-medium">Auto-embed missing cover art</strong>
+                    <span className="text-zinc-500">
+                      Embeds Cover Art Archive / Deezer artwork if a track has none.
+                    </span>
+                  </span>
+                </label>
+
+                <label className="flex cursor-pointer items-start gap-2.5 text-xs text-zinc-200">
+                  <input
+                    type="checkbox"
+                    checked={autoFetchLyrics}
+                    onChange={(e) => setAutoFetchLyrics(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded accent-amber-500"
+                  />
+                  <span>
+                    <strong className="block font-medium">Auto-fetch lyrics (LRCLIB)</strong>
+                    <span className="text-zinc-500">
+                      Embeds synced/plain lyrics into imported tracks automatically.
+                    </span>
+                  </span>
+                </label>
+              </div>
+
+              {ppError && (
+                <div className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+                  <span>{ppError}</span>
+                </div>
+              )}
+
+              {savedNotice && (
+                <div className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                  <span>{savedNotice}</span>
+                </div>
+              )}
+
+              {inboxResult && (
+                <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 p-3 text-xs text-amber-100">
+                  Checked <strong>{inboxResult.discoveredFolders}</strong> folders —{" "}
+                  <strong>{inboxResult.autoImported}</strong> auto-imported,{" "}
+                  <strong>{inboxResult.needsReview}</strong> sent to Review Queue,{" "}
+                  <strong>{inboxResult.skipped}</strong> skipped.
+                </div>
+              )}
+
+              <div className="flex items-center justify-between border-t border-zinc-800/80 pt-4">
+                <span className="text-xs text-zinc-500">
+                  {sysSettings.watcher.lastCheckAt
+                    ? `Last watcher check: ${new Date(sysSettings.watcher.lastCheckAt).toLocaleTimeString()}`
+                    : "Imported tracks automatically backfill matching missing songs in your playlists."}
+                </span>
+                <button
+                  type="submit"
+                  disabled={savingPp}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400 disabled:opacity-45"
+                >
+                  {savingPp ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="h-3.5 w-3.5" />
+                  )}
+                  Save Settings
+                </button>
+              </div>
+            </form>
+          )}
         </>
       )}
-      {pickerOpen && (
+
+      {pickerMode && (
         <DirectoryPickerModal
-          initialPath={health?.musicDir.path ?? ""}
-          onClose={() => setPickerOpen(false)}
-          onSaved={() => onMusicDirChanged()}
+          mode={pickerMode}
+          initialPath={
+            pickerMode === "downloads"
+              ? (sysSettings?.postProcessing.downloadsDir ?? "")
+              : (health?.musicDir.path ?? "")
+          }
+          onClose={() => setPickerMode(null)}
+          onSaved={() => {
+            void loadSettings();
+            if (pickerMode === "music") {
+              onMusicDirChanged();
+            }
+          }}
         />
       )}
     </div>

@@ -1,4 +1,6 @@
 import path from "node:path";
+import type Database from "better-sqlite3";
+import type { PlaylistBatchSearchService } from "./playlistBatchSearch.js";
 
 export interface ParsedPlaylistEntry {
   title: string;
@@ -307,4 +309,91 @@ export function buildLibraryTrackMatcher(
       return null;
     },
   };
+}
+
+/**
+ * Re-checks missing tracks across ALL playlists against the current local library.
+ * Called automatically after post-processing imports new tracks so downloaded songs
+ * seamlessly move from "Missing Tracks" into playable playlist tracks.
+ */
+export function recheckAllPlaylistsMissingTracks(
+  sqlite: Database.Database,
+  musicDir: string,
+  batchSearchService?: PlaylistBatchSearchService,
+): number {
+  const missingRows = sqlite
+    .prepare(
+      `
+      SELECT id, playlist_id AS playlistId, title, artist, album
+      FROM playlist_missing_tracks
+      ORDER BY playlist_id ASC, position ASC, id ASC
+    `,
+    )
+    .all() as Array<{
+    id: number;
+    playlistId: number;
+    title: string;
+    artist: string;
+    album: string | null;
+  }>;
+
+  if (missingRows.length === 0) return 0;
+
+  const allTracks = sqlite
+    .prepare(
+      `
+      SELECT t.id, t.title, ar.name AS artistName, t.file_path AS filePath
+      FROM tracks t
+      JOIN artists ar ON ar.id = t.artist_id
+    `,
+    )
+    .all() as LocalLibraryTrack[];
+
+  const matcher = buildLibraryTrackMatcher(allTracks, musicDir);
+  const now = Date.now();
+  let totalMatched = 0;
+
+  const maxPosStmt = sqlite.prepare(
+    "SELECT COALESCE(MAX(position), -1) AS maxPos FROM playlist_tracks WHERE playlist_id = ?",
+  );
+  const insertTrackStmt = sqlite.prepare(
+    "INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)",
+  );
+  const deleteMissingStmt = sqlite.prepare("DELETE FROM playlist_missing_tracks WHERE id = ?");
+  const touchPlaylistStmt = sqlite.prepare("UPDATE playlists SET updated_at = ? WHERE id = ?");
+
+  const nextPosByPlaylist = new Map<number, number>();
+  const touchedPlaylists = new Set<number>();
+
+  const tx = sqlite.transaction(() => {
+    for (const row of missingRows) {
+      const matchId = matcher.match({
+        title: row.title,
+        artist: row.artist,
+        album: row.album,
+        rawLabel: `${row.artist} - ${row.title}`,
+      });
+      if (matchId === null) continue;
+
+      let nextPos = nextPosByPlaylist.get(row.playlistId);
+      if (nextPos === undefined) {
+        const res = maxPosStmt.get(row.playlistId) as { maxPos: number };
+        nextPos = res.maxPos + 1;
+      }
+
+      insertTrackStmt.run(row.playlistId, matchId, nextPos, now);
+      deleteMissingStmt.run(row.id);
+      batchSearchService?.removeTrackFromJob(row.playlistId, row.id);
+      nextPosByPlaylist.set(row.playlistId, nextPos + 1);
+      touchedPlaylists.add(row.playlistId);
+      totalMatched += 1;
+    }
+
+    for (const plId of touchedPlaylists) {
+      touchPlaylistStmt.run(now, plId);
+    }
+  });
+  tx();
+
+  return totalMatched;
 }

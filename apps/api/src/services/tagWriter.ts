@@ -13,6 +13,7 @@ export interface AudioTagWriteInput {
   discNumber: number | null;
   year: number | null;
   genre?: string | null;
+  lyrics?: string | null;
   musicBrainzReleaseId?: string | null;
   musicBrainzArtistId?: string | null;
   musicBrainzTrackId?: string | null;
@@ -48,6 +49,9 @@ export function writeAudioTags(filePath: string, input: AudioTagWriteInput): voi
     }
     if (input.genre !== undefined) {
       file.tag.genres = input.genre && input.genre.trim().length > 0 ? splitList(input.genre) : [];
+    }
+    if (input.lyrics && input.lyrics.trim().length > 0) {
+      file.tag.lyrics = input.lyrics.trim();
     }
     if (input.musicBrainzReleaseId) {
       file.tag.musicBrainzReleaseId = input.musicBrainzReleaseId;

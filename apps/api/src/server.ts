@@ -15,6 +15,7 @@ import { registerStaticWeb } from "./routes/staticWeb.js";
 import { SlskdClient } from "./services/acquisition/slskd.js";
 import { ArtistImageService } from "./services/artistImages.js";
 import { LibraryImporter } from "./services/importer.js";
+import { InboxWatcher } from "./services/inboxWatcher.js";
 import { MetadataLookupService } from "./services/metadataLookup.js";
 import { MusicBrainzClient } from "./services/musicbrainz.js";
 import { PlaylistBatchSearchService } from "./services/playlistBatchSearch.js";
@@ -30,6 +31,7 @@ export interface ServerHandle {
   slskdClient: SlskdClient;
   musicBrainz: MusicBrainzClient;
   importer: LibraryImporter;
+  inboxWatcher: InboxWatcher;
   batchSearchService: PlaylistBatchSearchService;
 }
 
@@ -63,7 +65,8 @@ export async function buildServer(
   const settingsService = new SettingsService({
     dbContext,
     defaultMusicDir: config.musicDir,
-    downloadsDir: config.downloadsDir,
+    defaultDownloadsDir: config.downloadsDir,
+    defaultAutoImportThreshold: config.autoImportThreshold,
   });
   const getMusicDir = () => settingsService.getMusicDir();
 
@@ -94,27 +97,39 @@ export async function buildServer(
     fetchImpl: options?.fetchImpl,
     mbRateLimitMs: options?.musicBrainzRateLimitMs,
   });
-  const importer = new LibraryImporter({
-    dbContext,
-    musicDir: config.musicDir,
-    getMusicDir,
-    downloadsDir: config.downloadsDir,
-    autoImportThreshold: config.autoImportThreshold,
-    musicBrainz,
-    scanner,
-    logger: app.log,
-  });
   const batchSearchService = new PlaylistBatchSearchService({
     slskdClient,
     staggerMs: options?.batchSearchStaggerMs,
     pollIntervalMs: options?.batchSearchPollMs,
   });
+  const importer = new LibraryImporter({
+    dbContext,
+    musicDir: config.musicDir,
+    getMusicDir,
+    downloadsDir: config.downloadsDir,
+    dataDir: config.dataDir,
+    autoImportThreshold: config.autoImportThreshold,
+    getPostProcessingSettings: () => settingsService.getPostProcessingSettings(),
+    musicBrainz,
+    metadataLookup,
+    batchSearchService,
+    fetchImpl: options?.fetchImpl,
+    scanner,
+    logger: app.log,
+  });
+  const inboxWatcher = new InboxWatcher({
+    importer,
+    settingsService,
+    logger: app.log,
+  });
+  settingsService.setWatcherStatusProvider(() => inboxWatcher.getStatus());
+  inboxWatcher.syncWithSettings();
 
   // Register auth routes & optional onRequest protection hook before protected routes
   await registerAuthRoutes(app, { dbContext, authEnabled: config.authEnabled });
 
   await registerHealthRoutes(app, { config, dbContext, getMusicDir });
-  await registerSettingsRoutes(app, { settingsService, scanner });
+  await registerSettingsRoutes(app, { settingsService, scanner, inboxWatcher });
   await registerLibraryRoutes(app, { dbContext, scanner });
   await registerMediaRoutes(app, {
     dbContext,
@@ -123,7 +138,7 @@ export async function buildServer(
     artistImageService,
   });
   await registerAcquisitionRoutes(app, { slskdClient });
-  await registerImportRoutes(app, { importer, musicBrainz });
+  await registerImportRoutes(app, { importer, musicBrainz, metadataLookup });
   await registerMetadataRoutes(app, {
     dbContext,
     scanner,
@@ -144,8 +159,9 @@ export async function buildServer(
     await registerStaticWeb(app, config.webDistDir);
   }
 
-  // Cleanly close SQLite when Fastify shuts down
+  // Cleanly stop watcher & close SQLite when Fastify shuts down
   app.addHook("onClose", async () => {
+    inboxWatcher.stop();
     dbContext.sqlite.close();
   });
 
@@ -158,6 +174,7 @@ export async function buildServer(
     slskdClient,
     musicBrainz,
     importer,
+    inboxWatcher,
     batchSearchService,
   };
 }
