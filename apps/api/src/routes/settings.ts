@@ -4,6 +4,7 @@ import type {
   BrowseDirectoriesResponse,
   SystemSettingsResponse,
 } from "@musicorbit/shared";
+import type { ActivityLogService } from "../services/activityLog.js";
 import type { InboxWatcher } from "../services/inboxWatcher.js";
 import type { LibraryScanner } from "../services/scanner.js";
 import { SettingsError, type SettingsService } from "../services/settings.js";
@@ -12,6 +13,7 @@ export interface SettingsRouteDeps {
   settingsService: SettingsService;
   scanner: LibraryScanner;
   inboxWatcher?: InboxWatcher;
+  activityLog?: ActivityLogService;
 }
 
 const browseQuerySchema = z.object({
@@ -39,7 +41,7 @@ export async function registerSettingsRoutes(
   app: FastifyInstance,
   deps: SettingsRouteDeps,
 ): Promise<void> {
-  const { settingsService, scanner, inboxWatcher } = deps;
+  const { settingsService, scanner, inboxWatcher, activityLog } = deps;
 
   app.get("/api/system/settings", async (): Promise<SystemSettingsResponse> => {
     return settingsService.getSettings();
@@ -64,6 +66,9 @@ export async function registerSettingsRoutes(
 
       try {
         const updated = settingsService.setMusicDir(parsed.data.path);
+        activityLog?.info("system", `Music directory changed to ${updated.musicDir}`, {
+          scanNow: parsed.data.scanNow,
+        });
         if (parsed.data.scanNow) {
           scanner.startScan({ force: false });
         }
@@ -88,7 +93,14 @@ export async function registerSettingsRoutes(
       try {
         settingsService.updatePostProcessing(parsed.data);
         inboxWatcher?.syncWithSettings();
-        return settingsService.getSettings();
+        const updated = settingsService.getSettings();
+        activityLog?.info("system", "Post-processing settings updated", {
+          downloadsDir: updated.postProcessing.downloadsDir,
+          fileAction: updated.postProcessing.fileAction,
+          duplicatePolicy: updated.postProcessing.duplicatePolicy,
+          autoWatchEnabled: updated.postProcessing.autoWatchEnabled,
+        });
+        return updated;
       } catch (err) {
         if (err instanceof SettingsError) {
           return reply.code(err.statusCode).send({ error: err.message });

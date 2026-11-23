@@ -557,6 +557,34 @@ export interface BrowseDirectoriesResponse {
 }
 
 /**
+ * Activity Logs for operational visibility (scanner, post-processing, watcher, playlists, etc.).
+ */
+export type ActivityLogLevel = "info" | "success" | "warn" | "error";
+
+export type ActivityLogCategory =
+  | "scanner"
+  | "importer"
+  | "watcher"
+  | "playlist"
+  | "metadata"
+  | "acquisition"
+  | "system";
+
+export interface ActivityLogEntry {
+  id: number;
+  level: ActivityLogLevel;
+  category: ActivityLogCategory;
+  message: string;
+  details: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface ActivityLogsResponse {
+  total: number;
+  entries: ActivityLogEntry[];
+}
+
+/**
  * Optional authentication & first-run setup (Step 6).
  */
 export interface AuthUser {

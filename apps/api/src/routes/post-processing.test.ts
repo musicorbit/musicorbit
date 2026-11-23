@@ -364,5 +364,29 @@ describe("Post-Processing Pipeline (Single-Track, Backfill, Stability, Settings)
     });
     assert.equal(lookupRes.statusCode, 200);
     assert.equal(lookupRes.json<Array<{ title: string }>>()[0]?.title, "Digital Love");
+
+    // Verify Activity Logs captured startup, imports, scanner, and supports filtering/export/clear
+    const logsRes = await handle.app.inject({ method: "GET", url: "/api/system/logs" });
+    assert.equal(logsRes.statusCode, 200);
+    const logs = logsRes.json<{ total: number; entries: Array<{ category: string; message: string }> }>();
+    assert.ok(logs.total >= 4, "Activity logs should record startup, settings, imports, and scans");
+    assert.ok(logs.entries.some((e) => e.category === "importer"));
+    assert.ok(logs.entries.some((e) => e.category === "scanner"));
+
+    const filteredRes = await handle.app.inject({
+      method: "GET",
+      url: "/api/system/logs?category=importer&q=Digital+Love",
+    });
+    assert.equal(filteredRes.statusCode, 200);
+    assert.ok(filteredRes.json<{ entries: unknown[] }>().entries.length >= 1);
+
+    const exportRes = await handle.app.inject({ method: "GET", url: "/api/system/logs/export" });
+    assert.equal(exportRes.statusCode, 200);
+    assert.ok(exportRes.body.includes("[importer]"));
+
+    const clearRes = await handle.app.inject({ method: "DELETE", url: "/api/system/logs" });
+    assert.equal(clearRes.statusCode, 200);
+    const afterClear = await handle.app.inject({ method: "GET", url: "/api/system/logs" });
+    assert.equal(afterClear.json<{ total: number }>().total, 0);
   });
 });

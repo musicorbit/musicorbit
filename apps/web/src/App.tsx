@@ -7,6 +7,7 @@ import {
   LogOut,
   Music,
   RefreshCw,
+  ScrollText,
   Search,
   Sparkles,
   Users,
@@ -40,6 +41,7 @@ import { AlbumDetailView } from "./views/AlbumDetailView";
 import { AlbumsView } from "./views/AlbumsView";
 import { ArtistDetailView } from "./views/ArtistDetailView";
 import { ArtistsView } from "./views/ArtistsView";
+import { LogsView } from "./views/LogsView";
 import { PlaylistDetailView } from "./views/PlaylistDetailView";
 import { PlaylistsView } from "./views/PlaylistsView";
 import { ReviewQueueView } from "./views/ReviewQueueView";
@@ -57,7 +59,8 @@ type Route =
   | { view: "playlist-detail"; playlistId: number }
   | { view: "search" }
   | { view: "review" }
-  | { view: "system" };
+  | { view: "system" }
+  | { view: "logs" };
 
 function MusicOrbitShell() {
   const { currentTrack } = usePlayer();
@@ -216,10 +219,11 @@ function MusicOrbitShell() {
       highlightBadge: needsReviewCount > 0,
     },
     { id: "system" as const, label: "System & Scanner", icon: Activity, count: undefined },
+    { id: "logs" as const, label: "Activity Logs", icon: ScrollText, count: undefined },
   ];
 
   const isNavActive = (
-    id: "albums" | "artists" | "tracks" | "playlists" | "search" | "review" | "system",
+    id: "albums" | "artists" | "tracks" | "playlists" | "search" | "review" | "system" | "logs",
   ) => {
     if (route.view === id) return true;
     if (id === "albums" && route.view === "album-detail") return true;
@@ -473,6 +477,8 @@ function MusicOrbitShell() {
               onMusicDirChanged={() => void loadLibrary(searchQuery)}
             />
           )}
+
+          {route.view === "logs" && <LogsView />}
         </div>
       </main>
 

@@ -7,12 +7,14 @@ import { registerAuthRoutes } from "./routes/auth.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerImportRoutes } from "./routes/imports.js";
 import { registerLibraryRoutes } from "./routes/library.js";
+import { registerLogRoutes } from "./routes/logs.js";
 import { registerMediaRoutes } from "./routes/media.js";
 import { registerMetadataRoutes } from "./routes/metadata.js";
 import { registerPlaylistRoutes } from "./routes/playlists.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerStaticWeb } from "./routes/staticWeb.js";
 import { SlskdClient } from "./services/acquisition/slskd.js";
+import { ActivityLogService } from "./services/activityLog.js";
 import { ArtistImageService } from "./services/artistImages.js";
 import { LibraryImporter } from "./services/importer.js";
 import { InboxWatcher } from "./services/inboxWatcher.js";
@@ -25,6 +27,7 @@ import { SettingsService } from "./services/settings.js";
 export interface ServerHandle {
   app: FastifyInstance;
   dbContext: DbContext;
+  activityLog: ActivityLogService;
   settingsService: SettingsService;
   scanner: LibraryScanner;
   artistImageService: ArtistImageService;
@@ -62,6 +65,10 @@ export async function buildServer(
   });
 
   const dbContext = initDatabase(config.dbPath);
+  const activityLog = new ActivityLogService({
+    dbContext,
+    logger: app.log,
+  });
   const settingsService = new SettingsService({
     dbContext,
     defaultMusicDir: config.musicDir,
@@ -75,6 +82,7 @@ export async function buildServer(
     musicDir: config.musicDir,
     getMusicDir,
     coversDir: config.coversDir,
+    activityLog,
     logger: app.log,
   });
   const artistImageService = new ArtistImageService({
@@ -113,6 +121,7 @@ export async function buildServer(
     musicBrainz,
     metadataLookup,
     batchSearchService,
+    activityLog,
     fetchImpl: options?.fetchImpl,
     scanner,
     logger: app.log,
@@ -120,16 +129,23 @@ export async function buildServer(
   const inboxWatcher = new InboxWatcher({
     importer,
     settingsService,
+    activityLog,
     logger: app.log,
   });
   settingsService.setWatcherStatusProvider(() => inboxWatcher.getStatus());
   inboxWatcher.syncWithSettings();
 
+  activityLog.info("system", `MusicOrbit v${config.version} started`, {
+    musicDir: getMusicDir(),
+    downloadsDir: settingsService.getDownloadsDir(),
+  });
+
   // Register auth routes & optional onRequest protection hook before protected routes
   await registerAuthRoutes(app, { dbContext, authEnabled: config.authEnabled });
 
   await registerHealthRoutes(app, { config, dbContext, getMusicDir });
-  await registerSettingsRoutes(app, { settingsService, scanner, inboxWatcher });
+  await registerSettingsRoutes(app, { settingsService, scanner, inboxWatcher, activityLog });
+  await registerLogRoutes(app, { activityLog });
   await registerLibraryRoutes(app, { dbContext, scanner });
   await registerMediaRoutes(app, {
     dbContext,
@@ -152,6 +168,7 @@ export async function buildServer(
     coversDir: config.coversDir,
     slskdClient,
     batchSearchService,
+    activityLog,
   });
 
   // Serve production frontend bundle when WEB_DIST_DIR is configured (e.g. Docker)
@@ -168,6 +185,7 @@ export async function buildServer(
   return {
     app,
     dbContext,
+    activityLog,
     settingsService,
     scanner,
     artistImageService,

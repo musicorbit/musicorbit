@@ -15,6 +15,7 @@ import type {
   TrackSummary,
 } from "@musicorbit/shared";
 import type { DbContext } from "../db/index.js";
+import type { ActivityLogService } from "../services/activityLog.js";
 import { SlskdError, type SlskdClient } from "../services/acquisition/slskd.js";
 import type { PlaylistBatchSearchService } from "../services/playlistBatchSearch.js";
 import {
@@ -69,6 +70,7 @@ export interface PlaylistRouteDeps {
   coversDir: string;
   slskdClient?: SlskdClient;
   batchSearchService?: PlaylistBatchSearchService;
+  activityLog?: ActivityLogService;
 }
 
 const idParamSchema = z.object({
@@ -210,7 +212,7 @@ export async function registerPlaylistRoutes(
   app: FastifyInstance,
   deps: PlaylistRouteDeps,
 ): Promise<void> {
-  const { dbContext, coversDir, slskdClient, batchSearchService } = deps;
+  const { dbContext, coversDir, slskdClient, batchSearchService, activityLog } = deps;
   const getMusicDir = deps.getMusicDir ?? (() => deps.musicDir);
   const { sqlite } = dbContext;
 
@@ -639,6 +641,11 @@ export async function registerPlaylistRoutes(
     tx();
 
     const missingTracks = selectMissingTracks(playlistId);
+    activityLog?.success(
+      "playlist",
+      `Imported ${format.toUpperCase()} playlist "${parsed.data.name}": ${matchedIds.length} matched, ${missingTracks.length} missing`,
+      { playlistId, format, matchedCount: matchedIds.length, missingCount: missingTracks.length },
+    );
     reply.code(201);
     return {
       playlist: selectPlaylistSummary(playlistId)!,
@@ -847,6 +854,11 @@ export async function registerPlaylistRoutes(
       .prepare("UPDATE playlist_missing_tracks SET status = 'queued' WHERE id = ?")
       .run(parsedParams.data.missingId);
     batchSearchService?.markTrackQueued(parsedParams.data.id, parsedParams.data.missingId);
+    activityLog?.info(
+      "acquisition",
+      `Queued download from @${parsedBody.data.username}: ${path.basename(parsedBody.data.filename)}`,
+      { playlistId: parsedParams.data.id, username: parsedBody.data.username, filename: parsedBody.data.filename },
+    );
 
     return reply.code(202).send({
       queued: true,

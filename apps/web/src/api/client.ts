@@ -1,5 +1,8 @@
 import type {
   AcquisitionStatusResponse,
+  ActivityLogCategory,
+  ActivityLogLevel,
+  ActivityLogsResponse,
   AlbumDetailResponse,
   AlbumSummary,
   ApplyImportResponse,
@@ -714,4 +717,31 @@ export async function loginUser(
 
 export async function logoutUser(): Promise<void> {
   await fetch("/api/auth/logout", { method: "POST" });
+}
+
+export function fetchActivityLogs(params?: {
+  level?: ActivityLogLevel;
+  category?: ActivityLogCategory;
+  q?: string;
+  limit?: number;
+}): Promise<ActivityLogsResponse> {
+  const sp = new URLSearchParams();
+  if (params?.level) sp.set("level", params.level);
+  if (params?.category) sp.set("category", params.category);
+  if (params?.q?.trim()) sp.set("q", params.q.trim());
+  if (params?.limit) sp.set("limit", String(params.limit));
+  const qs = sp.toString();
+  return getJson<ActivityLogsResponse>(`/api/system/logs${qs ? `?${qs}` : ""}`);
+}
+
+export async function clearActivityLogs(): Promise<{ cleared: number }> {
+  const res = await fetch("/api/system/logs", { method: "DELETE" });
+  if (!res.ok) {
+    throw new Error(`Could not clear logs (HTTP ${res.status})`);
+  }
+  return (await res.json()) as { cleared: number };
+}
+
+export function getActivityLogsExportUrl(): string {
+  return "/api/system/logs/export";
 }

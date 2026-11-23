@@ -150,6 +150,15 @@ export function initDatabase(dbPath: string): DbContext {
       updated_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS activity_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      level TEXT NOT NULL,
+      category TEXT NOT NULL,
+      message TEXT NOT NULL,
+      details_json TEXT,
+      created_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT NOT NULL UNIQUE,
@@ -170,6 +179,7 @@ export function initDatabase(dbPath: string): DbContext {
     CREATE INDEX IF NOT EXISTS idx_tracks_artist_id ON tracks(artist_id);
     CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist_id ON playlist_tracks(playlist_id, position);
     CREATE INDEX IF NOT EXISTS idx_playlist_missing_tracks_playlist_id ON playlist_missing_tracks(playlist_id, position);
+    CREATE INDEX IF NOT EXISTS idx_activity_logs_created_at ON activity_logs(created_at DESC);
   `);
 
   // Non-destructive upgrades for existing SQLite databases created before these columns existed

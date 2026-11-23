@@ -8,6 +8,7 @@ import type { FastifyBaseLogger } from "fastify";
 import type { ScanStatusResponse } from "@musicorbit/shared";
 import type { DbContext } from "../db/index.js";
 import { albums, artists, scanJobs, tracks } from "../db/schema.js";
+import type { ActivityLogService } from "./activityLog.js";
 
 export const SUPPORTED_AUDIO_EXTENSIONS = new Set([
   ".flac",
@@ -171,6 +172,7 @@ export interface LibraryScannerDeps {
   musicDir: string;
   getMusicDir?: () => string;
   coversDir: string;
+  activityLog?: ActivityLogService;
   logger?: FastifyBaseLogger;
 }
 
@@ -178,6 +180,7 @@ export class LibraryScanner {
   private readonly dbContext: DbContext;
   private readonly getMusicDirFn: () => string;
   private readonly coversDir: string;
+  private readonly activityLog?: ActivityLogService;
   private readonly logger?: FastifyBaseLogger;
   private activePromise: Promise<ScanStatusResponse> | null = null;
   private currentStatus: ScanStatusResponse | null = null;
@@ -186,6 +189,7 @@ export class LibraryScanner {
     this.dbContext = deps.dbContext;
     this.getMusicDirFn = deps.getMusicDir ?? (() => deps.musicDir);
     this.coversDir = deps.coversDir;
+    this.activityLog = deps.activityLog;
     this.logger = deps.logger;
   }
 
@@ -374,17 +378,19 @@ export class LibraryScanner {
         status.state = "completed";
         status.finishedAt = new Date().toISOString();
         this.persistJob(status);
-        this.logger?.info(
+        this.activityLog?.log(
+          status.errors.length > 0 ? "warn" : "success",
+          "scanner",
+          `${force ? "Full" : "Library"} scan completed: ${status.filesAdded} added, ${status.filesUpdated} updated, ${status.filesRemoved} removed, ${status.filesSkipped} unchanged`,
           {
-            jobId,
+            musicDir: this.musicDir,
             total: status.filesTotal,
             added: status.filesAdded,
             updated: status.filesUpdated,
-            skipped: status.filesSkipped,
             removed: status.filesRemoved,
+            skipped: status.filesSkipped,
             errors: status.errors.length,
           },
-          "Library scan completed",
         );
         return this.getStatus();
       } catch (err) {
@@ -395,7 +401,9 @@ export class LibraryScanner {
           status.errors.push(msg);
         }
         this.persistJob(status, msg);
-        this.logger?.error({ err, jobId }, "Library scan failed");
+        this.activityLog?.error("scanner", `Library scan failed: ${msg}`, {
+          musicDir: this.musicDir,
+        });
         return this.getStatus();
       } finally {
         this.activePromise = null;

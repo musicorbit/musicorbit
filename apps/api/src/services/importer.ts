@@ -20,6 +20,7 @@ import type {
 } from "@musicorbit/shared";
 import type { DbContext } from "../db/index.js";
 import { albums, importItems, tracks } from "../db/schema.js";
+import type { ActivityLogService } from "./activityLog.js";
 import { isAllowedCoverArtUrl, type MetadataLookupService } from "./metadataLookup.js";
 import type { MusicBrainzClient } from "./musicbrainz.js";
 import type { PlaylistBatchSearchService } from "./playlistBatchSearch.js";
@@ -334,6 +335,7 @@ export interface LibraryImporterDeps {
   musicBrainz: MusicBrainzClient;
   metadataLookup?: MetadataLookupService;
   batchSearchService?: PlaylistBatchSearchService;
+  activityLog?: ActivityLogService;
   fetchImpl?: typeof fetch;
   scanner: LibraryScanner;
   logger?: FastifyBaseLogger;
@@ -364,6 +366,7 @@ export class LibraryImporter {
   private readonly musicBrainz: MusicBrainzClient;
   private readonly metadataLookup?: MetadataLookupService;
   private readonly batchSearchService?: PlaylistBatchSearchService;
+  private readonly activityLog?: ActivityLogService;
   private readonly fetchImpl: typeof fetch;
   private readonly scanner: LibraryScanner;
   private readonly logger?: FastifyBaseLogger;
@@ -392,6 +395,7 @@ export class LibraryImporter {
     this.musicBrainz = deps.musicBrainz;
     this.metadataLookup = deps.metadataLookup;
     this.batchSearchService = deps.batchSearchService;
+    this.activityLog = deps.activityLog;
     this.fetchImpl = deps.fetchImpl ?? fetch;
     this.scanner = deps.scanner;
     this.logger = deps.logger;
@@ -730,9 +734,16 @@ export class LibraryImporter {
         }
 
         result.needsReview += 1;
+        this.activityLog?.info(
+          "importer",
+          `Queued "${folderName}" for manual review (${files.length} ${files.length === 1 ? "track" : "tracks"}, best match ${Math.round(confidence)}%)`,
+          { source: item.sourceKey, detectedArtist, detectedAlbum, confidence },
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        this.logger?.error({ err, sourceKey: item.sourceKey }, "Failed to inspect inbox item");
+        this.activityLog?.error("importer", `Failed to inspect "${item.folderName}": ${msg}`, {
+          source: item.sourceKey,
+        });
         result.failed += 1;
         this.upsertImportItem({
           sourceDir: item.sourceKey,
@@ -868,6 +879,7 @@ export class LibraryImporter {
 
         if (shouldSkip) {
           duplicatesSkipped += 1;
+          let archivedTo: string | null = null;
           if (pp.fileAction === "move") {
             const dupDest = path.join(
               this.dataDir,
@@ -876,7 +888,19 @@ export class LibraryImporter {
               path.basename(track.filePath),
             );
             await moveFileSafe(track.filePath, dupDest).catch(() => {});
+            archivedTo = dupDest;
           }
+          this.activityLog?.warn(
+            "importer",
+            `Skipped duplicate "${track.title}" by ${trackArtist} (existing quality >= incoming)`,
+            {
+              source: track.filePath,
+              existing: existingDup.filePath,
+              existingCodec: existingDup.codec,
+              incomingCodec,
+              archivedTo,
+            },
+          );
           continue;
         }
 
@@ -909,6 +933,15 @@ export class LibraryImporter {
             // Clean up now-empty old album/artist folder inside MUSIC_DIR
             await removeEmptyDir(oldDir, this.musicDir);
             duplicatesUpgraded += 1;
+            this.activityLog?.success(
+              "importer",
+              `Upgraded "${track.title}" by ${trackArtist} (${existingDup.codec ?? "old"} → ${incomingCodec ?? ext})`,
+              {
+                replaced: existingDup.filePath,
+                archivedTo: archiveDest,
+                playlistEntriesPreserved: savedEntries.length,
+              },
+            );
           }
         }
       }
@@ -1026,6 +1059,18 @@ export class LibraryImporter {
       this.dbContext.sqlite,
       this.musicDir,
       this.batchSearchService,
+    );
+
+    this.activityLog?.success(
+      "importer",
+      `Imported "${payload.artist} — ${payload.album}" (${filesImported} ${filesImported === 1 ? "file" : "files"} ${pp.fileAction === "copy" ? "copied" : "moved"}${duplicatesUpgraded > 0 ? `, ${duplicatesUpgraded} upgraded` : ""}${duplicatesSkipped > 0 ? `, ${duplicatesSkipped} duplicate skipped` : ""}${playlistsBackfilled > 0 ? `, ${playlistsBackfilled} playlist entries backfilled` : ""})`,
+      {
+        destinationDir,
+        filesImported,
+        duplicatesUpgraded,
+        duplicatesSkipped,
+        playlistsBackfilled,
+      },
     );
 
     return {

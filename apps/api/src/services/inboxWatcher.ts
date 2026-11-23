@@ -1,11 +1,13 @@
 import type { FastifyBaseLogger } from "fastify";
 import type { InboxScanResult, InboxWatcherStatus } from "@musicorbit/shared";
+import type { ActivityLogService } from "./activityLog.js";
 import type { LibraryImporter } from "./importer.js";
 import type { SettingsService } from "./settings.js";
 
 export interface InboxWatcherDeps {
   importer: LibraryImporter;
   settingsService: SettingsService;
+  activityLog?: ActivityLogService;
   logger?: FastifyBaseLogger;
 }
 
@@ -16,6 +18,7 @@ export interface InboxWatcherDeps {
 export class InboxWatcher {
   private readonly importer: LibraryImporter;
   private readonly settingsService: SettingsService;
+  private readonly activityLog?: ActivityLogService;
   private readonly logger?: FastifyBaseLogger;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
@@ -27,6 +30,7 @@ export class InboxWatcher {
   constructor(deps: InboxWatcherDeps) {
     this.importer = deps.importer;
     this.settingsService = deps.settingsService;
+    this.activityLog = deps.activityLog;
     this.logger = deps.logger;
   }
 
@@ -63,9 +67,10 @@ export class InboxWatcher {
     }, pp.autoWatchIntervalSeconds * 1000);
     // Do not keep Node process alive solely for this interval
     this.timer.unref?.();
-    this.logger?.info(
-      { intervalSeconds: pp.autoWatchIntervalSeconds, downloadsDir: pp.downloadsDir },
-      "Started background downloads watcher",
+    this.activityLog?.info(
+      "watcher",
+      `Auto-watch started (checking every ${pp.autoWatchIntervalSeconds}s)`,
+      { downloadsDir: pp.downloadsDir },
     );
   }
 
@@ -73,6 +78,7 @@ export class InboxWatcher {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+      this.activityLog?.info("watcher", "Auto-watch stopped");
     }
   }
 
@@ -84,12 +90,19 @@ export class InboxWatcher {
       const result = await this.importer.scanInbox({ requireStableFiles: true });
       this.lastResult = result;
       this.lastCheckAt = new Date().toISOString();
+      if (result.autoImported > 0 || result.needsReview > 0 || result.failed > 0) {
+        this.activityLog?.info(
+          "watcher",
+          `Auto-watch check: ${result.autoImported} imported, ${result.needsReview} queued for review, ${result.skipped} skipped`,
+          { ...result },
+        );
+      }
       return result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.lastError = msg;
       this.lastCheckAt = new Date().toISOString();
-      this.logger?.warn({ err }, "Background downloads watcher tick failed");
+      this.activityLog?.error("watcher", `Auto-watch check failed: ${msg}`);
       return null;
     } finally {
       this.running = false;
