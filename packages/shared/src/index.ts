@@ -97,6 +97,37 @@ export interface AlbumDetailResponse {
   tracks: TrackSummary[];
 }
 
+export type AlbumTracklistProvider = "musicbrainz" | "deezer";
+
+export interface AlbumReleaseOption {
+  id: string; // e.g. "deezer:12345" or "mb:<uuid>"
+  provider: AlbumTracklistProvider;
+  title: string;
+  artist: string;
+  year: number | null;
+  country: string | null;
+  trackCount: number;
+}
+
+export interface AlbumExpectedTrack {
+  discNumber: number;
+  trackNumber: number;
+  title: string;
+  artist: string;
+  durationSeconds: number | null;
+  ownedTrackId: number | null;
+}
+
+export interface AlbumTracklistResponse {
+  albumId: number;
+  provider: AlbumTracklistProvider | null;
+  selectedRelease: AlbumReleaseOption | null;
+  releases: AlbumReleaseOption[];
+  tracks: AlbumExpectedTrack[];
+  ownedCount: number;
+  missingCount: number;
+}
+
 export interface ArtistDetailResponse {
   artist: ArtistSummary;
   albums: AlbumSummary[];

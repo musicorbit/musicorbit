@@ -15,6 +15,7 @@ import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerStaticWeb } from "./routes/staticWeb.js";
 import { SlskdClient } from "./services/acquisition/slskd.js";
 import { ActivityLogService } from "./services/activityLog.js";
+import { AlbumTracklistService } from "./services/albumTracklist.js";
 import { ArtistImageService } from "./services/artistImages.js";
 import { LibraryImporter } from "./services/importer.js";
 import { InboxWatcher } from "./services/inboxWatcher.js";
@@ -103,6 +104,11 @@ export async function buildServer(
     fetchImpl: options?.fetchImpl,
     rateLimitMs: options?.musicBrainzRateLimitMs,
   });
+  const albumTracklistService = new AlbumTracklistService({
+    dbContext,
+    musicBrainz,
+    fetchImpl: options?.fetchImpl,
+  });
   const metadataLookup = new MetadataLookupService({
     fetchImpl: options?.fetchImpl,
     mbRateLimitMs: options?.musicBrainzRateLimitMs,
@@ -160,7 +166,7 @@ export async function buildServer(
     activityLog,
   });
   await registerLogRoutes(app, { activityLog });
-  await registerLibraryRoutes(app, { dbContext, scanner });
+  await registerLibraryRoutes(app, { dbContext, scanner, albumTracklistService });
   await registerMediaRoutes(app, {
     dbContext,
     coversDir: config.coversDir,

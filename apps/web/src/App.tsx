@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import type {
+  AcquisitionStatusResponse,
   AlbumSummary,
   ArtistSummary,
   AuthStatusResponse,
@@ -23,6 +24,7 @@ import type {
   TrackSummary,
 } from "@musicorbit/shared";
 import {
+  fetchAcquisitionStatus,
   fetchAlbums,
   fetchArtists,
   fetchAuthStatus,
@@ -75,6 +77,10 @@ function MusicOrbitShell() {
   const [tracks, setTracks] = useState<TrackSummary[]>([]);
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [needsReviewCount, setNeedsReviewCount] = useState(0);
+  const [slskdStatus, setSlskdStatus] = useState<AcquisitionStatusResponse | null>(null);
+  const [soulseekLaunch, setSoulseekLaunch] = useState<{ query: string; nonce: number } | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
   const [startingScan, setStartingScan] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -101,7 +107,7 @@ function MusicOrbitShell() {
     setLoading(true);
     setError(null);
     try {
-      const [h, s, al, ar, tr, pl, imp] = await Promise.all([
+      const [h, s, al, ar, tr, pl, imp, acq] = await Promise.all([
         fetchHealth(),
         fetchScanStatus(),
         fetchAlbums(q),
@@ -109,6 +115,7 @@ function MusicOrbitShell() {
         fetchTracks(q, 200),
         fetchPlaylists(),
         fetchImports("needs_review"),
+        fetchAcquisitionStatus().catch(() => null),
       ]);
       setHealth(h);
       setScanStatus(s);
@@ -117,6 +124,7 @@ function MusicOrbitShell() {
       setTracks(tr);
       setPlaylists(pl);
       setNeedsReviewCount(imp.needsReviewCount);
+      setSlskdStatus(acq);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reach MusicOrbit API");
     } finally {
@@ -188,6 +196,22 @@ function MusicOrbitShell() {
     }
   };
 
+  const slskdConfigured = Boolean(slskdStatus?.configured);
+
+  const handleOpenSoulseekSearch = useCallback((initialQuery?: string) => {
+    if (initialQuery?.trim()) {
+      setSoulseekLaunch({ query: initialQuery.trim(), nonce: Date.now() });
+    }
+    setRoute({ view: "search" });
+  }, []);
+
+  // If slskd becomes unconfigured while user is on the search route, bounce back to Albums
+  useEffect(() => {
+    if (slskdStatus && !slskdStatus.configured && route.view === "search") {
+      setRoute({ view: "albums" });
+    }
+  }, [slskdStatus, route.view]);
+
   if (!authChecked) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-sm text-zinc-400">
@@ -205,21 +229,29 @@ function MusicOrbitShell() {
     );
   }
 
-  const navItems = [
-    { id: "albums" as const, label: "Albums", icon: Disc3, count: health?.counts.albums },
-    { id: "artists" as const, label: "Artists", icon: Users, count: health?.counts.artists },
-    { id: "tracks" as const, label: "Tracks", icon: Music, count: health?.counts.tracks },
-    { id: "playlists" as const, label: "Playlists", icon: ListMusic, count: playlists.length },
-    { id: "search" as const, label: "Soulseek Search", icon: Search, count: undefined },
+  const navItems: Array<{
+    id: "albums" | "artists" | "tracks" | "playlists" | "search" | "review" | "system" | "logs";
+    label: string;
+    icon: typeof Disc3;
+    count: number | undefined;
+    highlightBadge?: boolean;
+  }> = [
+    { id: "albums", label: "Albums", icon: Disc3, count: health?.counts.albums },
+    { id: "artists", label: "Artists", icon: Users, count: health?.counts.artists },
+    { id: "tracks", label: "Tracks", icon: Music, count: health?.counts.tracks },
+    { id: "playlists", label: "Playlists", icon: ListMusic, count: playlists.length },
+    ...(slskdConfigured
+      ? [{ id: "search" as const, label: "Soulseek Search", icon: Search, count: undefined }]
+      : []),
     {
-      id: "review" as const,
+      id: "review",
       label: "Review Queue",
       icon: Sparkles,
       count: needsReviewCount > 0 ? needsReviewCount : undefined,
       highlightBadge: needsReviewCount > 0,
     },
-    { id: "system" as const, label: "System & Scanner", icon: Activity, count: undefined },
-    { id: "logs" as const, label: "Activity Logs", icon: ScrollText, count: undefined },
+    { id: "system", label: "System & Scanner", icon: Activity, count: undefined },
+    { id: "logs", label: "Activity Logs", icon: ScrollText, count: undefined },
   ];
 
   const isNavActive = (
@@ -403,6 +435,8 @@ function MusicOrbitShell() {
               onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
               onAlbumRetagged={() => void loadLibrary(searchQuery)}
               onPlaylistsChanged={() => void refreshPlaylists()}
+              slskdConfigured={slskdConfigured}
+              onSearchSoulseek={handleOpenSoulseekSearch}
             />
           )}
 
@@ -460,7 +494,12 @@ function MusicOrbitShell() {
             />
           )}
 
-          {route.view === "search" && <SearchView />}
+          {route.view === "search" && slskdConfigured && (
+            <SearchView
+              initialQuery={soulseekLaunch?.query}
+              initialQueryNonce={soulseekLaunch?.nonce}
+            />
+          )}
 
           {route.view === "review" && (
             <ReviewQueueView onLibraryChanged={() => void loadLibrary(searchQuery)} />
@@ -470,11 +509,13 @@ function MusicOrbitShell() {
             <SystemView
               health={health}
               scanStatus={scanStatus}
+              slskdStatus={slskdStatus}
               loading={loading}
               startingScan={startingScan}
               onScan={(force) => void handleScan(force)}
               onRefresh={() => void loadLibrary(searchQuery)}
               onMusicDirChanged={() => void loadLibrary(searchQuery)}
+              onOpenSoulseek={() => handleOpenSoulseekSearch()}
             />
           )}
 

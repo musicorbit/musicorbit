@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -37,13 +37,18 @@ import { formatBytes, formatDuration, formatSpeed } from "../utils/format";
 
 type FormatFilter = "all" | "lossless" | "lossy";
 
-export function SearchView() {
+interface SearchViewProps {
+  initialQuery?: string;
+  initialQueryNonce?: number;
+}
+
+export function SearchView({ initialQuery, initialQueryNonce }: SearchViewProps = {}) {
   const [status, setStatus] = useState<AcquisitionStatusResponse | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
   const [tab, setTab] = useState<"search" | "downloads">("search");
 
   // Search state
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery ?? "");
   const [activeSearch, setActiveSearch] = useState<SoulseekSearchSummary | null>(null);
   const [groups, setGroups] = useState<SoulseekReleaseGroup[]>([]);
   const [formatFilter, setFormatFilter] = useState<FormatFilter>("all");
@@ -52,6 +57,7 @@ export function SearchView() {
   const [queuedKeys, setQueuedKeys] = useState<Record<string, boolean>>({});
   const [queueingKey, setQueueingKey] = useState<string | null>(null);
   const [startingSearch, setStartingSearch] = useState(false);
+  const lastAutoRunNonceRef = useRef<number | null>(null);
 
   // Downloads state
   const [downloads, setDownloads] = useState<DownloadsListResponse | null>(null);
@@ -118,27 +124,45 @@ export function SearchView() {
     return () => window.clearInterval(timer);
   }, [activeSearch?.id, activeSearch?.isComplete]);
 
+  const runSearch = useCallback(
+    async (rawTerm: string) => {
+      const trimmed = rawTerm.trim();
+      if (!trimmed) return;
+
+      setTab("search");
+      setStartingSearch(true);
+      setError(null);
+      setGroups([]);
+      setExpandedGroups({});
+
+      try {
+        if (activeSearch && !activeSearch.isComplete) {
+          await deleteSoulseekSearch(activeSearch.id).catch(() => {});
+        }
+        const created = await startSoulseekSearch(trimmed);
+        setActiveSearch(created);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to start search");
+      } finally {
+        setStartingSearch(false);
+      }
+    },
+    [activeSearch],
+  );
+
+  // Auto-run search when launched from Album missing tracks or another view
+  useEffect(() => {
+    if (!initialQuery?.trim() || !initialQueryNonce) return;
+    setQuery(initialQuery);
+    if (!status?.connected) return;
+    if (lastAutoRunNonceRef.current === initialQueryNonce) return;
+    lastAutoRunNonceRef.current = initialQueryNonce;
+    void runSearch(initialQuery);
+  }, [initialQuery, initialQueryNonce, status?.connected, runSearch]);
+
   const handleStartSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmed = query.trim();
-    if (!trimmed) return;
-
-    setStartingSearch(true);
-    setError(null);
-    setGroups([]);
-    setExpandedGroups({});
-
-    try {
-      if (activeSearch && !activeSearch.isComplete) {
-        await deleteSoulseekSearch(activeSearch.id).catch(() => {});
-      }
-      const created = await startSoulseekSearch(trimmed);
-      setActiveSearch(created);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start search");
-    } finally {
-      setStartingSearch(false);
-    }
+    await runSearch(query);
   };
 
   const handleStopSearch = async () => {

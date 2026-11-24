@@ -9,11 +9,14 @@ import {
   ListMusic,
   Loader2,
   Play,
+  Radio,
   RefreshCw,
   RotateCcw,
+  Search,
   Sparkles,
 } from "lucide-react";
 import type {
+  AcquisitionStatusResponse,
   DuplicatePolicy,
   HealthResponse,
   ImportFileAction,
@@ -34,21 +37,25 @@ import { DirectoryPickerModal } from "../components/DirectoryPickerModal";
 interface SystemViewProps {
   health: HealthResponse | null;
   scanStatus: ScanStatusResponse | null;
+  slskdStatus?: AcquisitionStatusResponse | null;
   loading: boolean;
   startingScan: boolean;
   onScan: (force: boolean) => void;
   onRefresh: () => void;
   onMusicDirChanged: () => void;
+  onOpenSoulseek?: () => void;
 }
 
 export function SystemView({
   health,
   scanStatus,
+  slskdStatus,
   loading,
   startingScan,
   onScan,
   onRefresh,
   onMusicDirChanged,
+  onOpenSoulseek,
 }: SystemViewProps) {
   const [pickerMode, setPickerMode] = useState<"music" | "downloads" | "playlists" | null>(null);
   const [sysSettings, setSysSettings] = useState<SystemSettingsResponse | null>(null);
@@ -757,6 +764,75 @@ export function SystemView({
               )}
             </section>
           )}
+
+          {/* Optional slskd (Soulseek) Integration Card */}
+          <section className="space-y-3 rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h3 className="flex items-center gap-2 text-base font-semibold text-zinc-100">
+                  <Radio className="h-4 w-4 text-amber-400" />
+                  Optional Integration: slskd (Soulseek)
+                </h3>
+                <p className="mt-0.5 text-xs text-zinc-400">
+                  {slskdStatus?.configured
+                    ? "Soulseek search and missing-track download actions are enabled across Albums, Playlists, and the sidebar."
+                    : "Soulseek search and download actions are automatically hidden while slskd is not configured."}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {slskdStatus?.configured ? (
+                  slskdStatus.connected ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-medium text-emerald-300 ring-1 ring-emerald-500/30">
+                      Connected{slskdStatus.version ? ` · v${slskdStatus.version}` : ""}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-3 py-1 text-xs font-medium text-amber-300 ring-1 ring-amber-500/30">
+                      Unreachable
+                    </span>
+                  )
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-800 px-3 py-1 text-xs font-medium text-zinc-400">
+                    Not configured
+                  </span>
+                )}
+
+                {slskdStatus?.configured && onOpenSoulseek && (
+                  <button
+                    type="button"
+                    onClick={onOpenSoulseek}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800"
+                  >
+                    <Search className="h-3.5 w-3.5 text-amber-400" />
+                    Open Soulseek Search
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {slskdStatus?.configured ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-800/90 bg-zinc-950/60 px-4 py-3 text-xs">
+                <span className="font-mono text-zinc-400">{slskdStatus.url}</span>
+                {slskdStatus.connected ? (
+                  <span className="text-zinc-500">
+                    {slskdStatus.loggedIn
+                      ? "Logged into Soulseek network"
+                      : "slskd API reachable"}
+                  </span>
+                ) : (
+                  <span className="text-amber-300">
+                    {slskdStatus.error ?? "Could not reach slskd server"}
+                  </span>
+                )}
+              </div>
+            ) : (
+              <p className="rounded-xl border border-zinc-800/90 bg-zinc-950/60 px-4 py-3 text-xs text-zinc-400">
+                To enable, set <code className="text-zinc-200">SLSKD_URL</code> and{" "}
+                <code className="text-zinc-200">SLSKD_API_KEY</code> in your{" "}
+                <code className="text-zinc-200">.env</code> file and restart MusicOrbit.
+              </p>
+            )}
+          </section>
         </>
       )}
 

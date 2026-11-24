@@ -1,7 +1,26 @@
-import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, ListMusic, ListPlus, Pause, Pencil, Play, Sparkles } from "lucide-react";
-import type { AlbumDetailResponse, TrackSummary } from "@musicorbit/shared";
-import { fetchAlbumDetail, retagAlbum } from "../api/client";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  CheckCircle2,
+  ListChecks,
+  ListMusic,
+  ListPlus,
+  Loader2,
+  Pause,
+  Pencil,
+  Play,
+  RefreshCw,
+  Search,
+  Sparkles,
+} from "lucide-react";
+import type {
+  AlbumDetailResponse,
+  AlbumReleaseOption,
+  AlbumTracklistResponse,
+  TrackSummary,
+} from "@musicorbit/shared";
+import { fetchAlbumDetail, fetchAlbumTracklist, retagAlbum } from "../api/client";
 import { AddToPlaylistModal } from "../components/AddToPlaylistModal";
 import { AlbumCover } from "../components/AlbumCover";
 import { EditTrackMetadataModal } from "../components/EditTrackMetadataModal";
@@ -15,6 +34,32 @@ interface AlbumDetailViewProps {
   onSelectArtist: (artistId: number) => void;
   onAlbumRetagged: () => void;
   onPlaylistsChanged?: () => void;
+  slskdConfigured?: boolean;
+  onSearchSoulseek?: (query: string) => void;
+}
+
+interface AlbumTracklistUiCacheEntry {
+  showFullTracklist: boolean;
+  data: AlbumTracklistResponse | null;
+}
+
+/**
+ * Keeps full-tracklist view state & cached data in memory across route navigations
+ * so jumping to Soulseek Search (or back to Albums) and returning is instantaneous.
+ */
+const albumTracklistUiCache = new Map<number, AlbumTracklistUiCacheEntry>();
+
+function formatReleaseOptionLabel(rel: AlbumReleaseOption): string {
+  const parts = [rel.title];
+  if (rel.year) parts.push(`(${rel.year})`);
+  const meta = [
+    rel.trackCount > 0 ? `${rel.trackCount} ${rel.trackCount === 1 ? "track" : "tracks"}` : null,
+    rel.country,
+    rel.provider === "deezer" ? "Deezer" : "MusicBrainz",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return meta ? `${parts.join(" ")} — ${meta}` : parts.join(" ");
 }
 
 export function AlbumDetailView({
@@ -23,13 +68,24 @@ export function AlbumDetailView({
   onSelectArtist,
   onAlbumRetagged,
   onPlaylistsChanged,
+  slskdConfigured = false,
+  onSearchSoulseek,
 }: AlbumDetailViewProps) {
+  const cachedUi = albumTracklistUiCache.get(albumId);
   const [detail, setDetail] = useState<AlbumDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retagOpen, setRetagOpen] = useState(false);
   const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
   const [playlistTrack, setPlaylistTrack] = useState<TrackSummary | null>(null);
+
+  // Full album tracklist lookup state (restored immediately from in-memory UI cache)
+  const [showFullTracklist, setShowFullTracklist] = useState(cachedUi?.showFullTracklist ?? false);
+  const [tracklist, setTracklist] = useState<AlbumTracklistResponse | null>(cachedUi?.data ?? null);
+  const [tracklistLoading, setTracklistLoading] = useState(false);
+  const [tracklistError, setTracklistError] = useState<string | null>(null);
+  const [tracklistFilter, setTracklistFilter] = useState<"all" | "missing">("all");
+
   const { currentTrack, isPlaying, playQueue, togglePlay, addToQueue } = usePlayer();
 
   const loadDetail = useCallback(async () => {
@@ -45,9 +101,82 @@ export function AlbumDetailView({
     }
   }, [albumId]);
 
+  const loadFullTracklist = useCallback(
+    async (options?: { releaseId?: string; refresh?: boolean; silent?: boolean }) => {
+      if (!options?.silent) {
+        setTracklistLoading(true);
+      }
+      setTracklistError(null);
+      try {
+        const res = await fetchAlbumTracklist(albumId, {
+          releaseId: options?.releaseId,
+          refresh: options?.refresh,
+        });
+        setTracklist(res);
+        const existing = albumTracklistUiCache.get(albumId);
+        albumTracklistUiCache.set(albumId, {
+          showFullTracklist: existing?.showFullTracklist ?? true,
+          data: res,
+        });
+      } catch (err) {
+        setTracklistError(
+          err instanceof Error ? err.message : "Could not fetch full album tracklist",
+        );
+      } finally {
+        if (!options?.silent) {
+          setTracklistLoading(false);
+        }
+      }
+    },
+    [albumId],
+  );
+
   useEffect(() => {
+    const remembered = albumTracklistUiCache.get(albumId);
+    setShowFullTracklist(remembered?.showFullTracklist ?? false);
+    setTracklist(remembered?.data ?? null);
+    setTracklistError(null);
+    setTracklistFilter("all");
     void loadDetail();
-  }, [loadDetail]);
+    // If Full Tracklist was open for this album, quietly sync ownership against the instant SQLite cache
+    if (remembered?.showFullTracklist) {
+      void loadFullTracklist({ silent: Boolean(remembered.data) });
+    }
+  }, [albumId, loadDetail, loadFullTracklist]);
+
+  const handleToggleFullTracklist = () => {
+    if (showFullTracklist) {
+      setShowFullTracklist(false);
+      albumTracklistUiCache.set(albumId, { showFullTracklist: false, data: tracklist });
+      return;
+    }
+    setShowFullTracklist(true);
+    albumTracklistUiCache.set(albumId, { showFullTracklist: true, data: tracklist });
+    if (!tracklist && !tracklistLoading) {
+      void loadFullTracklist();
+    } else if (tracklist) {
+      // Quietly refresh ownership against the fast SQLite cache in case new tracks were scanned
+      void loadFullTracklist({ silent: true });
+    }
+  };
+
+  const ownedTracksById = useMemo(() => {
+    const map = new Map<number, { track: TrackSummary; index: number }>();
+    (detail?.tracks ?? []).forEach((track, index) => {
+      map.set(track.id, { track, index });
+    });
+    return map;
+  }, [detail?.tracks]);
+
+  const unmatchedOwnedTracks = useMemo(() => {
+    if (!detail || !tracklist || tracklist.tracks.length === 0) return [];
+    const matchedIds = new Set(
+      tracklist.tracks.map((t) => t.ownedTrackId).filter((id): id is number => id !== null),
+    );
+    return detail.tracks
+      .map((track, index) => ({ track, index }))
+      .filter(({ track }) => !matchedIds.has(track.id));
+  }, [detail, tracklist]);
 
   if (loading) {
     return <p className="text-sm text-zinc-400">Loading album…</p>;
@@ -145,115 +274,408 @@ export function AlbumDetailView({
               <Sparkles className="h-4 w-4 text-amber-400" />
               Fix Tags
             </button>
+
+            <button
+              type="button"
+              onClick={handleToggleFullTracklist}
+              aria-pressed={showFullTracklist}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-2.5 text-sm font-medium transition ${
+                showFullTracklist
+                  ? "border-amber-500/50 bg-amber-500/15 text-amber-300 hover:bg-amber-500/20"
+                  : "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
+              }`}
+            >
+              {tracklistLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
+              ) : (
+                <ListChecks className="h-4 w-4 text-amber-400" />
+              )}
+              {showFullTracklist ? "Showing Full Tracklist" : "Full Tracklist"}
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Tracklist */}
-      <div className="overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-900/40">
-        <div className="divide-y divide-zinc-800/60">
-          {tracks.map((track, idx) => {
-            const active = currentTrack?.id === track.id;
-            return (
-              <div
-                key={track.id}
-                onClick={() => {
-                  if (active) {
-                    togglePlay();
-                  } else {
-                    playQueue(tracks, idx);
-                  }
-                }}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    if (active) togglePlay();
-                    else playQueue(tracks, idx);
-                  }
-                }}
-                className={`group flex items-center gap-4 px-4 py-3 text-sm transition ${
-                  active ? "bg-amber-500/10" : "hover:bg-zinc-800/50"
-                }`}
+      {/* Full Tracklist Completeness Header */}
+      {showFullTracklist && (
+        <section className="space-y-3 rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-4">
+          {tracklistLoading && !tracklist ? (
+            <div className="flex items-center gap-2.5 py-2 text-sm text-zinc-400">
+              <Loader2 className="h-4 w-4 animate-spin text-amber-400" />
+              Looking up full tracklist on Deezer &amp; MusicBrainz…
+            </div>
+          ) : tracklistError ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+              <div className="flex items-center gap-2 text-red-300">
+                <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+                <span>{tracklistError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  void loadFullTracklist({
+                    releaseId: tracklist?.selectedRelease?.id,
+                    refresh: true,
+                  })
+                }
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800"
               >
-                <div className="flex w-7 shrink-0 items-center justify-center text-xs text-zinc-500">
-                  {active && isPlaying ? (
-                    <Pause className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                <RefreshCw className="h-3.5 w-3.5" />
+                Retry
+              </button>
+            </div>
+          ) : tracklist && tracklist.tracks.length > 0 ? (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  {tracklist.missingCount === 0 ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/30">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Complete · {tracklist.ownedCount} of {tracklist.tracks.length} tracks in
+                      library
+                    </span>
                   ) : (
-                    <>
-                      <span className="group-hover:hidden group-focus-within:hidden">
-                        {track.trackNumber ?? idx + 1}
-                      </span>
-                      <Play className="hidden h-3.5 w-3.5 fill-zinc-100 text-zinc-100 group-hover:block group-focus-within:block" />
-                    </>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-300 ring-1 ring-amber-500/30">
+                      {tracklist.ownedCount} of {tracklist.tracks.length} in library ·{" "}
+                      {tracklist.missingCount} missing
+                    </span>
+                  )}
+
+                  {tracklist.missingCount > 0 && (
+                    <div className="inline-flex rounded-lg border border-zinc-800 bg-zinc-950 p-0.5 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setTracklistFilter("all")}
+                        className={`rounded-md px-2.5 py-1 font-medium transition ${
+                          tracklistFilter === "all"
+                            ? "bg-zinc-800 text-zinc-100"
+                            : "text-zinc-400 hover:text-zinc-200"
+                        }`}
+                      >
+                        All ({tracklist.tracks.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTracklistFilter("missing")}
+                        className={`rounded-md px-2.5 py-1 font-medium transition ${
+                          tracklistFilter === "missing"
+                            ? "bg-zinc-800 text-amber-300"
+                            : "text-zinc-400 hover:text-zinc-200"
+                        }`}
+                      >
+                        Missing ({tracklist.missingCount})
+                      </button>
+                    </div>
                   )}
                 </div>
 
-                <div className="min-w-0 flex-1">
-                  <p
-                    className={`truncate font-medium ${
-                      active ? "text-amber-400" : "text-zinc-100"
-                    }`}
-                  >
-                    {track.title}
-                  </p>
-                  {track.artistName !== album.artistName && (
-                    <p className="truncate text-xs text-zinc-400">{track.artistName}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  {tracklist.releases.length > 1 && (
+                    <label className="flex items-center gap-1.5 text-xs text-zinc-200">
+                      <span className="sr-only">Album edition</span>
+                      <select
+                        value={tracklist.selectedRelease?.id ?? ""}
+                        disabled={tracklistLoading}
+                        onChange={(e) => void loadFullTracklist({ releaseId: e.target.value })}
+                        aria-label="Select album edition"
+                        className="max-w-xs truncate rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-100 focus:border-amber-500/60 focus:outline-none disabled:opacity-50"
+                      >
+                        {tracklist.releases.map((rel) => (
+                          <option
+                            key={rel.id}
+                            value={rel.id}
+                            className="bg-zinc-900 text-zinc-100"
+                          >
+                            {formatReleaseOptionLabel(rel)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   )}
-                </div>
 
-                <span className="hidden rounded bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-500 ring-1 ring-zinc-800 sm:inline">
-                  {formatCodec(track.codec)}
-                </span>
-
-                <span className="w-12 text-right font-mono text-xs text-zinc-400">
-                  {formatDuration(track.durationSeconds)}
-                </span>
-
-                <div className="flex items-center gap-0.5">
                   <button
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditingTrackId(track.id);
-                    }}
-                    title="Edit track metadata"
-                    aria-label={`Edit metadata for ${track.title}`}
-                    className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                    disabled={tracklistLoading}
+                    onClick={() => void loadFullTracklist({ refresh: true })}
+                    title="Refresh tracklist from Deezer & MusicBrainz"
+                    aria-label="Refresh tracklist from Deezer and MusicBrainz"
+                    className="inline-flex items-center justify-center rounded-lg border border-zinc-700 bg-zinc-900 p-1.5 text-zinc-300 transition hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-45"
                   >
-                    <Pencil className="h-3.5 w-3.5" />
+                    <RefreshCw className={`h-3.5 w-3.5 ${tracklistLoading ? "animate-spin" : ""}`} />
                   </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPlaylistTrack(track);
-                    }}
-                    title="Add to playlist"
-                    aria-label={`Add ${track.title} to playlist`}
-                    className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
-                  >
-                    <ListMusic className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      addToQueue(track);
-                    }}
-                    title="Add to queue"
-                    aria-label={`Add ${track.title} to queue`}
-                    className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-zinc-100"
-                  >
-                    <ListPlus className="h-4 w-4" />
-                  </button>
+
+                  {slskdConfigured && onSearchSoulseek && tracklist.missingCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onSearchSoulseek(
+                          `${album.artistName} ${tracklist.selectedRelease?.title ?? album.title}`,
+                        )
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400"
+                    >
+                      <Search className="h-3.5 w-3.5" />
+                      Find Album on Soulseek
+                    </button>
+                  )}
                 </div>
               </div>
-            );
-          })}
-        </div>
-      </div>
+
+              {/* Progress bar */}
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                <div
+                  className={`h-full transition-all duration-300 ${
+                    tracklist.missingCount === 0 ? "bg-emerald-400" : "bg-amber-400"
+                  }`}
+                  style={{
+                    width: `${Math.round((tracklist.ownedCount / Math.max(1, tracklist.tracks.length)) * 100)}%`,
+                  }}
+                />
+              </div>
+            </>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-zinc-400">
+              <span>
+                No matching full tracklist was found on Deezer or MusicBrainz for{" "}
+                <strong className="text-zinc-200">{album.title}</strong>.
+              </span>
+              <button
+                type="button"
+                onClick={() => void loadFullTracklist()}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800"
+              >
+                <RefreshCw className="h-3 w-3" />
+                Try Again
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Tracklist */}
+      {(() => {
+        const renderOwnedTrackRow = (
+          track: TrackSummary,
+          idx: number,
+          displayTrackNumber?: number,
+          showInLibraryBadge = false,
+        ) => {
+          const active = currentTrack?.id === track.id;
+          return (
+            <div
+              key={track.id}
+              onClick={() => {
+                if (active) {
+                  togglePlay();
+                } else {
+                  playQueue(tracks, idx);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  if (active) togglePlay();
+                  else playQueue(tracks, idx);
+                }
+              }}
+              className={`group flex items-center gap-4 px-4 py-3 text-sm transition ${
+                active ? "bg-amber-500/10" : "hover:bg-zinc-800/50"
+              }`}
+            >
+              <div className="flex w-7 shrink-0 items-center justify-center text-xs text-zinc-500">
+                {active && isPlaying ? (
+                  <Pause className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                ) : (
+                  <>
+                    <span className="group-hover:hidden group-focus-within:hidden">
+                      {displayTrackNumber ?? track.trackNumber ?? idx + 1}
+                    </span>
+                    <Play className="hidden h-3.5 w-3.5 fill-zinc-100 text-zinc-100 group-hover:block group-focus-within:block" />
+                  </>
+                )}
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <p
+                  className={`truncate font-medium ${active ? "text-amber-400" : "text-zinc-100"}`}
+                >
+                  {track.title}
+                </p>
+                {track.artistName !== album.artistName && (
+                  <p className="truncate text-xs text-zinc-400">{track.artistName}</p>
+                )}
+              </div>
+
+              {showInLibraryBadge && (
+                <span className="hidden items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300 ring-1 ring-emerald-500/25 md:inline-flex">
+                  <CheckCircle2 className="h-3 w-3" />
+                  In Library
+                </span>
+              )}
+
+              <span className="hidden rounded bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-500 ring-1 ring-zinc-800 sm:inline">
+                {formatCodec(track.codec)}
+              </span>
+
+              <span className="w-12 text-right font-mono text-xs text-zinc-400">
+                {formatDuration(track.durationSeconds)}
+              </span>
+
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditingTrackId(track.id);
+                  }}
+                  title="Edit track metadata"
+                  aria-label={`Edit metadata for ${track.title}`}
+                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPlaylistTrack(track);
+                  }}
+                  title="Add to playlist"
+                  aria-label={`Add ${track.title} to playlist`}
+                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                >
+                  <ListMusic className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    addToQueue(track);
+                  }}
+                  title="Add to queue"
+                  aria-label={`Add ${track.title} to queue`}
+                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-zinc-100"
+                >
+                  <ListPlus className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          );
+        };
+
+        if (showFullTracklist && tracklist && tracklist.tracks.length > 0) {
+          const visibleRows =
+            tracklistFilter === "missing"
+              ? tracklist.tracks.filter((t) => t.ownedTrackId === null)
+              : tracklist.tracks;
+          const discNumbers = new Set(visibleRows.map((t) => t.discNumber));
+          const hasMultipleDiscs = discNumbers.size > 1;
+          let lastDisc: number | null = null;
+
+          return (
+            <div className="space-y-5">
+              <div className="overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-900/40">
+                <div className="divide-y divide-zinc-800/60">
+                  {visibleRows.map((exp, rowIdx) => {
+                    const discHeader =
+                      hasMultipleDiscs && exp.discNumber !== lastDisc ? (
+                        <div
+                          key={`disc-${exp.discNumber}`}
+                          className="bg-zinc-950/70 px-4 py-2 text-[11px] font-semibold tracking-wider text-zinc-400 uppercase"
+                        >
+                          Disc {exp.discNumber}
+                        </div>
+                      ) : null;
+                    lastDisc = exp.discNumber;
+
+                    const ownedMatch =
+                      exp.ownedTrackId !== null ? ownedTracksById.get(exp.ownedTrackId) : undefined;
+
+                    if (ownedMatch) {
+                      return (
+                        <div key={`exp-${exp.discNumber}-${exp.trackNumber}-${rowIdx}`}>
+                          {discHeader}
+                          {renderOwnedTrackRow(
+                            ownedMatch.track,
+                            ownedMatch.index,
+                            exp.trackNumber,
+                            true,
+                          )}
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div key={`exp-${exp.discNumber}-${exp.trackNumber}-${rowIdx}`}>
+                        {discHeader}
+                        <div className="flex items-center gap-4 bg-zinc-950/35 px-4 py-3 text-sm text-zinc-500">
+                          <div className="flex w-7 shrink-0 items-center justify-center text-xs text-zinc-600">
+                            {exp.trackNumber}
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-medium text-zinc-400">{exp.title}</p>
+                            {exp.artist && exp.artist !== album.artistName && (
+                              <p className="truncate text-xs text-zinc-500">{exp.artist}</p>
+                            )}
+                          </div>
+
+                          <span className="rounded-full bg-zinc-800/80 px-2 py-0.5 text-[11px] font-medium text-zinc-400">
+                            Missing
+                          </span>
+
+                          <span className="w-12 text-right font-mono text-xs text-zinc-600">
+                            {formatDuration(exp.durationSeconds)}
+                          </span>
+
+                          {slskdConfigured && onSearchSoulseek && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onSearchSoulseek(`${exp.artist || album.artistName} ${exp.title}`)
+                              }
+                              title={`Search Soulseek for "${exp.title}"`}
+                              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-200 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-300"
+                            >
+                              <Search className="h-3 w-3" />
+                              Search
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {unmatchedOwnedTracks.length > 0 && tracklistFilter === "all" && (
+                <div className="space-y-2">
+                  <h3 className="text-xs font-semibold tracking-wider text-zinc-400 uppercase">
+                    Additional tracks in your library ({unmatchedOwnedTracks.length})
+                  </h3>
+                  <div className="overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-900/40">
+                    <div className="divide-y divide-zinc-800/60">
+                      {unmatchedOwnedTracks.map(({ track, index }) =>
+                        renderOwnedTrackRow(track, index, undefined, true),
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        return (
+          <div className="overflow-hidden rounded-2xl border border-zinc-800/80 bg-zinc-900/40">
+            <div className="divide-y divide-zinc-800/60">
+              {tracks.map((track, idx) => renderOwnedTrackRow(track, idx))}
+            </div>
+          </div>
+        );
+      })()}
 
       {retagOpen && (
         <RetagAlbumModal
@@ -284,6 +706,12 @@ export function AlbumDetailView({
               onBack();
             } else {
               await loadDetail();
+              albumTracklistUiCache.delete(album.id);
+              if (showFullTracklist) {
+                void loadFullTracklist({ refresh: true });
+              } else {
+                setTracklist(null);
+              }
             }
           }}
         />
@@ -296,6 +724,15 @@ export function AlbumDetailView({
           onSaved={() => {
             onAlbumRetagged();
             void loadDetail();
+            if (showFullTracklist) {
+              void loadFullTracklist({
+                releaseId: tracklist?.selectedRelease?.id,
+                silent: true,
+              });
+            } else {
+              albumTracklistUiCache.delete(album.id);
+              setTracklist(null);
+            }
           }}
         />
       )}

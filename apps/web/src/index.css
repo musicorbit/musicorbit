@@ -6,6 +6,10 @@
  * and provide a consistent, high-contrast keyboard focus ring via :focus-visible.
  */
 @layer base {
+  :root {
+    color-scheme: dark;
+  }
+
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]) {
     cursor: pointer;

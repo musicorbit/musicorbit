@@ -158,3 +158,15 @@ export const sessions = sqliteTable("sessions", {
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
+
+export const albumTracklistCache = sqliteTable("album_tracklist_cache", {
+  albumId: integer("album_id")
+    .primaryKey()
+    .references(() => albums.id, { onDelete: "cascade" }),
+  selectedReleaseId: text("selected_release_id"),
+  provider: text("provider"),
+  selectedReleaseJson: text("selected_release_json"),
+  releasesJson: text("releases_json").notNull().default("[]"),
+  tracksJson: text("tracks_json").notNull().default("[]"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});

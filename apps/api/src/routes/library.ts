@@ -3,17 +3,20 @@ import { z } from "zod";
 import type {
   AlbumDetailResponse,
   AlbumSummary,
+  AlbumTracklistResponse,
   ArtistDetailResponse,
   ArtistSummary,
   ScanStatusResponse,
   TrackSummary,
 } from "@musicorbit/shared";
 import type { DbContext } from "../db/index.js";
+import type { AlbumTracklistService } from "../services/albumTracklist.js";
 import type { LibraryScanner } from "../services/scanner.js";
 
 export interface LibraryRouteDeps {
   dbContext: DbContext;
   scanner: LibraryScanner;
+  albumTracklistService?: AlbumTracklistService;
 }
 
 const triggerScanBodySchema = z
@@ -24,6 +27,18 @@ const triggerScanBodySchema = z
 
 const idParamSchema = z.object({
   id: z.coerce.number().int().positive(),
+});
+
+const tracklistQuerySchema = z.object({
+  releaseId: z
+    .string()
+    .trim()
+    .regex(/^(?:deezer:\d+|mb:[a-f0-9-]+)$/i, "Invalid releaseId")
+    .optional(),
+  refresh: z
+    .union([z.boolean(), z.enum(["true", "false", "1", "0"])])
+    .transform((v) => v === true || v === "true" || v === "1")
+    .optional(),
 });
 
 const listQuerySchema = z.object({
@@ -75,7 +90,7 @@ export async function registerLibraryRoutes(
   app: FastifyInstance,
   deps: LibraryRouteDeps,
 ): Promise<void> {
-  const { dbContext, scanner } = deps;
+  const { dbContext, scanner, albumTracklistService } = deps;
   const { sqlite } = dbContext;
 
   // Trigger an incremental (or forced full) library scan in the background
@@ -335,6 +350,86 @@ export async function registerLibraryRoutes(
       .all(parsed.data.id) as TrackRow[];
 
     return { album, tracks: albumTracks };
+  });
+
+  // Lookup canonical full album tracklist (Deezer / MusicBrainz) and mark owned vs missing tracks
+  app.get("/api/albums/:id/tracklist", async (request, reply): Promise<AlbumTracklistResponse> => {
+    const parsedParams = idParamSchema.safeParse(request.params);
+    if (!parsedParams.success) {
+      return reply.code(400).send({ error: "Invalid album ID" });
+    }
+    const parsedQuery = tracklistQuerySchema.safeParse(request.query);
+    if (!parsedQuery.success) {
+      return reply.code(400).send({ error: "Invalid releaseId parameter" });
+    }
+    if (!albumTracklistService) {
+      return reply.code(503).send({ error: "Album tracklist lookup is unavailable" });
+    }
+
+    const albumRow = sqlite
+      .prepare(
+        `
+        SELECT
+          al.id,
+          al.title,
+          ar.name AS artistName,
+          al.year,
+          al.mbid
+        FROM albums al
+        JOIN artists ar ON ar.id = al.artist_id
+        WHERE al.id = ?
+      `,
+      )
+      .get(parsedParams.data.id) as
+      | {
+          id: number;
+          title: string;
+          artistName: string;
+          year: number | null;
+          mbid: string | null;
+        }
+      | undefined;
+
+    if (!albumRow) {
+      return reply.code(404).send({ error: "Album not found" });
+    }
+
+    const ownedTracks = sqlite
+      .prepare(
+        `
+        SELECT
+          t.id,
+          t.title,
+          t.album_id AS albumId,
+          al.title AS albumTitle,
+          t.artist_id AS artistId,
+          ar.name AS artistName,
+          t.track_number AS trackNumber,
+          t.disc_number AS discNumber,
+          t.duration_seconds AS durationSeconds,
+          t.codec,
+          t.bitrate,
+          t.sample_rate AS sampleRate,
+          t.file_path AS filePath
+        FROM tracks t
+        JOIN albums al ON al.id = t.album_id
+        JOIN artists ar ON ar.id = t.artist_id
+        WHERE t.album_id = ?
+        ORDER BY COALESCE(t.disc_number, 1) ASC, COALESCE(t.track_number, 9999) ASC, lower(t.title) ASC
+      `,
+      )
+      .all(parsedParams.data.id) as TrackRow[];
+
+    try {
+      return await albumTracklistService.lookupAlbumTracklist(albumRow, ownedTracks, {
+        releaseId: parsedQuery.data.releaseId,
+        refresh: parsedQuery.data.refresh,
+      });
+    } catch (err) {
+      return reply.code(502).send({
+        error: err instanceof Error ? err.message : "Failed to fetch full album tracklist",
+      });
+    }
   });
 
   // List tracks with optional search (?q=) and limit (?limit=)

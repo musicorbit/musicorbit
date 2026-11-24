@@ -5,6 +5,7 @@ import type {
   ActivityLogsResponse,
   AlbumDetailResponse,
   AlbumSummary,
+  AlbumTracklistResponse,
   ApplyImportResponse,
   ApplyTaggingRequest,
   ArtistDetailResponse,
@@ -97,6 +98,17 @@ export function fetchAlbums(q?: string, artistId?: number): Promise<AlbumSummary
 
 export function fetchAlbumDetail(id: number): Promise<AlbumDetailResponse> {
   return getJson<AlbumDetailResponse>(`/api/albums/${id}`);
+}
+
+export function fetchAlbumTracklist(
+  id: number,
+  options?: { releaseId?: string; refresh?: boolean },
+): Promise<AlbumTracklistResponse> {
+  const params = new URLSearchParams();
+  if (options?.releaseId?.trim()) params.set("releaseId", options.releaseId.trim());
+  if (options?.refresh) params.set("refresh", "true");
+  const qs = params.toString();
+  return getJson<AlbumTracklistResponse>(`/api/albums/${id}/tracklist${qs ? `?${qs}` : ""}`);
 }
 
 export function fetchTracks(q?: string, limit = 200): Promise<TrackSummary[]> {

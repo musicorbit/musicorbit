@@ -303,7 +303,8 @@ export function PlaylistDetailView({
       : 0;
   const activeSearchingCount =
     batchJob?.items.filter((i) => i.state === "searching").length ?? 0;
-  const slskdReady = Boolean(slskdStatus?.configured);
+  const slskdConfigured = Boolean(slskdStatus?.configured);
+  const slskdReady = Boolean(slskdStatus?.configured && slskdStatus?.connected);
 
   return (
     <div className="space-y-8">
@@ -524,73 +525,83 @@ export function PlaylistDetailView({
                 </span>
               </h3>
               <p className="mt-0.5 text-xs text-zinc-400">
-                Songs from your imported playlist that aren&apos;t in your local library yet. Batch
-                search queries Soulseek politely a few tracks at a time to respect{" "}
-                <code className="text-zinc-300">slskd</code> limits.
+                {slskdConfigured ? (
+                  <>
+                    Songs from your imported playlist that aren&apos;t in your local library yet.
+                    Batch search queries Soulseek politely a few tracks at a time to respect{" "}
+                    <code className="text-zinc-300">slskd</code> limits.
+                  </>
+                ) : (
+                  "Songs from your imported playlist that aren't in your local library yet."
+                )}
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-400">
-                <span>Limit:</span>
-                <select
-                  value={concurrency}
-                  disabled={isBatchRunning}
-                  onChange={(e) => setConcurrency(Number(e.target.value))}
-                  className="bg-transparent font-medium text-zinc-100 focus:outline-none disabled:opacity-50"
-                >
-                  <option value={1} className="bg-zinc-900">
-                    1 at a time
-                  </option>
-                  <option value={2} className="bg-zinc-900">
-                    2 at a time
-                  </option>
-                  <option value={3} className="bg-zinc-900">
-                    3 at a time
-                  </option>
-                </select>
-              </label>
+              {slskdConfigured && (
+                <>
+                  <label className="flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-400">
+                    <span>Limit:</span>
+                    <select
+                      value={concurrency}
+                      disabled={isBatchRunning}
+                      onChange={(e) => setConcurrency(Number(e.target.value))}
+                      className="bg-transparent font-medium text-zinc-100 focus:outline-none disabled:opacity-50"
+                    >
+                      <option value={1} className="bg-zinc-900">
+                        1 at a time
+                      </option>
+                      <option value={2} className="bg-zinc-900">
+                        2 at a time
+                      </option>
+                      <option value={3} className="bg-zinc-900">
+                        3 at a time
+                      </option>
+                    </select>
+                  </label>
 
-              {isBatchRunning ? (
-                <button
-                  type="button"
-                  onClick={() => void handleCancelBatchSearch()}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/40 bg-red-500/15 px-3.5 py-2 text-xs font-semibold text-red-200 transition hover:bg-red-500/25"
-                >
-                  <Square className="h-3.5 w-3.5 fill-current" />
-                  Stop Search
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  disabled={!slskdReady}
-                  onClick={() => void handleStartBatchSearch()}
-                  title={
-                    slskdReady
-                      ? "Search all missing tracks on Soulseek respecting the concurrency limit"
-                      : "Configure SLSKD_URL in .env to enable Soulseek search"
-                  }
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400 disabled:opacity-45"
-                >
-                  <Search className="h-3.5 w-3.5" />
-                  Search All Missing
-                </button>
-              )}
-
-              {foundDownloadables.length > 0 && (
-                <button
-                  type="button"
-                  disabled={downloadingAll}
-                  onClick={() => void handleDownloadAllFound()}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3.5 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-45"
-                >
-                  {downloadingAll ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {isBatchRunning ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleCancelBatchSearch()}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/40 bg-red-500/15 px-3.5 py-2 text-xs font-semibold text-red-200 transition hover:bg-red-500/25"
+                    >
+                      <Square className="h-3.5 w-3.5 fill-current" />
+                      Stop Search
+                    </button>
                   ) : (
-                    <Download className="h-3.5 w-3.5" />
+                    <button
+                      type="button"
+                      disabled={!slskdReady}
+                      onClick={() => void handleStartBatchSearch()}
+                      title={
+                        slskdReady
+                          ? "Search all missing tracks on Soulseek respecting the concurrency limit"
+                          : "slskd is currently unreachable"
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400 disabled:opacity-45"
+                    >
+                      <Search className="h-3.5 w-3.5" />
+                      Search All Missing
+                    </button>
                   )}
-                  Download All Found ({foundDownloadables.length})
-                </button>
+
+                  {foundDownloadables.length > 0 && (
+                    <button
+                      type="button"
+                      disabled={downloadingAll}
+                      onClick={() => void handleDownloadAllFound()}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3.5 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-45"
+                    >
+                      {downloadingAll ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Download className="h-3.5 w-3.5" />
+                      )}
+                      Download All Found ({foundDownloadables.length})
+                    </button>
+                  )}
+                </>
               )}
 
               <button
@@ -606,10 +617,11 @@ export function PlaylistDetailView({
             </div>
           </div>
 
-          {!slskdReady && (
+          {slskdConfigured && !slskdReady && (
             <div className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-200">
-              <code>slskd</code> is not configured in <code>.env</code>. Connect your{" "}
-              <code>slskd</code> instance to search and download missing tracks directly from here.
+              <code>slskd</code> is configured but currently unreachable
+              {slskdStatus?.error ? ` (${slskdStatus.error})` : ""}. Check that your{" "}
+              <code>slskd</code> instance is running to search missing tracks.
             </div>
           )}
 
@@ -753,20 +765,21 @@ export function PlaylistDetailView({
                       </span>
                     )}
 
-                    {(effectiveState === "idle" ||
-                      effectiveState === "not_found" ||
-                      effectiveState === "error") && (
-                      <button
-                        type="button"
-                        disabled={!slskdReady || isBatchRunning}
-                        onClick={() => void handleStartBatchSearch([mt.id])}
-                        title="Search Soulseek for this track"
-                        className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-40"
-                      >
-                        <Search className="h-3 w-3" />
-                        Search
-                      </button>
-                    )}
+                    {slskdConfigured &&
+                      (effectiveState === "idle" ||
+                        effectiveState === "not_found" ||
+                        effectiveState === "error") && (
+                        <button
+                          type="button"
+                          disabled={!slskdReady || isBatchRunning}
+                          onClick={() => void handleStartBatchSearch([mt.id])}
+                          title="Search Soulseek for this track"
+                          className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-40"
+                        >
+                          <Search className="h-3 w-3" />
+                          Search
+                        </button>
+                      )}
 
                     <button
                       type="button"

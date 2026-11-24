@@ -175,6 +175,16 @@ export function initDatabase(dbPath: string): DbContext {
       created_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS album_tracklist_cache (
+      album_id INTEGER PRIMARY KEY REFERENCES albums(id) ON DELETE CASCADE,
+      selected_release_id TEXT,
+      provider TEXT,
+      selected_release_json TEXT,
+      releases_json TEXT NOT NULL DEFAULT '[]',
+      tracks_json TEXT NOT NULL DEFAULT '[]',
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON albums(artist_id);
     CREATE INDEX IF NOT EXISTS idx_tracks_album_id ON tracks(album_id);
     CREATE INDEX IF NOT EXISTS idx_tracks_artist_id ON tracks(artist_id);
