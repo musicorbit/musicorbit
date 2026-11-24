@@ -21,6 +21,7 @@ import { InboxWatcher } from "./services/inboxWatcher.js";
 import { MetadataLookupService } from "./services/metadataLookup.js";
 import { MusicBrainzClient } from "./services/musicbrainz.js";
 import { PlaylistBatchSearchService } from "./services/playlistBatchSearch.js";
+import { PlaylistSyncService } from "./services/playlistSync.js";
 import { LibraryScanner } from "./services/scanner.js";
 import { SettingsService } from "./services/settings.js";
 
@@ -36,6 +37,7 @@ export interface ServerHandle {
   importer: LibraryImporter;
   inboxWatcher: InboxWatcher;
   batchSearchService: PlaylistBatchSearchService;
+  playlistSync: PlaylistSyncService;
 }
 
 export interface BuildServerOptions {
@@ -110,6 +112,11 @@ export async function buildServer(
     staggerMs: options?.batchSearchStaggerMs,
     pollIntervalMs: options?.batchSearchPollMs,
   });
+  const playlistSync = new PlaylistSyncService({
+    dbContext,
+    settingsService,
+    activityLog,
+  });
   const importer = new LibraryImporter({
     dbContext,
     musicDir: config.musicDir,
@@ -121,6 +128,7 @@ export async function buildServer(
     musicBrainz,
     metadataLookup,
     batchSearchService,
+    playlistSync,
     activityLog,
     fetchImpl: options?.fetchImpl,
     scanner,
@@ -144,7 +152,13 @@ export async function buildServer(
   await registerAuthRoutes(app, { dbContext, authEnabled: config.authEnabled });
 
   await registerHealthRoutes(app, { config, dbContext, getMusicDir });
-  await registerSettingsRoutes(app, { settingsService, scanner, inboxWatcher, activityLog });
+  await registerSettingsRoutes(app, {
+    settingsService,
+    scanner,
+    inboxWatcher,
+    playlistSync,
+    activityLog,
+  });
   await registerLogRoutes(app, { activityLog });
   await registerLibraryRoutes(app, { dbContext, scanner });
   await registerMediaRoutes(app, {
@@ -168,6 +182,7 @@ export async function buildServer(
     coversDir: config.coversDir,
     slskdClient,
     batchSearchService,
+    playlistSync,
     activityLog,
   });
 
@@ -194,5 +209,6 @@ export async function buildServer(
     importer,
     inboxWatcher,
     batchSearchService,
+    playlistSync,
   };
 }

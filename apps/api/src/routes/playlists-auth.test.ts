@@ -286,4 +286,52 @@ describe("Playlists (M3U8) & Optional Auth", () => {
     });
     assert.equal(missingAfterReset.statusCode, 404);
   });
+
+  it("auto-syncs playlists to .m3u8 files on disk (create, update, rename, delete) for Navidrome/Symfonium", async () => {
+    const syncDir = path.join(tmpRoot, "music", "Playlists");
+
+    // Enable auto-sync via PUT /api/system/playlist-sync
+    const enableRes = await playlistHandle.app.inject({
+      method: "PUT",
+      url: "/api/system/playlist-sync",
+      payload: { enabled: true, playlistsDir: syncDir },
+    });
+    assert.equal(enableRes.statusCode, 200);
+
+    // Create a playlist and add a track -> .m3u8 file written automatically with ../ relative path
+    const createRes = await playlistHandle.app.inject({
+      method: "POST",
+      url: "/api/playlists",
+      payload: { name: "Navidrome Mix" },
+    });
+    const pl = createRes.json<PlaylistSummary>();
+    await playlistHandle.app.inject({
+      method: "POST",
+      url: `/api/playlists/${pl.id}/tracks`,
+      payload: { trackIds: [trackIds[0]!] },
+    });
+
+    const m3uPath = path.join(syncDir, "Navidrome Mix.m3u8");
+    assert.ok(fs.existsSync(m3uPath), "Synced .m3u8 file should be created automatically");
+    const content = fs.readFileSync(m3uPath, "utf8");
+    assert.ok(content.includes("#EXTM3U"));
+    assert.ok(content.includes("../Orbit/TestAlbum/01 - Alpha.wav"));
+
+    // Rename playlist -> old file deleted, new file created
+    await playlistHandle.app.inject({
+      method: "PATCH",
+      url: `/api/playlists/${pl.id}`,
+      payload: { name: "Symfonium Mix" },
+    });
+    assert.equal(fs.existsSync(m3uPath), false, "Old .m3u8 filename must be removed on rename");
+    const renamedPath = path.join(syncDir, "Symfonium Mix.m3u8");
+    assert.ok(fs.existsSync(renamedPath));
+
+    // Delete playlist -> synced .m3u8 file removed cleanly
+    await playlistHandle.app.inject({
+      method: "DELETE",
+      url: `/api/playlists/${pl.id}`,
+    });
+    assert.equal(fs.existsSync(renamedPath), false, "Synced .m3u8 file must be removed on delete");
+  });
 });

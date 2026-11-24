@@ -28,6 +28,7 @@ import type {
   PlaylistDetailResponse,
   PlaylistImportFormat,
   PlaylistSummary,
+  PlaylistSyncRunResult,
   PostProcessingSettings,
   RecheckMissingTracksResponse,
   RetagAlbumResponse,
@@ -624,6 +625,33 @@ export async function updatePostProcessingSettings(
     );
   }
   return (await res.json()) as SystemSettingsResponse;
+}
+
+export async function updatePlaylistSyncSettings(updates: {
+  enabled?: boolean;
+  playlistsDir?: string;
+}): Promise<SystemSettingsResponse> {
+  const res = await fetch("/api/system/playlist-sync", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not update playlist sync settings (HTTP ${res.status})`);
+  }
+  return (await res.json()) as SystemSettingsResponse;
+}
+
+export async function runPlaylistSyncNow(): Promise<PlaylistSyncRunResult> {
+  const res = await fetch("/api/system/playlist-sync/run", {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not sync playlists (HTTP ${res.status})`);
+  }
+  return (await res.json()) as PlaylistSyncRunResult;
 }
 
 export function getPlaylistExportUrl(playlistId: number): string {

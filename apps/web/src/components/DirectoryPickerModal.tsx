@@ -12,12 +12,13 @@ import type { BrowseDirectoriesResponse } from "@musicorbit/shared";
 import {
   browseServerDirectories,
   updateMusicDirectory,
+  updatePlaylistSyncSettings,
   updatePostProcessingSettings,
 } from "../api/client";
 import { useModalAccessibility } from "../hooks/useModalAccessibility";
 
 interface DirectoryPickerModalProps {
-  mode?: "music" | "downloads";
+  mode?: "music" | "downloads" | "playlists";
   initialPath: string;
   onClose: () => void;
   onSaved: (newPath: string, scannedNow: boolean) => void;
@@ -40,11 +41,17 @@ export function DirectoryPickerModal({
   useModalAccessibility(dialogRef, onClose);
 
   const heading =
-    mode === "downloads" ? "Select Downloads / Watch Folder" : "Select Music Directory";
+    mode === "downloads"
+      ? "Select Downloads / Watch Folder"
+      : mode === "playlists"
+        ? "Select Synced Playlists Folder"
+        : "Select Music Directory";
   const subheading =
     mode === "downloads"
       ? "Choose the folder where slskd or external downloads land before MusicOrbit post-processes them."
-      : "Browse folders on this server or enter a path directly. Saved automatically across restarts.";
+      : mode === "playlists"
+        ? "Choose where MusicOrbit writes .m3u8 playlist files for Navidrome / Symfonium (defaults to MUSIC_DIR/Playlists)."
+        : "Browse folders on this server or enter a path directly. Saved automatically across restarts.";
 
   const loadPath = useCallback(async (target?: string) => {
     setLoading(true);
@@ -79,6 +86,9 @@ export function DirectoryPickerModal({
       if (mode === "downloads") {
         const updated = await updatePostProcessingSettings({ downloadsDir: chosen });
         onSaved(updated.postProcessing.downloadsDir, false);
+      } else if (mode === "playlists") {
+        const updated = await updatePlaylistSyncSettings({ playlistsDir: chosen });
+        onSaved(updated.playlistSync.playlistsDir, false);
       } else {
         const updated = await updateMusicDirectory(chosen, scanNow);
         onSaved(updated.musicDir, scanNow);
@@ -226,7 +236,9 @@ export function DirectoryPickerModal({
             </label>
           ) : (
             <span className="text-xs text-zinc-500">
-              Files in this folder will be organized into your Music Directory.
+              {mode === "playlists"
+                ? "If this folder does not exist yet, MusicOrbit will create it automatically."
+                : "Files in this folder will be organized into your Music Directory."}
             </span>
           )}
 

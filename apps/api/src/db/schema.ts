@@ -97,6 +97,7 @@ export const playlists = sqliteTable("playlists", {
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   coverHash: text("cover_hash"),
+  syncedFilename: text("synced_filename"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });

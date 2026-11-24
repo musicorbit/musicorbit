@@ -2,10 +2,12 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type {
   BrowseDirectoriesResponse,
+  PlaylistSyncRunResult,
   SystemSettingsResponse,
 } from "@musicorbit/shared";
 import type { ActivityLogService } from "../services/activityLog.js";
 import type { InboxWatcher } from "../services/inboxWatcher.js";
+import type { PlaylistSyncService } from "../services/playlistSync.js";
 import type { LibraryScanner } from "../services/scanner.js";
 import { SettingsError, type SettingsService } from "../services/settings.js";
 
@@ -13,6 +15,7 @@ export interface SettingsRouteDeps {
   settingsService: SettingsService;
   scanner: LibraryScanner;
   inboxWatcher?: InboxWatcher;
+  playlistSync?: PlaylistSyncService;
   activityLog?: ActivityLogService;
 }
 
@@ -37,11 +40,16 @@ const updatePostProcessingBodySchema = z.object({
   autoFetchLyrics: z.boolean().optional(),
 });
 
+const updatePlaylistSyncBodySchema = z.object({
+  enabled: z.boolean().optional(),
+  playlistsDir: z.string().trim().min(1).max(1000).optional(),
+});
+
 export async function registerSettingsRoutes(
   app: FastifyInstance,
   deps: SettingsRouteDeps,
 ): Promise<void> {
-  const { settingsService, scanner, inboxWatcher, activityLog } = deps;
+  const { settingsService, scanner, inboxWatcher, playlistSync, activityLog } = deps;
 
   app.get("/api/system/settings", async (): Promise<SystemSettingsResponse> => {
     return settingsService.getSettings();
@@ -107,6 +115,44 @@ export async function registerSettingsRoutes(
         }
         throw err;
       }
+    },
+  );
+
+  app.put(
+    "/api/system/playlist-sync",
+    async (request, reply): Promise<SystemSettingsResponse> => {
+      const parsed = updatePlaylistSyncBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "Invalid playlist sync settings." });
+      }
+
+      try {
+        const updated = settingsService.updatePlaylistSync(parsed.data);
+        activityLog?.info(
+          "system",
+          `Playlist .m3u8 sync ${updated.playlistSync.enabled ? "enabled" : "disabled"}`,
+          { playlistsDir: updated.playlistSync.playlistsDir },
+        );
+        if (updated.playlistSync.enabled && playlistSync) {
+          await playlistSync.syncAllPlaylists();
+        }
+        return settingsService.getSettings();
+      } catch (err) {
+        if (err instanceof SettingsError) {
+          return reply.code(err.statusCode).send({ error: err.message });
+        }
+        throw err;
+      }
+    },
+  );
+
+  app.post(
+    "/api/system/playlist-sync/run",
+    async (_request, reply): Promise<PlaylistSyncRunResult> => {
+      if (!playlistSync) {
+        return reply.code(503).send({ error: "Playlist sync service is unavailable." });
+      }
+      return playlistSync.syncAllPlaylists(true);
     },
   );
 }

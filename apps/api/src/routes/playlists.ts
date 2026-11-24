@@ -18,6 +18,7 @@ import type { DbContext } from "../db/index.js";
 import type { ActivityLogService } from "../services/activityLog.js";
 import { SlskdError, type SlskdClient } from "../services/acquisition/slskd.js";
 import type { PlaylistBatchSearchService } from "../services/playlistBatchSearch.js";
+import type { PlaylistSyncService } from "../services/playlistSync.js";
 import {
   buildLibraryTrackMatcher,
   parseCsvPlaylist,
@@ -70,6 +71,7 @@ export interface PlaylistRouteDeps {
   coversDir: string;
   slskdClient?: SlskdClient;
   batchSearchService?: PlaylistBatchSearchService;
+  playlistSync?: PlaylistSyncService;
   activityLog?: ActivityLogService;
 }
 
@@ -212,7 +214,7 @@ export async function registerPlaylistRoutes(
   app: FastifyInstance,
   deps: PlaylistRouteDeps,
 ): Promise<void> {
-  const { dbContext, coversDir, slskdClient, batchSearchService, activityLog } = deps;
+  const { dbContext, coversDir, slskdClient, batchSearchService, playlistSync, activityLog } = deps;
   const getMusicDir = deps.getMusicDir ?? (() => deps.musicDir);
   const { sqlite } = dbContext;
 
@@ -371,7 +373,9 @@ export async function registerPlaylistRoutes(
       )
       .run(parsed.data.name, parsed.data.description, now, now);
 
-    const created = selectPlaylistSummary(Number(res.lastInsertRowid))!;
+    const createdId = Number(res.lastInsertRowid);
+    await playlistSync?.syncPlaylist(createdId);
+    const created = selectPlaylistSummary(createdId)!;
     reply.code(201);
     return created;
   });
@@ -421,6 +425,7 @@ export async function registerPlaylistRoutes(
         parsedId.data.id,
       );
 
+    await playlistSync?.syncPlaylist(parsedId.data.id);
     return selectPlaylistSummary(parsedId.data.id)!;
   });
 
@@ -430,11 +435,19 @@ export async function registerPlaylistRoutes(
     if (!parsedId.success) {
       return reply.code(400).send({ error: "Invalid playlist ID" });
     }
+    const existingRow = sqlite
+      .prepare("SELECT name, synced_filename AS syncedFilename FROM playlists WHERE id = ?")
+      .get(parsedId.data.id) as { name: string; syncedFilename: string | null } | undefined;
+
     batchSearchService?.cancel(parsedId.data.id);
     const res = sqlite.prepare("DELETE FROM playlists WHERE id = ?").run(parsedId.data.id);
     if (res.changes === 0) {
       return reply.code(404).send({ error: "Playlist not found" });
     }
+    await playlistSync?.deleteSyncedPlaylist(
+      existingRow?.syncedFilename ?? null,
+      existingRow?.name,
+    );
     return reply.code(204).send();
   });
 
@@ -474,6 +487,7 @@ export async function registerPlaylistRoutes(
       sqlite.prepare("UPDATE playlists SET updated_at = ? WHERE id = ?").run(now, parsedId.data.id);
     });
     tx(parsedBody.data.trackIds);
+    await playlistSync?.syncPlaylist(parsedId.data.id);
 
     return {
       playlist: selectPlaylistSummary(parsedId.data.id)!,
@@ -503,6 +517,7 @@ export async function registerPlaylistRoutes(
     sqlite
       .prepare("UPDATE playlists SET updated_at = ? WHERE id = ?")
       .run(Date.now(), parsed.data.id);
+    await playlistSync?.syncPlaylist(parsed.data.id);
 
     return {
       playlist: selectPlaylistSummary(parsed.data.id)!,
@@ -539,6 +554,7 @@ export async function registerPlaylistRoutes(
       sqlite.prepare("UPDATE playlists SET updated_at = ? WHERE id = ?").run(now, parsedId.data.id);
     });
     tx(parsedBody.data.trackIds);
+    await playlistSync?.syncPlaylist(parsedId.data.id);
 
     return {
       playlist: selectPlaylistSummary(parsedId.data.id)!,
@@ -641,6 +657,7 @@ export async function registerPlaylistRoutes(
     tx();
 
     const missingTracks = selectMissingTracks(playlistId);
+    await playlistSync?.syncPlaylist(playlistId);
     activityLog?.success(
       "playlist",
       `Imported ${format.toUpperCase()} playlist "${parsed.data.name}": ${matchedIds.length} matched, ${missingTracks.length} missing`,
@@ -708,6 +725,10 @@ export async function registerPlaylistRoutes(
         }
       });
       tx();
+
+      if (newlyMatchedCount > 0) {
+        await playlistSync?.syncPlaylist(parsedId.data.id);
+      }
 
       const remaining = selectMissingTracks(parsedId.data.id);
       return {

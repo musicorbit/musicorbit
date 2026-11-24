@@ -6,6 +6,7 @@ import {
   Database,
   FolderInput,
   FolderOpen,
+  ListMusic,
   Loader2,
   Play,
   RefreshCw,
@@ -17,12 +18,15 @@ import type {
   HealthResponse,
   ImportFileAction,
   InboxScanResult,
+  PlaylistSyncRunResult,
   ScanStatusResponse,
   SystemSettingsResponse,
 } from "@musicorbit/shared";
 import {
   fetchSystemSettings,
+  runPlaylistSyncNow,
   scanInbox,
+  updatePlaylistSyncSettings,
   updatePostProcessingSettings,
 } from "../api/client";
 import { DirectoryPickerModal } from "../components/DirectoryPickerModal";
@@ -46,7 +50,7 @@ export function SystemView({
   onRefresh,
   onMusicDirChanged,
 }: SystemViewProps) {
-  const [pickerMode, setPickerMode] = useState<"music" | "downloads" | null>(null);
+  const [pickerMode, setPickerMode] = useState<"music" | "downloads" | "playlists" | null>(null);
   const [sysSettings, setSysSettings] = useState<SystemSettingsResponse | null>(null);
   const [fileAction, setFileAction] = useState<ImportFileAction>("move");
   const [duplicatePolicy, setDuplicatePolicy] = useState<DuplicatePolicy>("upgrade");
@@ -56,6 +60,11 @@ export function SystemView({
   const [includeYearInAlbumFolder, setIncludeYearInAlbumFolder] = useState(false);
   const [autoEmbedCoverArt, setAutoEmbedCoverArt] = useState(true);
   const [autoFetchLyrics, setAutoFetchLyrics] = useState(false);
+  const [playlistSyncEnabled, setPlaylistSyncEnabled] = useState(false);
+  const [savingSync, setSavingSync] = useState(false);
+  const [runningSync, setRunningSync] = useState(false);
+  const [syncResult, setSyncResult] = useState<PlaylistSyncRunResult | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [savingPp, setSavingPp] = useState(false);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [ppError, setPpError] = useState<string | null>(null);
@@ -74,6 +83,7 @@ export function SystemView({
       setIncludeYearInAlbumFolder(next.postProcessing.includeYearInAlbumFolder);
       setAutoEmbedCoverArt(next.postProcessing.autoEmbedCoverArt);
       setAutoFetchLyrics(next.postProcessing.autoFetchLyrics);
+      setPlaylistSyncEnabled(next.playlistSync.enabled);
     } catch {
       // Non-fatal; health banner handles offline state
     }
@@ -121,6 +131,38 @@ export function SystemView({
       setPpError(err instanceof Error ? err.message : "Post-processing scan failed");
     } finally {
       setRunningInbox(false);
+    }
+  };
+
+  const handleTogglePlaylistSync = async (nextEnabled: boolean) => {
+    setPlaylistSyncEnabled(nextEnabled);
+    setSavingSync(true);
+    setSyncError(null);
+    setSyncResult(null);
+    try {
+      const updated = await updatePlaylistSyncSettings({ enabled: nextEnabled });
+      setSysSettings(updated);
+      setPlaylistSyncEnabled(updated.playlistSync.enabled);
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : "Could not update playlist sync");
+      setPlaylistSyncEnabled(!nextEnabled);
+    } finally {
+      setSavingSync(false);
+    }
+  };
+
+  const handleRunPlaylistSync = async () => {
+    setRunningSync(true);
+    setSyncError(null);
+    setSyncResult(null);
+    try {
+      const res = await runPlaylistSyncNow();
+      setSyncResult(res);
+      await loadSettings();
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : "Could not sync playlists");
+    } finally {
+      setRunningSync(false);
     }
   };
 
@@ -604,6 +646,117 @@ export function SystemView({
               </div>
             </form>
           )}
+
+          {/* Playlist .m3u8 Auto-Sync (Navidrome / Symfonium Compatibility) */}
+          {sysSettings && (
+            <section className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 className="flex items-center gap-2 text-base font-semibold text-zinc-100">
+                    <ListMusic className="h-4 w-4 text-amber-400" />
+                    Playlist <code>.m3u8</code> Sync (Navidrome &amp; Symfonium)
+                  </h3>
+                  <p className="mt-0.5 text-xs text-zinc-400">
+                    Automatically mirror every MusicOrbit playlist as a standard{" "}
+                    <code className="text-zinc-300">#EXTM3U</code> file with relative audio paths
+                    so Navidrome, Symfonium, and Jellyfin stay in sync whenever you add, remove,
+                    reorder, or upgrade songs.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                      sysSettings.playlistSync.enabled
+                        ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30"
+                        : "bg-zinc-800 text-zinc-400"
+                    }`}
+                  >
+                    {sysSettings.playlistSync.enabled ? "Auto-sync active" : "Sync off"}
+                  </span>
+
+                  <button
+                    type="button"
+                    disabled={runningSync}
+                    onClick={() => void handleRunPlaylistSync()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-45"
+                  >
+                    {runningSync ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5 text-amber-400" />
+                    )}
+                    Sync All Now
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800/90 bg-zinc-950/60 p-4">
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium text-zinc-300">
+                    Synced Playlists Folder (<code>.m3u8</code> destination)
+                  </p>
+                  <p
+                    className="mt-0.5 truncate font-mono text-xs text-zinc-400"
+                    title={sysSettings.playlistSync.playlistsDir}
+                  >
+                    {sysSettings.playlistSync.playlistsDir}
+                  </p>
+                  <p className="mt-1 text-[11px] text-zinc-500">
+                    Defaults to <code>MUSIC_DIR/Playlists</code> so Navidrome discovers them
+                    automatically on scan.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPickerMode("playlists")}
+                  className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-300"
+                >
+                  Change Folder
+                </button>
+              </div>
+
+              <label className="flex cursor-pointer items-start gap-2.5 text-xs text-zinc-200">
+                <input
+                  type="checkbox"
+                  disabled={savingSync}
+                  checked={playlistSyncEnabled}
+                  onChange={(e) => void handleTogglePlaylistSync(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded accent-amber-500"
+                />
+                <span>
+                  <strong className="block font-medium">
+                    Auto-sync playlists to <code>.m3u8</code> files on every change
+                  </strong>
+                  <span className="text-zinc-500">
+                    Creates, updates, renames, and deletes matching <code>.m3u8</code> files
+                    automatically whenever playlists change or downloaded tracks backfill/upgrade.
+                  </span>
+                </span>
+              </label>
+
+              {syncError && (
+                <div className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+                  <span>{syncError}</span>
+                </div>
+              )}
+
+              {syncResult && (
+                <div className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                  <span>
+                    Synced <strong>{syncResult.syncedCount}</strong>{" "}
+                    {syncResult.syncedCount === 1 ? "playlist" : "playlists"} to{" "}
+                    <code className="rounded bg-zinc-950/60 px-1 py-0.5">
+                      {syncResult.playlistsDir}
+                    </code>
+                    {syncResult.files.length > 0 ? ` (${syncResult.files.join(", ")})` : ""}.
+                  </span>
+                </div>
+              )}
+            </section>
+          )}
         </>
       )}
 
@@ -613,7 +766,9 @@ export function SystemView({
           initialPath={
             pickerMode === "downloads"
               ? (sysSettings?.postProcessing.downloadsDir ?? "")
-              : (health?.musicDir.path ?? "")
+              : pickerMode === "playlists"
+                ? (sysSettings?.playlistSync.playlistsDir ?? "")
+                : (health?.musicDir.path ?? "")
           }
           onClose={() => setPickerMode(null)}
           onSaved={() => {

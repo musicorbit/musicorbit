@@ -533,6 +533,19 @@ export interface InboxWatcherStatus {
   lastResult: InboxScanResult | null;
 }
 
+export interface PlaylistSyncSettings {
+  enabled: boolean;
+  playlistsDir: string;
+  defaultPlaylistsDir: string;
+  playlistsDirExists: boolean;
+}
+
+export interface PlaylistSyncRunResult {
+  syncedCount: number;
+  playlistsDir: string;
+  files: string[];
+}
+
 export interface SystemSettingsResponse {
   musicDir: string;
   defaultMusicDir: string;
@@ -540,6 +553,7 @@ export interface SystemSettingsResponse {
   isOverridden: boolean;
   downloadsDir: string;
   postProcessing: PostProcessingSettings;
+  playlistSync: PlaylistSyncSettings;
   watcher: InboxWatcherStatus;
 }
 

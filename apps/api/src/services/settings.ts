@@ -8,6 +8,7 @@ import type {
   DuplicatePolicy,
   ImportFileAction,
   InboxWatcherStatus,
+  PlaylistSyncSettings,
   PostProcessingSettings,
   SystemSettingsResponse,
 } from "@musicorbit/shared";
@@ -24,6 +25,8 @@ const KEYS = {
   includeYearInAlbumFolder: "pp_include_year_in_album_folder",
   autoEmbedCoverArt: "pp_auto_embed_cover_art",
   autoFetchLyrics: "pp_auto_fetch_lyrics",
+  playlistSyncEnabled: "playlist_sync_enabled",
+  playlistSyncDir: "playlist_sync_dir",
 } as const;
 
 export class SettingsError extends Error {
@@ -95,8 +98,13 @@ export interface PostProcessingUpdateInput {
   autoFetchLyrics?: boolean;
 }
 
+export interface PlaylistSyncUpdateInput {
+  enabled?: boolean;
+  playlistsDir?: string;
+}
+
 /**
- * Persists runtime-configurable settings (music directory + post-processing options)
+ * Persists runtime-configurable settings (music directory + post-processing + playlist sync)
  * in SQLite so users can configure everything in the UI without editing .env or restarting.
  */
 export class SettingsService {
@@ -216,9 +224,30 @@ export class SettingsService {
     };
   }
 
+  getPlaylistSyncSettings(): PlaylistSyncSettings {
+    const defaultPlaylistsDir = path.join(this.getMusicDir(), "Playlists");
+    const overridden = this.rawValues.get(KEYS.playlistSyncDir);
+    const playlistsDir = overridden ? path.resolve(overridden) : defaultPlaylistsDir;
+
+    let playlistsDirExists = false;
+    try {
+      playlistsDirExists = fs.existsSync(playlistsDir) && fs.statSync(playlistsDir).isDirectory();
+    } catch {
+      playlistsDirExists = false;
+    }
+
+    return {
+      enabled: this.readBool(KEYS.playlistSyncEnabled, false),
+      playlistsDir,
+      defaultPlaylistsDir,
+      playlistsDirExists,
+    };
+  }
+
   getSettings(): SystemSettingsResponse {
     const musicDir = this.getMusicDir();
     const postProcessing = this.getPostProcessingSettings();
+    const playlistSync = this.getPlaylistSyncSettings();
     let musicDirExists = false;
     try {
       musicDirExists = fs.existsSync(musicDir) && fs.statSync(musicDir).isDirectory();
@@ -233,6 +262,7 @@ export class SettingsService {
       isOverridden: this.isMusicDirOverridden(),
       downloadsDir: postProcessing.downloadsDir,
       postProcessing,
+      playlistSync,
       watcher: this.getWatcherStatusFn(),
     };
   }
@@ -240,6 +270,29 @@ export class SettingsService {
   setMusicDir(rawPath: string): SystemSettingsResponse {
     const resolved = validateReadableDirectory(rawPath);
     this.saveSetting(KEYS.musicDir, resolved);
+    return this.getSettings();
+  }
+
+  updatePlaylistSync(input: PlaylistSyncUpdateInput): SystemSettingsResponse {
+    if (input.playlistsDir !== undefined) {
+      const expanded = expandHomeDir(input.playlistsDir);
+      if (!expanded) {
+        throw new SettingsError("Please provide a playlists folder path.", 400);
+      }
+      const resolved = path.resolve(expanded);
+      // Allow choosing an existing directory OR creating a new Playlists folder cleanly
+      if (fs.existsSync(resolved)) {
+        if (!fs.statSync(resolved).isDirectory()) {
+          throw new SettingsError(`Path is not a directory: ${resolved}`, 400);
+        }
+      } else {
+        fs.mkdirSync(resolved, { recursive: true });
+      }
+      this.saveSetting(KEYS.playlistSyncDir, resolved);
+    }
+    if (input.enabled !== undefined) {
+      this.saveSetting(KEYS.playlistSyncEnabled, String(input.enabled));
+    }
     return this.getSettings();
   }
 

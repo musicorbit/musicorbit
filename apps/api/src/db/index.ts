@@ -121,6 +121,7 @@ export function initDatabase(dbPath: string): DbContext {
       name TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       cover_hash TEXT,
+      synced_filename TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -186,6 +187,7 @@ export function initDatabase(dbPath: string): DbContext {
   ensureColumn(sqlite, "artists", "image_hash", "TEXT");
   ensureColumn(sqlite, "artists", "image_checked_at", "INTEGER");
   ensureColumn(sqlite, "playlists", "cover_hash", "TEXT");
+  ensureColumn(sqlite, "playlists", "synced_filename", "TEXT");
 
   const db = drizzle(sqlite, { schema });
   return { sqlite, db, dbPath };

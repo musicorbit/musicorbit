@@ -29,6 +29,7 @@ import {
   normalizeForMatching,
   recheckAllPlaylistsMissingTracks,
 } from "./playlistImport.js";
+import type { PlaylistSyncService } from "./playlistSync.js";
 import { SUPPORTED_AUDIO_EXTENSIONS, type LibraryScanner } from "./scanner.js";
 import { writeAudioTags, writeEmbeddedCover } from "./tagWriter.js";
 
@@ -335,6 +336,7 @@ export interface LibraryImporterDeps {
   musicBrainz: MusicBrainzClient;
   metadataLookup?: MetadataLookupService;
   batchSearchService?: PlaylistBatchSearchService;
+  playlistSync?: PlaylistSyncService;
   activityLog?: ActivityLogService;
   fetchImpl?: typeof fetch;
   scanner: LibraryScanner;
@@ -366,6 +368,7 @@ export class LibraryImporter {
   private readonly musicBrainz: MusicBrainzClient;
   private readonly metadataLookup?: MetadataLookupService;
   private readonly batchSearchService?: PlaylistBatchSearchService;
+  private readonly playlistSync?: PlaylistSyncService;
   private readonly activityLog?: ActivityLogService;
   private readonly fetchImpl: typeof fetch;
   private readonly scanner: LibraryScanner;
@@ -395,6 +398,7 @@ export class LibraryImporter {
     this.musicBrainz = deps.musicBrainz;
     this.metadataLookup = deps.metadataLookup;
     this.batchSearchService = deps.batchSearchService;
+    this.playlistSync = deps.playlistSync;
     this.activityLog = deps.activityLog;
     this.fetchImpl = deps.fetchImpl ?? fetch;
     this.scanner = deps.scanner;
@@ -1060,6 +1064,10 @@ export class LibraryImporter {
       this.musicDir,
       this.batchSearchService,
     );
+
+    if (playlistsBackfilled > 0 || playlistMigrations.length > 0) {
+      await this.playlistSync?.syncAllPlaylists().catch(() => {});
+    }
 
     this.activityLog?.success(
       "importer",
