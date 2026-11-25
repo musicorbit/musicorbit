@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type {
@@ -6,18 +9,83 @@ import type {
   AlbumTracklistResponse,
   ArtistDetailResponse,
   ArtistSummary,
+  DeleteLibraryItemsResponse,
   ScanStatusResponse,
   TrackSummary,
 } from "@musicorbit/shared";
 import type { DbContext } from "../db/index.js";
+import type { ActivityLogService } from "../services/activityLog.js";
 import type { AlbumTracklistService } from "../services/albumTracklist.js";
 import { getRequestUser } from "../services/authHelpers.js";
+import { getSidecarLrcPath } from "../services/lyrics.js";
+import type { PlaylistSyncService } from "../services/playlistSync.js";
 import type { LibraryScanner } from "../services/scanner.js";
+
+const OS_JUNK_FILES = new Set([".ds_store", "thumbs.db", "desktop.ini"]);
+const COVER_ART_FILES = new Set([
+  "cover.jpg",
+  "cover.jpeg",
+  "cover.png",
+  "cover.webp",
+  "folder.jpg",
+  "folder.jpeg",
+  "folder.png",
+  "front.jpg",
+  "front.jpeg",
+  "front.png",
+]);
+
+function isInsideDir(filePath: string, rootDir: string): boolean {
+  const rel = path.relative(path.resolve(rootDir), path.resolve(filePath));
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+function isRemovableLeftoverFile(name: string, allowCoverArt: boolean): boolean {
+  const lower = name.toLowerCase();
+  if (OS_JUNK_FILES.has(lower) || lower.startsWith("._")) return true;
+  return allowCoverArt && COVER_ART_FILES.has(lower);
+}
+
+async function removeEmptyDirsUpTo(
+  startDir: string,
+  stopAt: string,
+  allowCoverArtInFirstDir = false,
+): Promise<void> {
+  let current = path.resolve(startDir);
+  const boundary = path.resolve(stopAt);
+  let isFirst = true;
+
+  while (current !== boundary && current.startsWith(`${boundary}${path.sep}`)) {
+    try {
+      const entries = await fsp.readdir(current, { withFileTypes: true });
+      const allowCovers = isFirst && allowCoverArtInFirstDir;
+      const nonRemovable = entries.filter(
+        (e) => !(e.isFile() && isRemovableLeftoverFile(e.name, allowCovers)),
+      );
+      if (nonRemovable.length > 0) break;
+
+      for (const leftover of entries) {
+        if (leftover.isFile() && isRemovableLeftoverFile(leftover.name, allowCovers)) {
+          await fsp.unlink(path.join(current, leftover.name)).catch(() => {});
+        }
+      }
+
+      await fsp.rmdir(current);
+      current = path.dirname(current);
+      isFirst = false;
+    } catch {
+      break;
+    }
+  }
+}
 
 export interface LibraryRouteDeps {
   dbContext: DbContext;
   scanner: LibraryScanner;
   albumTracklistService?: AlbumTracklistService;
+  getUserMusicDir?: (userId: number) => string;
+  playlistSync?: PlaylistSyncService;
+  activityLog?: ActivityLogService;
 }
 
 const triggerScanBodySchema = z
@@ -91,8 +159,120 @@ export async function registerLibraryRoutes(
   app: FastifyInstance,
   deps: LibraryRouteDeps,
 ): Promise<void> {
-  const { dbContext, scanner, albumTracklistService } = deps;
+  const { dbContext, scanner, albumTracklistService, getUserMusicDir, playlistSync, activityLog } =
+    deps;
   const { sqlite } = dbContext;
+
+  const deleteTracksAndCleanup = async (
+    userId: number,
+    targetTracks: Array<{ id: number; title: string; albumId: number; filePath: string }>,
+    allowCoverArtCleanup: boolean,
+  ): Promise<{
+    deletedTrackIds: number[];
+    filesDeleted: number;
+    albumRemoved: boolean;
+    affectedPlaylistIds: number[];
+  }> => {
+    const userMusicDir = getUserMusicDir ? path.resolve(getUserMusicDir(userId)) : null;
+    const trackIds = targetTracks.map((t) => t.id);
+    const affectedAlbumIds = Array.from(new Set(targetTracks.map((t) => t.albumId)));
+
+    // Record affected playlists BEFORE deleting tracks (ON DELETE CASCADE removes playlist_tracks rows)
+    const affectedPlaylistIdsSet = new Set<number>();
+    const findPlaylistsStmt = sqlite.prepare(
+      "SELECT DISTINCT playlist_id AS playlistId FROM playlist_tracks WHERE track_id = ?",
+    );
+    for (const tid of trackIds) {
+      const rows = findPlaylistsStmt.all(tid) as Array<{ playlistId: number }>;
+      for (const r of rows) affectedPlaylistIdsSet.add(r.playlistId);
+    }
+
+    // Delete audio files + paired .lrc sidecars safely inside the user's own musicDir
+    let filesDeleted = 0;
+    const parentDirsToClean = new Set<string>();
+
+    for (const t of targetTracks) {
+      const resolved = path.resolve(t.filePath);
+      if (userMusicDir && !isInsideDir(resolved, userMusicDir)) {
+        continue;
+      }
+
+      if (fs.existsSync(resolved)) {
+        await fsp.unlink(resolved).catch(() => {});
+        filesDeleted += 1;
+      }
+
+      const sidecarLrc = getSidecarLrcPath(resolved);
+      if ((!userMusicDir || isInsideDir(sidecarLrc, userMusicDir)) && fs.existsSync(sidecarLrc)) {
+        await fsp.unlink(sidecarLrc).catch(() => {});
+      }
+
+      parentDirsToClean.add(path.dirname(resolved));
+    }
+
+    // Remove track rows and prune any orphaned albums & artists for this user in a single transaction
+    const nowMs = Date.now();
+    const deleteTrackStmt = sqlite.prepare("DELETE FROM tracks WHERE id = ? AND user_id = ?");
+    const countAlbumTracksStmt = sqlite.prepare(
+      "SELECT COUNT(*) AS cnt FROM tracks WHERE album_id = ? AND user_id = ?",
+    );
+    const deleteAlbumStmt = sqlite.prepare("DELETE FROM albums WHERE id = ? AND user_id = ?");
+    const touchPlaylistStmt = sqlite.prepare("UPDATE playlists SET updated_at = ? WHERE id = ?");
+
+    let albumRemoved = false;
+
+    const tx = sqlite.transaction(() => {
+      for (const tid of trackIds) {
+        deleteTrackStmt.run(tid, userId);
+      }
+
+      for (const alId of affectedAlbumIds) {
+        const remaining = (countAlbumTracksStmt.get(alId, userId) as { cnt: number }).cnt;
+        if (remaining === 0) {
+          deleteAlbumStmt.run(alId, userId);
+          albumRemoved = true;
+        }
+      }
+
+      // Prune orphaned artists belonging to this user that no longer have any albums or tracks
+      sqlite
+        .prepare(
+          `
+          DELETE FROM artists
+          WHERE user_id = ?
+            AND id NOT IN (SELECT DISTINCT artist_id FROM albums WHERE user_id = ?)
+            AND id NOT IN (SELECT DISTINCT artist_id FROM tracks WHERE user_id = ?)
+        `,
+        )
+        .run(userId, userId, userId);
+
+      for (const plId of affectedPlaylistIdsSet) {
+        touchPlaylistStmt.run(nowMs, plId);
+      }
+    });
+    tx();
+
+    // Clean up now-empty parent album/artist folders strictly inside the user's musicDir
+    if (userMusicDir) {
+      for (const dir of parentDirsToClean) {
+        await removeEmptyDirsUpTo(dir, userMusicDir, allowCoverArtCleanup || albumRemoved);
+      }
+    }
+
+    const affectedPlaylistIds = Array.from(affectedPlaylistIdsSet);
+    if (playlistSync && affectedPlaylistIds.length > 0) {
+      for (const plId of affectedPlaylistIds) {
+        await playlistSync.syncPlaylist(plId).catch(() => {});
+      }
+    }
+
+    return {
+      deletedTrackIds: trackIds,
+      filesDeleted,
+      albumRemoved,
+      affectedPlaylistIds,
+    };
+  };
 
   // Trigger an incremental (or forced full) library scan in the background for this user
   app.post("/api/library/scan", async (request, reply): Promise<ScanStatusResponse> => {
@@ -486,5 +666,112 @@ export async function registerLibraryRoutes(
       .all(...params) as TrackRow[];
 
     return rows;
+  });
+
+  // Permanently delete a single track (audio file + paired .lrc sidecar + DB index + empty folders)
+  app.delete("/api/tracks/:id", async (request, reply): Promise<DeleteLibraryItemsResponse> => {
+    const user = getRequestUser(request);
+    const parsed = idParamSchema.safeParse(request.params);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Invalid track ID" });
+    }
+
+    const track = sqlite
+      .prepare(
+        `
+        SELECT t.id, t.title, t.album_id AS albumId, t.file_path AS filePath, ar.name AS artistName
+        FROM tracks t
+        JOIN artists ar ON ar.id = t.artist_id
+        WHERE t.id = ? AND t.user_id = ?
+      `,
+      )
+      .get(parsed.data.id, user.id) as
+      | { id: number; title: string; albumId: number; filePath: string; artistName: string }
+      | undefined;
+
+    if (!track) {
+      return reply.code(404).send({ error: "Track not found" });
+    }
+
+    const res = await deleteTracksAndCleanup(user.id, [track], false);
+
+    activityLog?.warn("scanner", `Deleted track "${track.artistName} — ${track.title}"`, {
+      userId: user.id,
+      trackId: track.id,
+      filePath: track.filePath,
+      filesDeleted: res.filesDeleted,
+      albumRemoved: res.albumRemoved,
+      playlistsUpdated: res.affectedPlaylistIds.length,
+    });
+
+    return {
+      deleted: true,
+      deletedTrackIds: res.deletedTrackIds,
+      deletedTrackCount: res.deletedTrackIds.length,
+      albumRemoved: res.albumRemoved,
+      filesDeleted: res.filesDeleted,
+      playlistsUpdated: res.affectedPlaylistIds.length,
+    };
+  });
+
+  // Permanently delete an entire album (all its audio files + .lrc sidecars + empty folders + DB rows)
+  app.delete("/api/albums/:id", async (request, reply): Promise<DeleteLibraryItemsResponse> => {
+    const user = getRequestUser(request);
+    const parsed = idParamSchema.safeParse(request.params);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Invalid album ID" });
+    }
+
+    const album = sqlite
+      .prepare(
+        `
+        SELECT al.id, al.title, ar.name AS artistName
+        FROM albums al
+        JOIN artists ar ON ar.id = al.artist_id
+        WHERE al.id = ? AND al.user_id = ?
+      `,
+      )
+      .get(parsed.data.id, user.id) as { id: number; title: string; artistName: string } | undefined;
+
+    if (!album) {
+      return reply.code(404).send({ error: "Album not found" });
+    }
+
+    const albumTracks = sqlite
+      .prepare(
+        "SELECT id, title, album_id AS albumId, file_path AS filePath FROM tracks WHERE album_id = ? AND user_id = ?",
+      )
+      .all(album.id, user.id) as Array<{
+      id: number;
+      title: string;
+      albumId: number;
+      filePath: string;
+    }>;
+
+    const res = await deleteTracksAndCleanup(user.id, albumTracks, true);
+
+    // Ensure album row is removed even if it somehow had 0 tracks
+    sqlite.prepare("DELETE FROM albums WHERE id = ? AND user_id = ?").run(album.id, user.id);
+
+    activityLog?.warn(
+      "scanner",
+      `Deleted album "${album.artistName} — ${album.title}" (${res.deletedTrackIds.length} ${res.deletedTrackIds.length === 1 ? "track" : "tracks"})`,
+      {
+        userId: user.id,
+        albumId: album.id,
+        deletedTrackCount: res.deletedTrackIds.length,
+        filesDeleted: res.filesDeleted,
+        playlistsUpdated: res.affectedPlaylistIds.length,
+      },
+    );
+
+    return {
+      deleted: true,
+      deletedTrackIds: res.deletedTrackIds,
+      deletedTrackCount: res.deletedTrackIds.length,
+      albumRemoved: true,
+      filesDeleted: res.filesDeleted,
+      playlistsUpdated: res.affectedPlaylistIds.length,
+    };
   });
 }

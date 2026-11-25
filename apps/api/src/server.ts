@@ -214,7 +214,14 @@ export async function buildServer(
   });
   await registerLogRoutes(app, { activityLog });
   await registerLyricsRoutes(app, { lyricsService });
-  await registerLibraryRoutes(app, { dbContext, scanner, albumTracklistService });
+  await registerLibraryRoutes(app, {
+    dbContext,
+    scanner,
+    albumTracklistService,
+    getUserMusicDir,
+    playlistSync,
+    activityLog,
+  });
   const audioTranscoder = new AudioTranscoder({
     cacheDir: path.join(config.dataDir, "transcode-cache"),
     logger: app.log,

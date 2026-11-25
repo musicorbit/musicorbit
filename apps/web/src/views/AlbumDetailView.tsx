@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import type {
   AlbumDetailResponse,
@@ -20,9 +21,16 @@ import type {
   AlbumTracklistResponse,
   TrackSummary,
 } from "@musicorbit/shared";
-import { fetchAlbumDetail, fetchAlbumTracklist, retagAlbum } from "../api/client";
+import {
+  deleteAlbum,
+  deleteTrack,
+  fetchAlbumDetail,
+  fetchAlbumTracklist,
+  retagAlbum,
+} from "../api/client";
 import { AddToPlaylistModal } from "../components/AddToPlaylistModal";
 import { AlbumCover } from "../components/AlbumCover";
+import { ConfirmDeleteModal } from "../components/ConfirmDeleteModal";
 import { EditTrackMetadataModal } from "../components/EditTrackMetadataModal";
 import { RetagAlbumModal } from "../components/RetagAlbumModal";
 import { usePlayer } from "../context/PlayerContext";
@@ -78,6 +86,8 @@ export function AlbumDetailView({
   const [retagOpen, setRetagOpen] = useState(false);
   const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
   const [playlistTrack, setPlaylistTrack] = useState<TrackSummary | null>(null);
+  const [deletingTrack, setDeletingTrack] = useState<TrackSummary | null>(null);
+  const [deletingAlbum, setDeletingAlbum] = useState(false);
 
   // Full album tracklist lookup state (restored immediately from in-memory UI cache)
   const [showFullTracklist, setShowFullTracklist] = useState(cachedUi?.showFullTracklist ?? false);
@@ -86,7 +96,8 @@ export function AlbumDetailView({
   const [tracklistError, setTracklistError] = useState<string | null>(null);
   const [tracklistFilter, setTracklistFilter] = useState<"all" | "missing">("all");
 
-  const { currentTrack, isPlaying, playQueue, togglePlay, addToQueue } = usePlayer();
+  const { currentTrack, isPlaying, playQueue, togglePlay, addToQueue, removeTracksFromQueue } =
+    usePlayer();
 
   const loadDetail = useCallback(async () => {
     setLoading(true);
@@ -291,6 +302,15 @@ export function AlbumDetailView({
                 <ListChecks className="h-4 w-4 text-amber-400" />
               )}
               {showFullTracklist ? "Showing Full Tracklist" : "Full Tracklist"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDeletingAlbum(true)}
+              className="inline-flex items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900 px-4 py-2.5 text-sm font-medium text-zinc-400 transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-300"
+            >
+              <Trash2 className="h-4 w-4" />
+              Delete Album
             </button>
           </div>
         </div>
@@ -560,6 +580,18 @@ export function AlbumDetailView({
                 >
                   <ListPlus className="h-4 w-4" />
                 </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeletingTrack(track);
+                  }}
+                  title="Delete song permanently"
+                  aria-label={`Delete ${track.title}`}
+                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-red-500/15 hover:text-red-400"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
               </div>
             </div>
           );
@@ -742,6 +774,55 @@ export function AlbumDetailView({
           track={playlistTrack}
           onClose={() => setPlaylistTrack(null)}
           onChanged={() => onPlaylistsChanged?.()}
+        />
+      )}
+
+      {deletingTrack && (
+        <ConfirmDeleteModal
+          title={`Delete "${deletingTrack.title}"?`}
+          subtitle={`${deletingTrack.artistName} · ${album.title}`}
+          description="Removes this song from your library, any playlists that include it, and cleans up empty folders automatically."
+          confirmLabel="Delete Song"
+          onClose={() => setDeletingTrack(null)}
+          onConfirm={async () => {
+            const res = await deleteTrack(deletingTrack.id);
+            removeTracksFromQueue(res.deletedTrackIds);
+            onAlbumRetagged();
+            onPlaylistsChanged?.();
+            if (res.albumRemoved) {
+              albumTracklistUiCache.delete(album.id);
+              onBack();
+            } else {
+              await loadDetail();
+              if (showFullTracklist) {
+                void loadFullTracklist({
+                  releaseId: tracklist?.selectedRelease?.id,
+                  silent: true,
+                });
+              } else {
+                albumTracklistUiCache.delete(album.id);
+                setTracklist(null);
+              }
+            }
+          }}
+        />
+      )}
+
+      {deletingAlbum && (
+        <ConfirmDeleteModal
+          title={`Delete album "${album.title}"?`}
+          subtitle={`${album.artistName} · ${tracks.length} ${tracks.length === 1 ? "track" : "tracks"}`}
+          description={`Permanently deletes all ${tracks.length} ${tracks.length === 1 ? "song" : "songs"} in this album from your library, playlists, and disk, and removes empty folders.`}
+          confirmLabel={`Delete Album (${tracks.length})`}
+          onClose={() => setDeletingAlbum(false)}
+          onConfirm={async () => {
+            const res = await deleteAlbum(album.id);
+            removeTracksFromQueue(res.deletedTrackIds);
+            albumTracklistUiCache.delete(album.id);
+            onAlbumRetagged();
+            onPlaylistsChanged?.();
+            onBack();
+          }}
         />
       )}
     </div>

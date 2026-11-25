@@ -30,6 +30,7 @@ interface PlayerContextValue {
   playTrack: (track: TrackSummary, contextTracks?: TrackSummary[]) => void;
   addToQueue: (track: TrackSummary) => void;
   removeFromQueue: (index: number) => void;
+  removeTracksFromQueue: (trackIds: number[]) => void;
   jumpToIndex: (index: number) => void;
   clearQueue: () => void;
   togglePlay: () => void;
@@ -143,6 +144,62 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return nextQueue;
     });
   }, [loadAndPlay]);
+
+  const removeTracksFromQueue = useCallback(
+    (trackIds: number[]) => {
+      if (trackIds.length === 0) return;
+      const toRemove = new Set(trackIds);
+      const { queue: prevQueue, currentIndex: prevIdx } = stateRef.current;
+      if (!prevQueue.some((t) => toRemove.has(t.id))) return;
+
+      const nextQueue = prevQueue.filter((t) => !toRemove.has(t.id));
+      const currentRemoved =
+        prevIdx >= 0 && prevIdx < prevQueue.length && toRemove.has(prevQueue[prevIdx]!.id);
+
+      if (nextQueue.length === 0) {
+        const audio = audioRef.current;
+        if (audio) {
+          audio.pause();
+          audio.removeAttribute("src");
+          audio.load();
+        }
+        setQueue([]);
+        setCurrentIndex(-1);
+        setIsPlaying(false);
+        setCurrentTime(0);
+        setDuration(0);
+        setPlaybackError(null);
+        return;
+      }
+
+      if (currentRemoved) {
+        const removedBefore = prevQueue
+          .slice(0, prevIdx)
+          .filter((t) => toRemove.has(t.id)).length;
+        const nextIdx = Math.min(prevIdx - removedBefore, nextQueue.length - 1);
+        const audio = audioRef.current;
+        if (audio) {
+          audio.pause();
+          audio.removeAttribute("src");
+          audio.load();
+        }
+        setQueue(nextQueue);
+        setCurrentIndex(nextIdx);
+        setIsPlaying(false);
+        setCurrentTime(0);
+        setDuration(nextQueue[nextIdx]?.durationSeconds ?? 0);
+        setPlaybackError(null);
+      } else {
+        const removedBefore =
+          prevIdx >= 0 ? prevQueue.slice(0, prevIdx).filter((t) => toRemove.has(t.id)).length : 0;
+        setQueue(nextQueue);
+        if (prevIdx >= 0) {
+          setCurrentIndex(prevIdx - removedBefore);
+        }
+      }
+    },
+    [],
+  );
 
   const jumpToIndex = useCallback(
     (index: number) => {
@@ -340,6 +397,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         playTrack,
         addToQueue,
         removeFromQueue,
+        removeTracksFromQueue,
         jumpToIndex,
         clearQueue,
         togglePlay,

@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { ListMusic, ListPlus, Music, Pause, Pencil, Play } from "lucide-react";
+import { ListMusic, ListPlus, Music, Pause, Pencil, Play, Trash2 } from "lucide-react";
 import type { TrackSummary } from "@musicorbit/shared";
+import { deleteTrack } from "../api/client";
 import { AddToPlaylistModal } from "../components/AddToPlaylistModal";
 import { AlbumCover } from "../components/AlbumCover";
+import { ConfirmDeleteModal } from "../components/ConfirmDeleteModal";
 import { EditTrackMetadataModal } from "../components/EditTrackMetadataModal";
 import { usePlayer } from "../context/PlayerContext";
 import { formatCodec, formatDuration } from "../utils/format";
@@ -28,9 +30,11 @@ export function TracksView({
   onTrackMetadataSaved,
   onPlaylistsChanged,
 }: TracksViewProps) {
-  const { currentTrack, isPlaying, playQueue, togglePlay, addToQueue } = usePlayer();
+  const { currentTrack, isPlaying, playQueue, togglePlay, addToQueue, removeTracksFromQueue } =
+    usePlayer();
   const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
   const [playlistTrack, setPlaylistTrack] = useState<TrackSummary | null>(null);
+  const [deletingTrack, setDeletingTrack] = useState<TrackSummary | null>(null);
 
   if (loading && tracks.length === 0) {
     return <p className="text-sm text-zinc-400">Loading tracks…</p>;
@@ -181,6 +185,18 @@ export function TracksView({
                 >
                   <ListPlus className="h-4 w-4" />
                 </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeletingTrack(track);
+                  }}
+                  title="Delete song permanently"
+                  aria-label={`Delete ${track.title}`}
+                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-red-500/15 hover:text-red-400"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
               </div>
             </div>
           );
@@ -200,6 +216,22 @@ export function TracksView({
           track={playlistTrack}
           onClose={() => setPlaylistTrack(null)}
           onChanged={() => onPlaylistsChanged?.()}
+        />
+      )}
+
+      {deletingTrack && (
+        <ConfirmDeleteModal
+          title={`Delete "${deletingTrack.title}"?`}
+          subtitle={`${deletingTrack.artistName} · ${deletingTrack.albumTitle}`}
+          description="Removes this song from your library, any playlists that include it, and cleans up empty folders automatically."
+          confirmLabel="Delete Song"
+          onClose={() => setDeletingTrack(null)}
+          onConfirm={async () => {
+            const res = await deleteTrack(deletingTrack.id);
+            removeTracksFromQueue(res.deletedTrackIds);
+            onTrackMetadataSaved?.();
+            onPlaylistsChanged?.();
+          }}
         />
       )}
     </div>

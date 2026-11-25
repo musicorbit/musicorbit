@@ -7,6 +7,7 @@ import type {
   ActivityLogsResponse,
   AlbumSummary,
   AuthStatusResponse,
+  DeleteLibraryItemsResponse,
   DownloadsListResponse,
   FinalizeUploadBatchResponse,
   PlaylistSummary,
@@ -632,6 +633,94 @@ describe("Multi-User Authentication, Security, Isolation & slskd Routing", () =>
     ).json() as TrackSummary[];
     assert.equal(adminTracksStill.length, 1);
     assert.equal(adminTracksStill[0]!.title, "Physical");
+  });
+
+  it("permanently deletes tracks and albums with .lrc sidecar & empty-folder cleanup while enforcing user isolation", async () => {
+    // 1. Cross-user IDOR guard: Alex must NOT be able to delete Admin's track or album
+    const crossDelTrack = await handle.app.inject({
+      method: "DELETE",
+      url: `/api/tracks/${adminTrackId}`,
+      headers: { cookie: alexCookie },
+    });
+    assert.equal(crossDelTrack.statusCode, 404);
+
+    const crossDelAlbum = await handle.app.inject({
+      method: "DELETE",
+      url: `/api/albums/${adminAlbumId}`,
+      headers: { cookie: alexCookie },
+    });
+    assert.equal(crossDelAlbum.statusCode, 404);
+
+    // 2. Alex has 2 tracks in Future Nostalgia (Hallucinate + Levitating); add a .lrc sidecar & playlist entry
+    const alexTracksBefore = (
+      await handle.app.inject({ method: "GET", url: "/api/tracks", headers: { cookie: alexCookie } })
+    ).json() as TrackSummary[];
+    assert.equal(alexTracksBefore.length, 2);
+    const hallucinate = alexTracksBefore.find((t) => t.title === "Hallucinate")!;
+    const levitating = alexTracksBefore.find((t) => t.title === "Levitating")!;
+
+    const lrcPath = hallucinate.filePath.replace(/\.wav$/i, ".lrc");
+    fs.writeFileSync(lrcPath, "[00:01.00] Test lyric line\n", "utf8");
+
+    const alexPlRes = await handle.app.inject({
+      method: "POST",
+      url: "/api/playlists",
+      headers: { cookie: alexCookie },
+      payload: { name: "Alex Mix" },
+    });
+    const alexPl = alexPlRes.json() as PlaylistSummary;
+    await handle.app.inject({
+      method: "POST",
+      url: `/api/playlists/${alexPl.id}/tracks`,
+      headers: { cookie: alexCookie },
+      payload: { trackIds: [hallucinate.id, levitating.id] },
+    });
+
+    // Delete single track (Hallucinate)
+    const delTrackRes = await handle.app.inject({
+      method: "DELETE",
+      url: `/api/tracks/${hallucinate.id}`,
+      headers: { cookie: alexCookie },
+    });
+    assert.equal(delTrackRes.statusCode, 200);
+    const delTrackBody = delTrackRes.json() as DeleteLibraryItemsResponse;
+    assert.equal(delTrackBody.deleted, true);
+    assert.deepEqual(delTrackBody.deletedTrackIds, [hallucinate.id]);
+    assert.equal(delTrackBody.albumRemoved, false);
+    assert.equal(delTrackBody.playlistsUpdated, 1);
+    assert.equal(fs.existsSync(hallucinate.filePath), false, "Audio file should be deleted from disk");
+    assert.equal(fs.existsSync(lrcPath), false, "Paired .lrc sidecar should be deleted from disk");
+    assert.equal(fs.existsSync(levitating.filePath), true, "Sibling track must remain untouched");
+
+    // Delete entire remaining album
+    const delAlbumRes = await handle.app.inject({
+      method: "DELETE",
+      url: `/api/albums/${levitating.albumId}`,
+      headers: { cookie: alexCookie },
+    });
+    assert.equal(delAlbumRes.statusCode, 200);
+    const delAlbumBody = delAlbumRes.json() as DeleteLibraryItemsResponse;
+    assert.equal(delAlbumBody.deleted, true);
+    assert.equal(delAlbumBody.albumRemoved, true);
+    assert.equal(fs.existsSync(levitating.filePath), false, "Album track should be deleted from disk");
+    assert.equal(fs.existsSync(alexUser.musicDir), true, "User's root musicDir itself must stay intact");
+    assert.equal(
+      fs.existsSync(path.join(alexUser.musicDir, "Dua Lipa")),
+      false,
+      "Empty artist/album folders should be cleaned up",
+    );
+
+    const alexTracksAfter = (
+      await handle.app.inject({ method: "GET", url: "/api/tracks", headers: { cookie: alexCookie } })
+    ).json() as TrackSummary[];
+    assert.equal(alexTracksAfter.length, 0);
+
+    // Admin's track & file remain completely untouched
+    const adminTracksStill = (
+      await handle.app.inject({ method: "GET", url: "/api/tracks", headers: { cookie: adminCookie } })
+    ).json() as TrackSummary[];
+    assert.equal(adminTracksStill.length, 1);
+    assert.equal(fs.existsSync(adminTracksStill[0]!.filePath), true);
   });
 
   it("rate-limits repeated failed login attempts with HTTP 429", async () => {

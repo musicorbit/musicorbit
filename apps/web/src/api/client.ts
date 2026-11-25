@@ -17,6 +17,7 @@ import type {
   BulkImportFolderResponse,
   ChangePasswordRequest,
   CreateUserRequest,
+  DeleteLibraryItemsResponse,
   DownloadsListResponse,
   EditableTrackTags,
   EnqueueDownloadRequest,
@@ -1032,4 +1033,22 @@ export async function deleteUser(userId: number): Promise<void> {
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ?? `Could not delete user (HTTP ${res.status})`);
   }
+}
+
+export async function deleteTrack(trackId: number): Promise<DeleteLibraryItemsResponse> {
+  const res = await fetch(`/api/tracks/${trackId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not delete track (HTTP ${res.status})`);
+  }
+  return (await res.json()) as DeleteLibraryItemsResponse;
+}
+
+export async function deleteAlbum(albumId: number): Promise<DeleteLibraryItemsResponse> {
+  const res = await fetch(`/api/albums/${albumId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not delete album (HTTP ${res.status})`);
+  }
+  return (await res.json()) as DeleteLibraryItemsResponse;
 }

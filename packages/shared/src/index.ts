@@ -819,3 +819,12 @@ export interface FinalizeUploadBatchResponse extends InboxScanResult {
   batchId: string;
   uploadedFiles: number;
 }
+
+export interface DeleteLibraryItemsResponse {
+  deleted: true;
+  deletedTrackIds: number[];
+  deletedTrackCount: number;
+  albumRemoved: boolean;
+  filesDeleted: number;
+  playlistsUpdated: number;
+}

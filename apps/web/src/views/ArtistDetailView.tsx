@@ -174,7 +174,7 @@ export function ArtistDetailView({
             onGoToScanner={onGoToScanner}
             onTrackMetadataSaved={() => {
               onArtistImageChanged();
-              void fetchArtistDetail(artistId).then(setDetail).catch(() => {});
+              void fetchArtistDetail(artistId).then(setDetail).catch(() => onBack());
             }}
             onPlaylistsChanged={onPlaylistsChanged}
           />
