@@ -19,6 +19,7 @@ import {
   Search,
   Sparkles,
   Square,
+  Upload,
 } from "lucide-react";
 import type {
   AcquisitionStatusResponse,
@@ -62,6 +63,7 @@ interface SystemViewProps {
   onMusicDirChanged: () => void;
   onOpenSoulseek?: () => void;
   onOpenReviewQueue?: () => void;
+  onOpenUpload?: () => void;
 }
 
 const LAYOUT_PRESETS: Array<{
@@ -142,6 +144,7 @@ export function SystemView({
   onMusicDirChanged,
   onOpenSoulseek,
   onOpenReviewQueue,
+  onOpenUpload,
 }: SystemViewProps) {
   const [pickerMode, setPickerMode] = useState<"music" | "downloads" | "playlists" | null>(null);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
@@ -662,6 +665,17 @@ export function SystemView({
                           ? "Auto-organize active"
                           : "Manual organize"}
                     </span>
+
+                    {onOpenUpload && (
+                      <button
+                        type="button"
+                        onClick={onOpenUpload}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400"
+                      >
+                        <Upload className="h-3.5 w-3.5" />
+                        Upload Songs / Album
+                      </button>
+                    )}
 
                     <button
                       type="button"

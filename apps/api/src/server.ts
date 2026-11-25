@@ -14,6 +14,7 @@ import { registerMetadataRoutes } from "./routes/metadata.js";
 import { registerPlaylistRoutes } from "./routes/playlists.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerStaticWeb } from "./routes/staticWeb.js";
+import { registerUploadRoutes } from "./routes/uploads.js";
 import { SlskdClient } from "./services/acquisition/slskd.js";
 import { ActivityLogService } from "./services/activityLog.js";
 import { AlbumTracklistService } from "./services/albumTracklist.js";
@@ -52,6 +53,7 @@ export interface BuildServerOptions {
   batchSearchStaggerMs?: number;
   batchSearchPollMs?: number;
   lyricsBatchDelayMs?: number;
+  maxUploadFileBytes?: number;
 }
 
 /**
@@ -207,6 +209,12 @@ export async function buildServer(
   });
   await registerAcquisitionRoutes(app, { slskdClient });
   await registerImportRoutes(app, { importer, musicBrainz, metadataLookup });
+  await registerUploadRoutes(app, {
+    dataDir: config.dataDir,
+    importer,
+    activityLog,
+    maxFileBytes: options?.maxUploadFileBytes,
+  });
   await registerMetadataRoutes(app, {
     dbContext,
     scanner,

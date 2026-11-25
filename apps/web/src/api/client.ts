@@ -18,6 +18,7 @@ import type {
   DownloadsListResponse,
   EditableTrackTags,
   EnqueueDownloadRequest,
+  FinalizeUploadBatchResponse,
   HealthResponse,
   ImportFileAction,
   ImportItemStatus,
@@ -43,11 +44,13 @@ import type {
   ScanStatusResponse,
   SoulseekSearchResultsResponse,
   SoulseekSearchSummary,
+  StartUploadBatchResponse,
   SystemSettingsResponse,
   TrackLyricsResponse,
   TrackMetadataResponse,
   TrackMetadataSuggestion,
   TrackSummary,
+  UploadFileResponse,
 } from "@musicorbit/shared";
 
 /**
@@ -877,4 +880,88 @@ export async function cancelBatchLyricsFetch(): Promise<LyricsBatchJobStatus> {
     throw new Error(`Could not cancel lyrics fetch (HTTP ${res.status})`);
   }
   return (await res.json()) as LyricsBatchJobStatus;
+}
+
+export async function startUploadBatch(): Promise<StartUploadBatchResponse> {
+  const res = await fetch("/api/uploads/start", { method: "POST" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not start upload session (HTTP ${res.status})`);
+  }
+  return (await res.json()) as StartUploadBatchResponse;
+}
+
+export function uploadFileToBatch(
+  batchId: string,
+  file: File,
+  relativePath: string,
+  onProgress?: (loadedBytes: number, totalBytes: number) => void,
+  signal?: AbortSignal,
+): Promise<UploadFileResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/uploads/${encodeURIComponent(batchId)}/file`);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.setRequestHeader("x-upload-relative-path", encodeURIComponent(relativePath));
+
+    const onAbort = () => {
+      xhr.abort();
+      reject(new DOMException("Upload cancelled", "AbortError"));
+    };
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable && onProgress) {
+        onProgress(ev.loaded, ev.total);
+      }
+    };
+
+    xhr.onload = () => {
+      signal?.removeEventListener("abort", onAbort);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          resolve(JSON.parse(xhr.responseText) as UploadFileResponse);
+        } catch {
+          reject(new Error("Invalid JSON response from upload endpoint"));
+        }
+      } else {
+        try {
+          const body = JSON.parse(xhr.responseText) as { error?: string };
+          reject(new Error(body.error ?? `Upload failed (HTTP ${xhr.status})`));
+        } catch {
+          reject(new Error(`Upload failed (HTTP ${xhr.status})`));
+        }
+      }
+    };
+
+    xhr.onerror = () => {
+      signal?.removeEventListener("abort", onAbort);
+      reject(new Error("Network error while uploading file"));
+    };
+
+    xhr.send(file);
+  });
+}
+
+export async function finalizeUploadBatch(
+  batchId: string,
+): Promise<FinalizeUploadBatchResponse> {
+  const res = await fetch(`/api/uploads/${encodeURIComponent(batchId)}/finalize`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not process uploaded files (HTTP ${res.status})`);
+  }
+  return (await res.json()) as FinalizeUploadBatchResponse;
+}
+
+export async function cancelUploadBatch(batchId: string): Promise<void> {
+  await fetch(`/api/uploads/${encodeURIComponent(batchId)}`, { method: "DELETE" }).catch(() => {});
 }

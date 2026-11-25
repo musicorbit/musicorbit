@@ -10,6 +10,7 @@ import {
   ScrollText,
   Search,
   Sparkles,
+  Upload,
   Users,
   X,
 } from "lucide-react";
@@ -38,6 +39,7 @@ import {
 } from "./api/client";
 import { AuthGate } from "./components/AuthGate";
 import { PlayerBar } from "./components/PlayerBar";
+import { UploadMusicModal } from "./components/UploadMusicModal";
 import { PlayerProvider, usePlayer } from "./context/PlayerContext";
 import { AlbumDetailView } from "./views/AlbumDetailView";
 import { AlbumsView } from "./views/AlbumsView";
@@ -81,6 +83,7 @@ function MusicOrbitShell() {
   const [soulseekLaunch, setSoulseekLaunch] = useState<{ query: string; nonce: number } | null>(
     null,
   );
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [startingScan, setStartingScan] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -391,6 +394,16 @@ function MusicOrbitShell() {
 
                 <button
                   type="button"
+                  onClick={() => setUploadOpen(true)}
+                  title="Upload songs or an album folder from your computer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-amber-400"
+                >
+                  <Upload className="h-4 w-4" />
+                  <span className="hidden sm:inline">Upload</span>
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => void handleScan(false)}
                   disabled={scanStatus?.state === "running" || startingScan}
                   title="Scan library for new or updated audio files"
@@ -517,6 +530,7 @@ function MusicOrbitShell() {
               onMusicDirChanged={() => void loadLibrary(searchQuery)}
               onOpenSoulseek={() => handleOpenSoulseekSearch()}
               onOpenReviewQueue={() => setRoute({ view: "review" })}
+              onOpenUpload={() => setUploadOpen(true)}
             />
           )}
 
@@ -528,6 +542,14 @@ function MusicOrbitShell() {
         onSelectAlbum={(albumId) => setRoute({ view: "album-detail", albumId })}
         onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
       />
+
+      {uploadOpen && (
+        <UploadMusicModal
+          onClose={() => setUploadOpen(false)}
+          onUploaded={() => void loadLibrary(searchQuery)}
+          onOpenReviewQueue={() => setRoute({ view: "review" })}
+        />
+      )}
     </div>
   );
 }

@@ -761,3 +761,23 @@ export interface LyricsLibraryStatsResponse {
   missingLyrics: number;
   job: LyricsBatchJobStatus;
 }
+
+/**
+ * Browser-based direct song & album uploads (streamed to staging, then post-processed).
+ */
+export interface StartUploadBatchResponse {
+  batchId: string;
+  maxFileBytes: number;
+  allowedExtensions: string[];
+}
+
+export interface UploadFileResponse {
+  batchId: string;
+  relativePath: string;
+  sizeBytes: number;
+}
+
+export interface FinalizeUploadBatchResponse extends InboxScanResult {
+  batchId: string;
+  uploadedFiles: number;
+}
