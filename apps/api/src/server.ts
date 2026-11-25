@@ -19,6 +19,7 @@ import { AlbumTracklistService } from "./services/albumTracklist.js";
 import { ArtistImageService } from "./services/artistImages.js";
 import { LibraryImporter } from "./services/importer.js";
 import { InboxWatcher } from "./services/inboxWatcher.js";
+import { LibraryOrganizer } from "./services/libraryOrganizer.js";
 import { MetadataLookupService } from "./services/metadataLookup.js";
 import { MusicBrainzClient } from "./services/musicbrainz.js";
 import { PlaylistBatchSearchService } from "./services/playlistBatchSearch.js";
@@ -36,6 +37,7 @@ export interface ServerHandle {
   slskdClient: SlskdClient;
   musicBrainz: MusicBrainzClient;
   importer: LibraryImporter;
+  libraryOrganizer: LibraryOrganizer;
   inboxWatcher: InboxWatcher;
   batchSearchService: PlaylistBatchSearchService;
   playlistSync: PlaylistSyncService;
@@ -123,6 +125,13 @@ export async function buildServer(
     settingsService,
     activityLog,
   });
+  const libraryOrganizer = new LibraryOrganizer({
+    dbContext,
+    settingsService,
+    playlistSync,
+    activityLog,
+    logger: app.log,
+  });
   const importer = new LibraryImporter({
     dbContext,
     musicDir: config.musicDir,
@@ -131,6 +140,7 @@ export async function buildServer(
     dataDir: config.dataDir,
     autoImportThreshold: config.autoImportThreshold,
     getPostProcessingSettings: () => settingsService.getPostProcessingSettings(),
+    getLibraryOrganizationSettings: () => settingsService.getLibraryOrganizationSettings(),
     musicBrainz,
     metadataLookup,
     batchSearchService,
@@ -143,6 +153,8 @@ export async function buildServer(
   const inboxWatcher = new InboxWatcher({
     importer,
     settingsService,
+    organizer: libraryOrganizer,
+    scanner,
     activityLog,
     logger: app.log,
   });
@@ -162,6 +174,7 @@ export async function buildServer(
     settingsService,
     scanner,
     inboxWatcher,
+    libraryOrganizer,
     playlistSync,
     activityLog,
   });
@@ -213,6 +226,7 @@ export async function buildServer(
     slskdClient,
     musicBrainz,
     importer,
+    libraryOrganizer,
     inboxWatcher,
     batchSearchService,
     playlistSync,

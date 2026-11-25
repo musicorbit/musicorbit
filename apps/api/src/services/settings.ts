@@ -8,6 +8,9 @@ import type {
   DuplicatePolicy,
   ImportFileAction,
   InboxWatcherStatus,
+  LibraryLayoutPreset,
+  LibraryOrganizationSettings,
+  MultiDiscStyle,
   PlaylistSyncSettings,
   PostProcessingSettings,
   SystemSettingsResponse,
@@ -27,6 +30,10 @@ const KEYS = {
   autoFetchLyrics: "pp_auto_fetch_lyrics",
   playlistSyncEnabled: "playlist_sync_enabled",
   playlistSyncDir: "playlist_sync_dir",
+  layoutPreset: "org_layout_preset",
+  includeTrackNumber: "org_include_track_number",
+  multiDiscStyle: "org_multi_disc_style",
+  autoOrganizeLibrary: "org_auto_organize_library",
 } as const;
 
 export class SettingsError extends Error {
@@ -101,6 +108,14 @@ export interface PostProcessingUpdateInput {
 export interface PlaylistSyncUpdateInput {
   enabled?: boolean;
   playlistsDir?: string;
+}
+
+export interface LibraryOrganizationUpdateInput {
+  layoutPreset?: LibraryLayoutPreset;
+  includeYearInAlbumFolder?: boolean;
+  includeTrackNumber?: boolean;
+  multiDiscStyle?: MultiDiscStyle;
+  autoOrganizeLibrary?: boolean;
 }
 
 /**
@@ -244,9 +259,33 @@ export class SettingsService {
     };
   }
 
+  getLibraryOrganizationSettings(): LibraryOrganizationSettings {
+    const rawPreset = this.rawValues.get(KEYS.layoutPreset);
+    const layoutPreset: LibraryLayoutPreset =
+      rawPreset === "artist_track" ||
+      rawPreset === "flat" ||
+      rawPreset === "keep_existing" ||
+      rawPreset === "artist_album_track"
+        ? rawPreset
+        : "artist_album_track";
+
+    const rawDisc = this.rawValues.get(KEYS.multiDiscStyle);
+    const multiDiscStyle: MultiDiscStyle = rawDisc === "subfolder" ? "subfolder" : "prefix";
+
+    return {
+      layoutPreset,
+      includeYearInAlbumFolder: this.readBool(KEYS.includeYearInAlbumFolder, false),
+      includeTrackNumber: this.readBool(KEYS.includeTrackNumber, true),
+      multiDiscStyle,
+      autoOrganizeLibrary:
+        layoutPreset === "keep_existing" ? false : this.readBool(KEYS.autoOrganizeLibrary, false),
+    };
+  }
+
   getSettings(): SystemSettingsResponse {
     const musicDir = this.getMusicDir();
     const postProcessing = this.getPostProcessingSettings();
+    const libraryOrganization = this.getLibraryOrganizationSettings();
     const playlistSync = this.getPlaylistSyncSettings();
     let musicDirExists = false;
     try {
@@ -262,6 +301,7 @@ export class SettingsService {
       isOverridden: this.isMusicDirOverridden(),
       downloadsDir: postProcessing.downloadsDir,
       postProcessing,
+      libraryOrganization,
       playlistSync,
       watcher: this.getWatcherStatusFn(),
     };
@@ -292,6 +332,33 @@ export class SettingsService {
     }
     if (input.enabled !== undefined) {
       this.saveSetting(KEYS.playlistSyncEnabled, String(input.enabled));
+    }
+    return this.getSettings();
+  }
+
+  updateLibraryOrganization(input: LibraryOrganizationUpdateInput): SystemSettingsResponse {
+    if (input.layoutPreset !== undefined) {
+      this.saveSetting(KEYS.layoutPreset, input.layoutPreset);
+      if (input.layoutPreset === "keep_existing") {
+        this.saveSetting(KEYS.autoOrganizeLibrary, "false");
+      }
+    }
+    if (input.includeYearInAlbumFolder !== undefined) {
+      this.saveSetting(KEYS.includeYearInAlbumFolder, String(input.includeYearInAlbumFolder));
+    }
+    if (input.includeTrackNumber !== undefined) {
+      this.saveSetting(KEYS.includeTrackNumber, String(input.includeTrackNumber));
+    }
+    if (input.multiDiscStyle !== undefined) {
+      this.saveSetting(KEYS.multiDiscStyle, input.multiDiscStyle);
+    }
+    if (input.autoOrganizeLibrary !== undefined) {
+      const effectivePreset =
+        input.layoutPreset ?? this.getLibraryOrganizationSettings().layoutPreset;
+      this.saveSetting(
+        KEYS.autoOrganizeLibrary,
+        String(effectivePreset === "keep_existing" ? false : input.autoOrganizeLibrary),
+      );
     }
     return this.getSettings();
   }

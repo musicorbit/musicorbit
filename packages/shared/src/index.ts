@@ -577,6 +577,75 @@ export interface PlaylistSyncRunResult {
   files: string[];
 }
 
+/**
+ * Library organization layout presets, preview/apply organizer, and bulk folder import.
+ */
+export type LibraryLayoutPreset =
+  | "artist_album_track"
+  | "artist_track"
+  | "flat"
+  | "keep_existing";
+
+export type MultiDiscStyle = "prefix" | "subfolder";
+
+export interface LibraryOrganizationSettings {
+  layoutPreset: LibraryLayoutPreset;
+  includeYearInAlbumFolder: boolean;
+  includeTrackNumber: boolean;
+  multiDiscStyle: MultiDiscStyle;
+  autoOrganizeLibrary: boolean;
+}
+
+export type OrganizePlanStatus =
+  | "move"
+  | "already_organized"
+  | "skipped_untagged"
+  | "conflict";
+
+export interface OrganizeTrackPlanItem {
+  trackId: number;
+  title: string;
+  artistName: string;
+  albumTitle: string;
+  currentPath: string;
+  currentRelativePath: string;
+  targetPath: string;
+  targetRelativePath: string;
+  status: OrganizePlanStatus;
+  reason?: string;
+}
+
+export interface OrganizePreviewResponse {
+  musicDir: string;
+  layoutPreset: LibraryLayoutPreset;
+  totalTracks: number;
+  toMoveCount: number;
+  alreadyOrganizedCount: number;
+  skippedUntaggedCount: number;
+  conflictCount: number;
+  items: OrganizeTrackPlanItem[];
+}
+
+export interface OrganizeApplyResponse {
+  movedCount: number;
+  alreadyOrganizedCount: number;
+  skippedCount: number;
+  conflictCount: number;
+  errorCount: number;
+  errors: string[];
+  playlistsResynced: boolean;
+}
+
+export interface BulkImportFolderRequest {
+  sourceDir: string;
+  fileAction: ImportFileAction;
+}
+
+export interface BulkImportFolderResponse extends InboxScanResult {
+  sourceDir: string;
+  fileAction: ImportFileAction;
+}
+
 export interface SystemSettingsResponse {
   musicDir: string;
   defaultMusicDir: string;
@@ -584,6 +653,7 @@ export interface SystemSettingsResponse {
   isOverridden: boolean;
   downloadsDir: string;
   postProcessing: PostProcessingSettings;
+  libraryOrganization: LibraryOrganizationSettings;
   playlistSync: PlaylistSyncSettings;
   watcher: InboxWatcherStatus;
 }
@@ -609,6 +679,7 @@ export type ActivityLogLevel = "info" | "success" | "warn" | "error";
 export type ActivityLogCategory =
   | "scanner"
   | "importer"
+  | "organizer"
   | "watcher"
   | "playlist"
   | "metadata"

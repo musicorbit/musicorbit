@@ -516,6 +516,7 @@ function MusicOrbitShell() {
               onRefresh={() => void loadLibrary(searchQuery)}
               onMusicDirChanged={() => void loadLibrary(searchQuery)}
               onOpenSoulseek={() => handleOpenSoulseekSearch()}
+              onOpenReviewQueue={() => setRoute({ view: "review" })}
             />
           )}
 

@@ -268,12 +268,16 @@ export class LibraryScanner {
   /**
    * Runs a full or incremental scan and resolves when finished.
    */
-  async runScan(options?: { force?: boolean }): Promise<ScanStatusResponse> {
+  async runScan(options?: {
+    force?: boolean;
+    quietIfNoChanges?: boolean;
+  }): Promise<ScanStatusResponse> {
     if (this.activePromise) {
       return this.activePromise;
     }
 
     const force = Boolean(options?.force);
+    const quietIfNoChanges = Boolean(options?.quietIfNoChanges);
     const startedAt = new Date();
     const inserted = this.dbContext.db
       .insert(scanJobs)
@@ -378,20 +382,27 @@ export class LibraryScanner {
         status.state = "completed";
         status.finishedAt = new Date().toISOString();
         this.persistJob(status);
-        this.activityLog?.log(
-          status.errors.length > 0 ? "warn" : "success",
-          "scanner",
-          `${force ? "Full" : "Library"} scan completed: ${status.filesAdded} added, ${status.filesUpdated} updated, ${status.filesRemoved} removed, ${status.filesSkipped} unchanged`,
-          {
-            musicDir: this.musicDir,
-            total: status.filesTotal,
-            added: status.filesAdded,
-            updated: status.filesUpdated,
-            removed: status.filesRemoved,
-            skipped: status.filesSkipped,
-            errors: status.errors.length,
-          },
-        );
+        const hasChanges =
+          status.filesAdded > 0 ||
+          status.filesUpdated > 0 ||
+          status.filesRemoved > 0 ||
+          status.errors.length > 0;
+        if (!quietIfNoChanges || hasChanges) {
+          this.activityLog?.log(
+            status.errors.length > 0 ? "warn" : "success",
+            "scanner",
+            `${force ? "Full" : "Library"} scan completed: ${status.filesAdded} added, ${status.filesUpdated} updated, ${status.filesRemoved} removed, ${status.filesSkipped} unchanged`,
+            {
+              musicDir: this.musicDir,
+              total: status.filesTotal,
+              added: status.filesAdded,
+              updated: status.filesUpdated,
+              removed: status.filesRemoved,
+              skipped: status.filesSkipped,
+              errors: status.errors.length,
+            },
+          );
+        }
         return this.getStatus();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

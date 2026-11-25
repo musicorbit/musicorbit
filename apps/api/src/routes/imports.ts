@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import type {
   ApplyImportResponse,
+  BulkImportFolderResponse,
   ImportItemStatus,
   ImportsListResponse,
   InboxScanResult,
@@ -68,6 +69,11 @@ const applyTaggingBodySchema = z.object({
     .min(1),
 });
 
+const bulkImportBodySchema = z.object({
+  sourceDir: z.string().trim().min(1).max(1000),
+  fileAction: z.enum(["copy", "move"]).default("copy"),
+});
+
 function handleImporterError(reply: FastifyReply, err: unknown) {
   if (err instanceof ImporterError) {
     return reply.code(err.statusCode).send({ error: err.message });
@@ -119,6 +125,22 @@ export async function registerImportRoutes(
   app.post("/api/imports/scan", async (): Promise<InboxScanResult> => {
     return importer.scanInbox();
   });
+
+  // One-off bulk import from an external folder into MUSIC_DIR using the post-processing pipeline
+  app.post(
+    "/api/imports/bulk-folder",
+    async (request, reply): Promise<BulkImportFolderResponse> => {
+      const parsed = bulkImportBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "Please provide a valid source folder path." });
+      }
+      try {
+        return await importer.importExternalFolder(parsed.data.sourceDir, parsed.data.fileAction);
+      } catch (err) {
+        return handleImporterError(reply, err);
+      }
+    },
+  );
 
   // Apply chosen MusicBrainz release or manual tags to a Review Queue item & move to library
   app.post(

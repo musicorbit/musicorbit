@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
+  ArrowRight,
   Check,
   CheckCircle2,
   Database,
+  Eye,
   FolderInput,
   FolderOpen,
+  FolderTree,
   ListMusic,
   Loader2,
   Play,
@@ -21,17 +24,25 @@ import type {
   HealthResponse,
   ImportFileAction,
   InboxScanResult,
+  LibraryLayoutPreset,
+  MultiDiscStyle,
+  OrganizeApplyResponse,
+  OrganizePreviewResponse,
   PlaylistSyncRunResult,
   ScanStatusResponse,
   SystemSettingsResponse,
 } from "@musicorbit/shared";
 import {
+  applyLibraryOrganization,
   fetchSystemSettings,
+  previewLibraryOrganization,
   runPlaylistSyncNow,
   scanInbox,
+  updateLibraryOrganizationSettings,
   updatePlaylistSyncSettings,
   updatePostProcessingSettings,
 } from "../api/client";
+import { BulkImportFolderModal } from "../components/BulkImportFolderModal";
 import { DirectoryPickerModal } from "../components/DirectoryPickerModal";
 
 interface SystemViewProps {
@@ -44,6 +55,74 @@ interface SystemViewProps {
   onRefresh: () => void;
   onMusicDirChanged: () => void;
   onOpenSoulseek?: () => void;
+  onOpenReviewQueue?: () => void;
+}
+
+const LAYOUT_PRESETS: Array<{
+  id: LibraryLayoutPreset;
+  title: string;
+  description: string;
+}> = [
+  {
+    id: "artist_album_track",
+    title: "Artist / Album / Track",
+    description: "Standard Navidrome, Jellyfin, and Plex folder hierarchy.",
+  },
+  {
+    id: "artist_track",
+    title: "Artist / Track",
+    description: "Flat artist folders — handy for singles and playlist-driven libraries.",
+  },
+  {
+    id: "flat",
+    title: "Flat Library",
+    description: "All audio files in the root Music Directory as Artist - Title.",
+  },
+  {
+    id: "keep_existing",
+    title: "Keep Existing Layout",
+    description: "Read-only — never move or rename files already inside Music Directory.",
+  },
+];
+
+function computeExampleLayoutPaths(params: {
+  layoutPreset: LibraryLayoutPreset;
+  includeYearInAlbumFolder: boolean;
+  includeTrackNumber: boolean;
+  multiDiscStyle: MultiDiscStyle;
+}): { single: string; multiDisc: string | null } {
+  const { layoutPreset, includeYearInAlbumFolder, includeTrackNumber, multiDiscStyle } = params;
+  if (layoutPreset === "keep_existing") {
+    return {
+      single: "Existing folders in Music Directory stay untouched",
+      multiDisc: null,
+    };
+  }
+  if (layoutPreset === "flat") {
+    return {
+      single: "Dua Lipa - Levitating.flac",
+      multiDisc: null,
+    };
+  }
+  if (layoutPreset === "artist_track") {
+    return {
+      single: includeTrackNumber ? "Dua Lipa/05 - Levitating.flac" : "Dua Lipa/Levitating.flac",
+      multiDisc: includeTrackNumber
+        ? "Pink Floyd/2-01 - Hey You.flac"
+        : "Pink Floyd/Hey You.flac",
+    };
+  }
+  const album = includeYearInAlbumFolder ? "Future Nostalgia (2020)" : "Future Nostalgia";
+  const track = includeTrackNumber ? "05 - Levitating.flac" : "Levitating.flac";
+  const wallAlbum = includeYearInAlbumFolder ? "The Wall (1979)" : "The Wall";
+  const multiDisc =
+    multiDiscStyle === "subfolder"
+      ? `Pink Floyd/${wallAlbum}/Disc 2/${includeTrackNumber ? "01 - Hey You.flac" : "Hey You.flac"}`
+      : `Pink Floyd/${wallAlbum}/${includeTrackNumber ? "2-01 - Hey You.flac" : "Hey You.flac"}`;
+  return {
+    single: `Dua Lipa/${album}/${track}`,
+    multiDisc,
+  };
 }
 
 export function SystemView({
@@ -56,17 +135,33 @@ export function SystemView({
   onRefresh,
   onMusicDirChanged,
   onOpenSoulseek,
+  onOpenReviewQueue,
 }: SystemViewProps) {
   const [pickerMode, setPickerMode] = useState<"music" | "downloads" | "playlists" | null>(null);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [sysSettings, setSysSettings] = useState<SystemSettingsResponse | null>(null);
   const [fileAction, setFileAction] = useState<ImportFileAction>("move");
   const [duplicatePolicy, setDuplicatePolicy] = useState<DuplicatePolicy>("upgrade");
   const [autoWatchEnabled, setAutoWatchEnabled] = useState(false);
   const [autoWatchIntervalSeconds, setAutoWatchIntervalSeconds] = useState(60);
   const [autoImportThreshold, setAutoImportThreshold] = useState(85);
-  const [includeYearInAlbumFolder, setIncludeYearInAlbumFolder] = useState(false);
   const [autoEmbedCoverArt, setAutoEmbedCoverArt] = useState(true);
   const [autoFetchLyrics, setAutoFetchLyrics] = useState(false);
+
+  // Library Organization state
+  const [layoutPreset, setLayoutPreset] = useState<LibraryLayoutPreset>("artist_album_track");
+  const [includeYearInAlbumFolder, setIncludeYearInAlbumFolder] = useState(false);
+  const [includeTrackNumber, setIncludeTrackNumber] = useState(true);
+  const [multiDiscStyle, setMultiDiscStyle] = useState<MultiDiscStyle>("prefix");
+  const [autoOrganizeLibrary, setAutoOrganizeLibrary] = useState(false);
+  const [savingOrg, setSavingOrg] = useState(false);
+  const [orgNotice, setOrgNotice] = useState<string | null>(null);
+  const [orgError, setOrgError] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [orgPreview, setOrgPreview] = useState<OrganizePreviewResponse | null>(null);
+  const [applyingOrg, setApplyingOrg] = useState(false);
+  const [orgApplyResult, setOrgApplyResult] = useState<OrganizeApplyResponse | null>(null);
+
   const [playlistSyncEnabled, setPlaylistSyncEnabled] = useState(false);
   const [savingSync, setSavingSync] = useState(false);
   const [runningSync, setRunningSync] = useState(false);
@@ -87,9 +182,13 @@ export function SystemView({
       setAutoWatchEnabled(next.postProcessing.autoWatchEnabled);
       setAutoWatchIntervalSeconds(next.postProcessing.autoWatchIntervalSeconds);
       setAutoImportThreshold(next.postProcessing.autoImportThreshold);
-      setIncludeYearInAlbumFolder(next.postProcessing.includeYearInAlbumFolder);
       setAutoEmbedCoverArt(next.postProcessing.autoEmbedCoverArt);
       setAutoFetchLyrics(next.postProcessing.autoFetchLyrics);
+      setLayoutPreset(next.libraryOrganization.layoutPreset);
+      setIncludeYearInAlbumFolder(next.libraryOrganization.includeYearInAlbumFolder);
+      setIncludeTrackNumber(next.libraryOrganization.includeTrackNumber);
+      setMultiDiscStyle(next.libraryOrganization.multiDiscStyle);
+      setAutoOrganizeLibrary(next.libraryOrganization.autoOrganizeLibrary);
       setPlaylistSyncEnabled(next.playlistSync.enabled);
     } catch {
       // Non-fatal; health banner handles offline state
@@ -99,6 +198,66 @@ export function SystemView({
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  const handleSaveOrganization = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    setSavingOrg(true);
+    setOrgError(null);
+    setOrgNotice(null);
+    try {
+      const updated = await updateLibraryOrganizationSettings({
+        layoutPreset,
+        includeYearInAlbumFolder,
+        includeTrackNumber,
+        multiDiscStyle,
+        autoOrganizeLibrary: layoutPreset === "keep_existing" ? false : autoOrganizeLibrary,
+      });
+      setSysSettings(updated);
+      setAutoOrganizeLibrary(updated.libraryOrganization.autoOrganizeLibrary);
+      setOrgNotice("Library organization settings saved.");
+      return true;
+    } catch (err) {
+      setOrgError(err instanceof Error ? err.message : "Could not save organization settings");
+      return false;
+    } finally {
+      setSavingOrg(false);
+    }
+  };
+
+  const handlePreviewOrganization = async () => {
+    setPreviewLoading(true);
+    setOrgError(null);
+    setOrgApplyResult(null);
+    try {
+      // Persist any unsaved preset/toggle changes first so the preview matches what is selected
+      const saved = await handleSaveOrganization();
+      if (!saved) return;
+      setOrgNotice(null);
+      const plan = await previewLibraryOrganization();
+      setOrgPreview(plan);
+    } catch (err) {
+      setOrgError(err instanceof Error ? err.message : "Could not preview library organization");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleApplyOrganization = async () => {
+    setApplyingOrg(true);
+    setOrgError(null);
+    setOrgApplyResult(null);
+    try {
+      const res = await applyLibraryOrganization();
+      setOrgApplyResult(res);
+      const refreshedPlan = await previewLibraryOrganization();
+      setOrgPreview(refreshedPlan);
+      onMusicDirChanged();
+    } catch (err) {
+      setOrgError(err instanceof Error ? err.message : "Could not organize library");
+    } finally {
+      setApplyingOrg(false);
+    }
+  };
 
   const handleSavePostProcessing = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -112,7 +271,6 @@ export function SystemView({
         autoWatchEnabled,
         autoWatchIntervalSeconds,
         autoImportThreshold,
-        includeYearInAlbumFolder,
         autoEmbedCoverArt,
         autoFetchLyrics,
       });
@@ -409,6 +567,391 @@ export function SystemView({
             )}
           </div>
 
+          {/* Library Organization & Folder Structure */}
+          {sysSettings && (() => {
+            const example = computeExampleLayoutPaths({
+              layoutPreset,
+              includeYearInAlbumFolder,
+              includeTrackNumber,
+              multiDiscStyle,
+            });
+            const isKeepExisting = layoutPreset === "keep_existing";
+
+            return (
+              <form
+                onSubmit={(e) => void handleSaveOrganization(e)}
+                className="space-y-5 rounded-xl border border-zinc-800 bg-zinc-900/50 p-6"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <h3 className="flex items-center gap-2 text-base font-semibold text-zinc-100">
+                      <FolderTree className="h-4 w-4 text-amber-400" />
+                      Library Organization &amp; Folder Structure
+                    </h3>
+                    <p className="mt-0.5 text-xs text-zinc-400">
+                      Choose how MusicOrbit formats folders and filenames inside your Music
+                      Directory (shared by both Downloads Post-Processing and the Library
+                      Organizer).
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                        sysSettings.libraryOrganization.layoutPreset === "keep_existing"
+                          ? "bg-zinc-800 text-zinc-400"
+                          : sysSettings.libraryOrganization.autoOrganizeLibrary
+                            ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30"
+                            : "bg-zinc-800 text-zinc-300"
+                      }`}
+                    >
+                      {sysSettings.libraryOrganization.layoutPreset === "keep_existing"
+                        ? "Read-only layout"
+                        : sysSettings.libraryOrganization.autoOrganizeLibrary
+                          ? "Auto-organize active"
+                          : "Manual organize"}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() => setBulkImportOpen(true)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-300"
+                    >
+                      <FolderInput className="h-3.5 w-3.5 text-amber-400" />
+                      Import Existing Folder…
+                    </button>
+                  </div>
+                </div>
+
+                {/* Preset Grid */}
+                <div className="grid gap-2.5 sm:grid-cols-2">
+                  {LAYOUT_PRESETS.map((preset) => {
+                    const selected = layoutPreset === preset.id;
+                    return (
+                      <label
+                        key={preset.id}
+                        className={`flex cursor-pointer items-start gap-2.5 rounded-xl border p-3.5 text-xs transition ${
+                          selected
+                            ? "border-amber-500/50 bg-amber-500/10 text-zinc-100"
+                            : "border-zinc-800 bg-zinc-950/60 text-zinc-300 hover:border-zinc-700"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="libraryLayoutPreset"
+                          value={preset.id}
+                          checked={selected}
+                          onChange={() => {
+                            setLayoutPreset(preset.id);
+                            setOrgPreview(null);
+                            setOrgNotice(null);
+                            if (preset.id === "keep_existing") {
+                              setAutoOrganizeLibrary(false);
+                            }
+                          }}
+                          className="mt-0.5 accent-amber-500"
+                        />
+                        <span>
+                          <strong className="block font-medium text-zinc-100">
+                            {preset.title}
+                          </strong>
+                          <span className="mt-0.5 block text-zinc-400">{preset.description}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+
+                {/* Live Path Preview */}
+                <div className="rounded-xl border border-zinc-800/90 bg-zinc-950/70 px-4 py-3 text-xs">
+                  <p className="text-[11px] font-medium tracking-wider text-zinc-500 uppercase">
+                    Path Preview
+                  </p>
+                  <p className="mt-1 font-mono text-amber-300">{example.single}</p>
+                  {example.multiDisc && (
+                    <p className="mt-0.5 font-mono text-zinc-400">
+                      Multi-disc: <span className="text-zinc-300">{example.multiDisc}</span>
+                    </p>
+                  )}
+                  {isKeepExisting && (
+                    <p className="mt-1 text-[11px] text-zinc-500">
+                      Note: External downloads or bulk folder imports will still organize new
+                      incoming files into <code>Artist/Album/Track</code> inside your Music
+                      Directory.
+                    </p>
+                  )}
+                </div>
+
+                {/* Formatting Modifiers */}
+                {!isKeepExisting && (
+                  <div className="grid gap-3 border-t border-zinc-800/80 pt-4 sm:grid-cols-2">
+                    {layoutPreset === "artist_album_track" && (
+                      <label className="flex cursor-pointer items-start gap-2.5 text-xs text-zinc-200">
+                        <input
+                          type="checkbox"
+                          checked={includeYearInAlbumFolder}
+                          onChange={(e) => {
+                            setIncludeYearInAlbumFolder(e.target.checked);
+                            setOrgPreview(null);
+                          }}
+                          className="mt-0.5 h-4 w-4 rounded accent-amber-500"
+                        />
+                        <span>
+                          <strong className="block font-medium">
+                            Include year in album folders
+                          </strong>
+                          <span className="text-zinc-500">
+                            Formats folders as <code>Album (2020)</code> instead of{" "}
+                            <code>Album</code>.
+                          </span>
+                        </span>
+                      </label>
+                    )}
+
+                    {layoutPreset !== "flat" && (
+                      <label className="flex cursor-pointer items-start gap-2.5 text-xs text-zinc-200">
+                        <input
+                          type="checkbox"
+                          checked={includeTrackNumber}
+                          onChange={(e) => {
+                            setIncludeTrackNumber(e.target.checked);
+                            setOrgPreview(null);
+                          }}
+                          className="mt-0.5 h-4 w-4 rounded accent-amber-500"
+                        />
+                        <span>
+                          <strong className="block font-medium">
+                            Include track number in filenames
+                          </strong>
+                          <span className="text-zinc-500">
+                            Formats files as <code>05 - Levitating.flac</code> instead of{" "}
+                            <code>Levitating.flac</code>.
+                          </span>
+                        </span>
+                      </label>
+                    )}
+
+                    {layoutPreset === "artist_album_track" && (
+                      <label className="block space-y-1.5 text-xs">
+                        <span className="font-medium text-zinc-300">Multi-disc Albums</span>
+                        <select
+                          value={multiDiscStyle}
+                          onChange={(e) => {
+                            setMultiDiscStyle(e.target.value as MultiDiscStyle);
+                            setOrgPreview(null);
+                          }}
+                          className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 focus:border-amber-500/60 focus:outline-none"
+                        >
+                          <option value="prefix" className="bg-zinc-900 text-zinc-100">
+                            Disc prefix (2-01 - Title.flac)
+                          </option>
+                          <option value="subfolder" className="bg-zinc-900 text-zinc-100">
+                            Disc subfolders (Disc 2/01 - Title.flac)
+                          </option>
+                        </select>
+                      </label>
+                    )}
+
+                    <label className="flex cursor-pointer items-start gap-2.5 text-xs text-zinc-200 sm:col-span-2">
+                      <input
+                        type="checkbox"
+                        checked={autoOrganizeLibrary}
+                        onChange={(e) => setAutoOrganizeLibrary(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded accent-amber-500"
+                      />
+                      <span>
+                        <strong className="block font-medium">
+                          Auto-organize files dropped directly into Music Directory
+                        </strong>
+                        <span className="text-zinc-500">
+                          Periodically scans your Music Directory (every{" "}
+                          {sysSettings.postProcessing.autoWatchIntervalSeconds}s) and formats
+                          well-tagged files into your chosen folder structure. Leaves untagged or
+                          conflicting files untouched and re-syncs playlists automatically.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                )}
+
+                {orgError && (
+                  <div className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+                    <span>{orgError}</span>
+                  </div>
+                )}
+
+                {orgNotice && (
+                  <div className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                    <span>{orgNotice}</span>
+                  </div>
+                )}
+
+                {orgApplyResult && (
+                  <div className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                    <span>
+                      Moved <strong>{orgApplyResult.movedCount}</strong>{" "}
+                      {orgApplyResult.movedCount === 1 ? "track" : "tracks"} cleanly (preserving
+                      playlist links)
+                      {orgApplyResult.playlistsResynced ? " and re-synced .m3u8 playlists" : ""}.
+                      {orgApplyResult.skippedCount > 0 &&
+                        ` Skipped ${orgApplyResult.skippedCount} missing tags.`}
+                      {orgApplyResult.conflictCount > 0 &&
+                        ` Skipped ${orgApplyResult.conflictCount} conflicts.`}
+                    </span>
+                  </div>
+                )}
+
+                {/* Dry-Run Organization Preview */}
+                {orgPreview && (
+                  <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/70 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="font-semibold text-zinc-100">Organization Preview</span>
+                        <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 font-medium text-amber-300 ring-1 ring-amber-500/30">
+                          {orgPreview.toMoveCount} to move
+                        </span>
+                        <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 font-medium text-emerald-300 ring-1 ring-emerald-500/30">
+                          {orgPreview.alreadyOrganizedCount} already organized
+                        </span>
+                        {orgPreview.skippedUntaggedCount > 0 && (
+                          <span className="rounded-full bg-zinc-800 px-2.5 py-0.5 font-medium text-zinc-300">
+                            {orgPreview.skippedUntaggedCount} skipped (missing tags)
+                          </span>
+                        )}
+                        {orgPreview.conflictCount > 0 && (
+                          <span className="rounded-full bg-red-500/15 px-2.5 py-0.5 font-medium text-red-300 ring-1 ring-red-500/30">
+                            {orgPreview.conflictCount} conflicts
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setOrgPreview(null)}
+                          className="rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs text-zinc-300 transition hover:bg-zinc-800"
+                        >
+                          Close Preview
+                        </button>
+                        {orgPreview.toMoveCount > 0 && (
+                          <button
+                            type="button"
+                            disabled={applyingOrg}
+                            onClick={() => void handleApplyOrganization()}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1 text-xs font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-45"
+                          >
+                            {applyingOrg ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Check className="h-3.5 w-3.5" />
+                            )}
+                            Apply Organization ({orgPreview.toMoveCount})
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {orgPreview.items.length === 0 ? (
+                      <p className="text-xs text-emerald-300">
+                        {orgPreview.layoutPreset === "keep_existing"
+                          ? "Layout is set to Keep Existing Layout — no files will be moved."
+                          : "Every track in your Music Directory already matches this folder layout!"}
+                      </p>
+                    ) : (
+                      <div className="max-h-72 divide-y divide-zinc-800/70 overflow-y-auto rounded-lg border border-zinc-800/80 bg-zinc-900/40 text-xs">
+                        {orgPreview.items.slice(0, 100).map((item) => (
+                          <div key={item.trackId} className="space-y-1 px-3 py-2.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="font-medium text-zinc-200">
+                                {item.artistName} — {item.title}
+                              </span>
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                                  item.status === "move"
+                                    ? "bg-amber-500/15 text-amber-300"
+                                    : item.status === "conflict"
+                                      ? "bg-red-500/15 text-red-300"
+                                      : "bg-zinc-800 text-zinc-400"
+                                }`}
+                              >
+                                {item.status === "move"
+                                  ? "Move"
+                                  : item.status === "conflict"
+                                    ? "Conflict (skipped)"
+                                    : "Missing tags (skipped)"}
+                              </span>
+                            </div>
+
+                            {item.status === "move" ? (
+                              <div className="flex flex-wrap items-center gap-1.5 font-mono text-[11px]">
+                                <span className="break-all text-zinc-400">
+                                  {item.currentRelativePath}
+                                </span>
+                                <ArrowRight className="h-3 w-3 shrink-0 text-amber-400" />
+                                <span className="break-all text-emerald-300">
+                                  {item.targetRelativePath}
+                                </span>
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-zinc-400">
+                                <span className="font-mono text-zinc-500">
+                                  {item.currentRelativePath}
+                                </span>
+                                {item.reason ? ` — ${item.reason}` : ""}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                        {orgPreview.items.length > 100 && (
+                          <p className="px-3 py-2 text-center text-[11px] text-zinc-500">
+                            Showing first 100 of {orgPreview.items.length} items.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-800/80 pt-4">
+                  <button
+                    type="button"
+                    disabled={previewLoading || isKeepExisting}
+                    onClick={() => void handlePreviewOrganization()}
+                    title={
+                      isKeepExisting
+                        ? "Choose a folder layout preset above to preview organizing your library"
+                        : "Dry-run your chosen folder layout on Music Directory without moving any files yet"
+                    }
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3.5 py-2 text-xs font-medium text-zinc-200 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-300 disabled:opacity-45"
+                  >
+                    {previewLoading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
+                    ) : (
+                      <Eye className="h-3.5 w-3.5 text-amber-400" />
+                    )}
+                    Preview &amp; Organize Library
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={savingOrg}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400 disabled:opacity-45"
+                  >
+                    {savingOrg ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Check className="h-3.5 w-3.5" />
+                    )}
+                    Save Layout
+                  </button>
+                </div>
+              </form>
+            );
+          })()}
+
           {/* Post-Processing & Automated Downloads Pipeline */}
           {sysSettings && (
             <form
@@ -559,21 +1102,6 @@ export function SystemView({
                     <strong className="block font-medium">Auto-watch downloads folder</strong>
                     <span className="text-zinc-500">
                       Waits until downloads finish writing, then post-processes automatically.
-                    </span>
-                  </span>
-                </label>
-
-                <label className="flex cursor-pointer items-start gap-2.5 text-xs text-zinc-200">
-                  <input
-                    type="checkbox"
-                    checked={includeYearInAlbumFolder}
-                    onChange={(e) => setIncludeYearInAlbumFolder(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded accent-amber-500"
-                  />
-                  <span>
-                    <strong className="block font-medium">Include year in album folders</strong>
-                    <span className="text-zinc-500">
-                      Organizes as <code>Artist/Album (Year)/01 - Title</code>.
                     </span>
                   </span>
                 </label>
@@ -853,6 +1381,18 @@ export function SystemView({
               onMusicDirChanged();
             }
           }}
+        />
+      )}
+
+      {bulkImportOpen && (
+        <BulkImportFolderModal
+          initialPath={sysSettings?.downloadsDir ?? health?.musicDir.path ?? ""}
+          onClose={() => setBulkImportOpen(false)}
+          onImported={() => {
+            void loadSettings();
+            onMusicDirChanged();
+          }}
+          onOpenReviewQueue={onOpenReviewQueue}
         />
       )}
     </div>

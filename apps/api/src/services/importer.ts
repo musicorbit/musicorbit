@@ -7,12 +7,15 @@ import type { FastifyBaseLogger } from "fastify";
 import type {
   ApplyImportResponse,
   ApplyTaggingRequest,
+  BulkImportFolderResponse,
   ImportDuplicateMatch,
+  ImportFileAction,
   ImportItemStatus,
   ImportItemSummary,
   ImportSourceFile,
   ImportsListResponse,
   InboxScanResult,
+  LibraryOrganizationSettings,
   MusicBrainzReleaseCandidate,
   PostProcessingSettings,
   RetagAlbumResponse,
@@ -21,6 +24,7 @@ import type {
 import type { DbContext } from "../db/index.js";
 import { albums, importItems, tracks } from "../db/schema.js";
 import type { ActivityLogService } from "./activityLog.js";
+import { DEFAULT_LIBRARY_ORGANIZATION, formatTrackRelativePath } from "./libraryLayout.js";
 import { isAllowedCoverArtUrl, type MetadataLookupService } from "./metadataLookup.js";
 import type { MusicBrainzClient } from "./musicbrainz.js";
 import type { PlaylistBatchSearchService } from "./playlistBatchSearch.js";
@@ -333,6 +337,7 @@ export interface LibraryImporterDeps {
   dataDir?: string;
   autoImportThreshold: number;
   getPostProcessingSettings?: () => PostProcessingSettings;
+  getLibraryOrganizationSettings?: () => LibraryOrganizationSettings;
   musicBrainz: MusicBrainzClient;
   metadataLookup?: MetadataLookupService;
   batchSearchService?: PlaylistBatchSearchService;
@@ -344,6 +349,8 @@ export interface LibraryImporterDeps {
 }
 
 export interface ScanInboxOptions {
+  sourceDir?: string;
+  fileActionOverride?: ImportFileAction;
   requireStableFiles?: boolean;
   stabilityWindowMs?: number;
 }
@@ -365,6 +372,7 @@ export class LibraryImporter {
   private readonly dataDir: string;
   private readonly defaultAutoImportThreshold: number;
   private readonly getPostProcessingSettingsFn: () => PostProcessingSettings;
+  private readonly getLibraryOrganizationSettingsFn: () => LibraryOrganizationSettings;
   private readonly musicBrainz: MusicBrainzClient;
   private readonly metadataLookup?: MetadataLookupService;
   private readonly batchSearchService?: PlaylistBatchSearchService;
@@ -395,6 +403,12 @@ export class LibraryImporter {
         autoEmbedCoverArt: true,
         autoFetchLyrics: false,
       }));
+    this.getLibraryOrganizationSettingsFn =
+      deps.getLibraryOrganizationSettings ??
+      (() => ({
+        ...DEFAULT_LIBRARY_ORGANIZATION,
+        includeYearInAlbumFolder: this.getPostProcessingSettingsFn().includeYearInAlbumFolder,
+      }));
     this.musicBrainz = deps.musicBrainz;
     this.metadataLookup = deps.metadataLookup;
     this.batchSearchService = deps.batchSearchService;
@@ -411,6 +425,10 @@ export class LibraryImporter {
 
   private get settings(): PostProcessingSettings {
     return this.getPostProcessingSettingsFn();
+  }
+
+  private get organizationSettings(): LibraryOrganizationSettings {
+    return this.getLibraryOrganizationSettingsFn();
   }
 
   listItems(statusFilter?: ImportItemStatus): ImportsListResponse {
@@ -489,17 +507,88 @@ export class LibraryImporter {
   }
 
   /**
-   * Scans DOWNLOADS_DIR for album folders and loose single files, matches via Deezer (singles)
-   * and MusicBrainz (albums), respects duplicate policies & stability checks,
+   * One-off bulk import from an external folder (e.g. initial migration of an existing
+   * messy music folder) using the same tagging, layout, duplicate, and Review Queue pipeline.
+   */
+  async importExternalFolder(
+    rawSourceDir: string,
+    fileAction: ImportFileAction = "copy",
+  ): Promise<BulkImportFolderResponse> {
+    const trimmed = rawSourceDir.trim();
+    if (!trimmed) {
+      throw new ImporterError("Please select a source folder to import.", 400);
+    }
+
+    const resolvedSource = path.resolve(trimmed);
+    if (!fs.existsSync(resolvedSource)) {
+      throw new ImporterError(`Source folder does not exist: ${resolvedSource}`, 400);
+    }
+
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(resolvedSource);
+    } catch {
+      throw new ImporterError(`Cannot access source folder: ${resolvedSource}`, 400);
+    }
+    if (!stat.isDirectory()) {
+      throw new ImporterError(`Source path is not a directory: ${resolvedSource}`, 400);
+    }
+
+    const resolvedMusic = path.resolve(this.musicDir);
+    const relFromMusic = path.relative(resolvedMusic, resolvedSource);
+    const relFromSource = path.relative(resolvedSource, resolvedMusic);
+    const overlapsMusicDir =
+      resolvedSource === resolvedMusic ||
+      (relFromMusic !== "" && !relFromMusic.startsWith("..") && !path.isAbsolute(relFromMusic)) ||
+      (relFromSource !== "" && !relFromSource.startsWith("..") && !path.isAbsolute(relFromSource));
+
+    if (overlapsMusicDir) {
+      throw new ImporterError(
+        "Source folder overlaps your Music Directory. Use 'Preview & Organize Library' to format files already inside your Music Directory.",
+        400,
+      );
+    }
+
+    this.activityLog?.info(
+      "importer",
+      `Starting bulk folder import from ${resolvedSource} (${fileAction})`,
+      { sourceDir: resolvedSource, fileAction },
+    );
+
+    const scanResult = await this.scanInbox({
+      sourceDir: resolvedSource,
+      fileActionOverride: fileAction,
+      requireStableFiles: false,
+    });
+
+    this.activityLog?.success(
+      "importer",
+      `Bulk import finished: ${scanResult.autoImported} imported, ${scanResult.needsReview} sent to Review Queue, ${scanResult.skipped} skipped`,
+      { sourceDir: resolvedSource, fileAction, ...scanResult },
+    );
+
+    return {
+      ...scanResult,
+      sourceDir: resolvedSource,
+      fileAction,
+    };
+  }
+
+  /**
+   * Scans DOWNLOADS_DIR (or a custom external sourceDir) for album folders and loose single files,
+   * matches via Deezer (singles) and MusicBrainz (albums), respects duplicate policies & stability checks,
    * auto-imports high-confidence matches, and queues uncertain ones for review.
    */
   async scanInbox(options?: ScanInboxOptions): Promise<InboxScanResult> {
     const pp = this.settings;
-    if (!fs.existsSync(pp.downloadsDir)) {
+    const scanRoot = options?.sourceDir ? path.resolve(options.sourceDir) : pp.downloadsDir;
+    const effectiveFileAction: ImportFileAction = options?.fileActionOverride ?? pp.fileAction;
+
+    if (!fs.existsSync(scanRoot)) {
       return { discoveredFolders: 0, autoImported: 0, needsReview: 0, skipped: 0, failed: 0 };
     }
 
-    const discovered = await discoverInboxItems(pp.downloadsDir);
+    const discovered = await discoverInboxItems(scanRoot);
     const result: InboxScanResult = {
       discoveredFolders: discovered.length,
       autoImported: 0,
@@ -528,7 +617,7 @@ export class LibraryImporter {
           sameFiles &&
           (existing.status === "needs_review" ||
             existing.status === "dismissed" ||
-            (existing.status === "imported" && pp.fileAction === "copy"))
+            (existing.status === "imported" && effectiveFileAction === "copy"))
         ) {
           result.skipped += 1;
           continue;
@@ -636,7 +725,11 @@ export class LibraryImporter {
                     },
                   ],
                 },
-                { coverArtUrl: singleMatch.coverArtUrl },
+                {
+                  coverArtUrl: singleMatch.coverArtUrl,
+                  fileActionOverride: effectiveFileAction,
+                  sourceRoot: scanRoot,
+                },
               );
               result.autoImported += 1;
               continue;
@@ -725,7 +818,11 @@ export class LibraryImporter {
                 coverArtUrl: top.coverArtUrl,
                 tracks: trackOverrides,
               },
-              { coverArtUrl: top.coverArtUrl },
+              {
+                coverArtUrl: top.coverArtUrl,
+                fileActionOverride: effectiveFileAction,
+                sourceRoot: scanRoot,
+              },
             );
             result.autoImported += 1;
             continue;
@@ -782,9 +879,17 @@ export class LibraryImporter {
   async applyImport(
     importId: number,
     payload: ApplyTaggingRequest,
-    extra?: { coverArtUrl?: string | null },
+    extra?: {
+      coverArtUrl?: string | null;
+      fileActionOverride?: ImportFileAction;
+      sourceRoot?: string;
+    },
   ): Promise<ApplyImportResponse> {
     const pp = this.settings;
+    const org = this.organizationSettings;
+    const effectiveFileAction: ImportFileAction = extra?.fileActionOverride ?? pp.fileAction;
+    const sourceRoot = extra?.sourceRoot ? path.resolve(extra.sourceRoot) : path.resolve(pp.downloadsDir);
+
     const row = this.dbContext.db
       .select()
       .from(importItems)
@@ -804,16 +909,11 @@ export class LibraryImporter {
     }
 
     const safeArtist = sanitizePathSegment(payload.artist, "Unknown Artist");
-    const albumFolderName =
-      pp.includeYearInAlbumFolder && payload.year && payload.year > 0
-        ? `${sanitizePathSegment(payload.album, "Unknown Album")} (${payload.year})`
-        : sanitizePathSegment(payload.album, "Unknown Album");
-    const destinationDir = path.join(this.musicDir, safeArtist, albumFolderName);
-
     const discNumbers = new Set(
       tracksToProcess.map((t) => t.discNumber ?? 1).filter((d) => d > 0),
     );
     const hasMultipleDiscs = discNumbers.size > 1;
+    let destinationDir = path.join(this.musicDir, safeArtist);
 
     let remoteCover: { bytes: Uint8Array; mimeType: string } | null = null;
     const coverCandidateUrl = extra?.coverArtUrl ?? payload.coverArtUrl ?? row.matchedCoverUrl;
@@ -854,14 +954,29 @@ export class LibraryImporter {
         // Fallback to extension
       }
 
-      const destName = formatTrackFilename(
-        trackNumber,
-        discNumber,
-        hasMultipleDiscs,
-        track.title,
-        ext,
-      );
-      const destPath = path.join(destinationDir, destName);
+      const relTarget =
+        formatTrackRelativePath(
+          {
+            albumArtist: payload.artist,
+            trackArtist,
+            album: payload.album,
+            title: track.title,
+            year: payload.year,
+            trackNumber,
+            discNumber,
+            hasMultipleDiscs,
+            extension: ext,
+          },
+          org,
+          { forExternalImport: true },
+        ) ??
+        path.join(
+          safeArtist,
+          sanitizePathSegment(payload.album, "Unknown Album"),
+          formatTrackFilename(trackNumber, discNumber, hasMultipleDiscs, track.title, ext),
+        );
+      const destPath = path.join(this.musicDir, relTarget);
+      destinationDir = path.dirname(destPath);
 
       // Duplicate & Quality-Upgrade Handling
       const existingDup = this.findExistingDuplicate(trackArtist, track.title);
@@ -884,7 +999,7 @@ export class LibraryImporter {
         if (shouldSkip) {
           duplicatesSkipped += 1;
           let archivedTo: string | null = null;
-          if (pp.fileAction === "move") {
+          if (effectiveFileAction === "move") {
             const dupDest = path.join(
               this.dataDir,
               "duplicates",
@@ -950,7 +1065,7 @@ export class LibraryImporter {
         }
       }
 
-      if (pp.fileAction === "copy") {
+      if (effectiveFileAction === "copy") {
         await copyFileSafe(track.filePath, destPath);
       } else {
         await moveFileSafe(track.filePath, destPath);
@@ -1002,14 +1117,14 @@ export class LibraryImporter {
       fs.existsSync(row.sourceDir) && fs.statSync(row.sourceDir).isDirectory()
         ? row.sourceDir
         : path.dirname(row.sourceDir);
-    const isSubfolder = path.resolve(sourceParentDir) !== path.resolve(pp.downloadsDir);
+    const isSubfolder = path.resolve(sourceParentDir) !== sourceRoot;
 
     if (isSubfolder) {
       if (filesImported > 0) {
-        await this.transferFolderCovers(sourceParentDir, destinationDir, pp.fileAction);
+        await this.transferFolderCovers(sourceParentDir, destinationDir, effectiveFileAction);
       }
-      if (pp.fileAction === "move") {
-        await removeEmptyDir(sourceParentDir, pp.downloadsDir);
+      if (effectiveFileAction === "move") {
+        await removeEmptyDir(sourceParentDir, sourceRoot);
       }
     }
 
@@ -1071,7 +1186,7 @@ export class LibraryImporter {
 
     this.activityLog?.success(
       "importer",
-      `Imported "${payload.artist} — ${payload.album}" (${filesImported} ${filesImported === 1 ? "file" : "files"} ${pp.fileAction === "copy" ? "copied" : "moved"}${duplicatesUpgraded > 0 ? `, ${duplicatesUpgraded} upgraded` : ""}${duplicatesSkipped > 0 ? `, ${duplicatesSkipped} duplicate skipped` : ""}${playlistsBackfilled > 0 ? `, ${playlistsBackfilled} playlist entries backfilled` : ""})`,
+      `Imported "${payload.artist} — ${payload.album}" (${filesImported} ${filesImported === 1 ? "file" : "files"} ${effectiveFileAction === "copy" ? "copied" : "moved"}${duplicatesUpgraded > 0 ? `, ${duplicatesUpgraded} upgraded` : ""}${duplicatesSkipped > 0 ? `, ${duplicatesSkipped} duplicate skipped` : ""}${playlistsBackfilled > 0 ? `, ${playlistsBackfilled} playlist entries backfilled` : ""})`,
       {
         destinationDir,
         filesImported,

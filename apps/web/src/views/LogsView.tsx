@@ -25,6 +25,7 @@ import {
 const CATEGORY_OPTIONS: Array<{ id: "" | ActivityLogCategory; label: string }> = [
   { id: "", label: "All" },
   { id: "importer", label: "Post-Processing" },
+  { id: "organizer", label: "Organizer" },
   { id: "scanner", label: "Scanner" },
   { id: "watcher", label: "Watcher" },
   { id: "playlist", label: "Playlists" },

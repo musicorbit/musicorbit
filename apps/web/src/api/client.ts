@@ -14,18 +14,23 @@ import type {
   ArtistSummary,
   AuthStatusResponse,
   BrowseDirectoriesResponse,
+  BulkImportFolderResponse,
   DownloadsListResponse,
   EditableTrackTags,
   EnqueueDownloadRequest,
   HealthResponse,
+  ImportFileAction,
   ImportItemStatus,
   ImportM3u8Response,
   ImportsListResponse,
   InboxScanResult,
+  LibraryOrganizationSettings,
   MetadataProvider,
   MissingTrackBatchJobStatus,
   MusicBrainzReleaseCandidate,
   MusicBrainzReleaseDetail,
+  OrganizeApplyResponse,
+  OrganizePreviewResponse,
   PlaylistDetailResponse,
   PlaylistImportFormat,
   PlaylistSummary,
@@ -784,4 +789,54 @@ export async function clearActivityLogs(): Promise<{ cleared: number }> {
 
 export function getActivityLogsExportUrl(): string {
   return "/api/system/logs/export";
+}
+
+export async function updateLibraryOrganizationSettings(
+  payload: Partial<LibraryOrganizationSettings>,
+): Promise<SystemSettingsResponse> {
+  const res = await fetch("/api/system/library-organization", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not update library organization (HTTP ${res.status})`);
+  }
+  return (await res.json()) as SystemSettingsResponse;
+}
+
+export function previewLibraryOrganization(): Promise<OrganizePreviewResponse> {
+  return getJson<OrganizePreviewResponse>("/api/system/library-organization/preview");
+}
+
+export async function applyLibraryOrganization(
+  trackIds?: number[],
+): Promise<OrganizeApplyResponse> {
+  const res = await fetch("/api/system/library-organization/apply", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(trackIds ? { trackIds } : {}),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not apply library organization (HTTP ${res.status})`);
+  }
+  return (await res.json()) as OrganizeApplyResponse;
+}
+
+export async function bulkImportExternalFolder(
+  sourceDir: string,
+  fileAction: ImportFileAction = "copy",
+): Promise<BulkImportFolderResponse> {
+  const res = await fetch("/api/imports/bulk-folder", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sourceDir, fileAction }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Bulk folder import failed (HTTP ${res.status})`);
+  }
+  return (await res.json()) as BulkImportFolderResponse;
 }

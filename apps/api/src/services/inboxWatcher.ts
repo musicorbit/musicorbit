@@ -2,22 +2,31 @@ import type { FastifyBaseLogger } from "fastify";
 import type { InboxScanResult, InboxWatcherStatus } from "@musicorbit/shared";
 import type { ActivityLogService } from "./activityLog.js";
 import type { LibraryImporter } from "./importer.js";
+import type { LibraryOrganizer } from "./libraryOrganizer.js";
+import type { LibraryScanner } from "./scanner.js";
 import type { SettingsService } from "./settings.js";
 
 export interface InboxWatcherDeps {
   importer: LibraryImporter;
   settingsService: SettingsService;
+  organizer?: LibraryOrganizer;
+  scanner?: LibraryScanner;
   activityLog?: ActivityLogService;
   logger?: FastifyBaseLogger;
 }
 
 /**
- * Lightweight background poller that watches DOWNLOADS_DIR when auto-watch is enabled.
- * Always skips recently modified / incomplete files so active slskd transfers are untouched.
+ * Lightweight background poller that:
+ *  1) watches DOWNLOADS_DIR when auto-watch is enabled, and
+ *  2) periodically scans & organizes newly dropped well-tagged files in MUSIC_DIR
+ *     when opt-in autoOrganizeLibrary is enabled.
+ * Always skips recently modified / incomplete files so active transfers are untouched.
  */
 export class InboxWatcher {
   private readonly importer: LibraryImporter;
   private readonly settingsService: SettingsService;
+  private readonly organizer?: LibraryOrganizer;
+  private readonly scanner?: LibraryScanner;
   private readonly activityLog?: ActivityLogService;
   private readonly logger?: FastifyBaseLogger;
   private timer: NodeJS.Timeout | null = null;
@@ -30,8 +39,17 @@ export class InboxWatcher {
   constructor(deps: InboxWatcherDeps) {
     this.importer = deps.importer;
     this.settingsService = deps.settingsService;
+    this.organizer = deps.organizer;
+    this.scanner = deps.scanner;
     this.activityLog = deps.activityLog;
     this.logger = deps.logger;
+  }
+
+  private shouldRunTimer(): boolean {
+    const pp = this.settingsService.getPostProcessingSettings();
+    const org = this.settingsService.getLibraryOrganizationSettings();
+    const orgActive = org.autoOrganizeLibrary && org.layoutPreset !== "keep_existing";
+    return pp.autoWatchEnabled || orgActive;
   }
 
   getStatus(): InboxWatcherStatus {
@@ -51,7 +69,8 @@ export class InboxWatcher {
    */
   syncWithSettings(): void {
     const pp = this.settingsService.getPostProcessingSettings();
-    if (!pp.autoWatchEnabled) {
+    const org = this.settingsService.getLibraryOrganizationSettings();
+    if (!this.shouldRunTimer()) {
       this.stop();
       return;
     }
@@ -69,8 +88,12 @@ export class InboxWatcher {
     this.timer.unref?.();
     this.activityLog?.info(
       "watcher",
-      `Auto-watch started (checking every ${pp.autoWatchIntervalSeconds}s)`,
-      { downloadsDir: pp.downloadsDir },
+      `Background watcher started (checking every ${pp.autoWatchIntervalSeconds}s)`,
+      {
+        downloadsWatch: pp.autoWatchEnabled,
+        autoOrganizeLibrary: org.autoOrganizeLibrary && org.layoutPreset !== "keep_existing",
+        downloadsDir: pp.downloadsDir,
+      },
     );
   }
 
@@ -78,7 +101,7 @@ export class InboxWatcher {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
-      this.activityLog?.info("watcher", "Auto-watch stopped");
+      this.activityLog?.info("watcher", "Background watcher stopped");
     }
   }
 
@@ -87,22 +110,37 @@ export class InboxWatcher {
     this.running = true;
     this.lastError = null;
     try {
-      const result = await this.importer.scanInbox({ requireStableFiles: true });
-      this.lastResult = result;
-      this.lastCheckAt = new Date().toISOString();
-      if (result.autoImported > 0 || result.needsReview > 0 || result.failed > 0) {
-        this.activityLog?.info(
-          "watcher",
-          `Auto-watch check: ${result.autoImported} imported, ${result.needsReview} queued for review, ${result.skipped} skipped`,
-          { ...result },
-        );
+      const pp = this.settingsService.getPostProcessingSettings();
+      const org = this.settingsService.getLibraryOrganizationSettings();
+      let result: InboxScanResult | null = null;
+
+      if (pp.autoWatchEnabled) {
+        result = await this.importer.scanInbox({ requireStableFiles: true });
+        this.lastResult = result;
+        if (result.autoImported > 0 || result.needsReview > 0 || result.failed > 0) {
+          this.activityLog?.info(
+            "watcher",
+            `Auto-watch check: ${result.autoImported} imported, ${result.needsReview} queued for review, ${result.skipped} skipped`,
+            { ...result },
+          );
+        }
       }
+
+      if (org.autoOrganizeLibrary && org.layoutPreset !== "keep_existing" && this.organizer) {
+        // Index any files dropped straight into MUSIC_DIR before organizing (quiet when nothing changed)
+        if (this.scanner) {
+          await this.scanner.runScan({ force: false, quietIfNoChanges: true });
+        }
+        await this.organizer.apply({ requireStableFiles: true });
+      }
+
+      this.lastCheckAt = new Date().toISOString();
       return result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.lastError = msg;
       this.lastCheckAt = new Date().toISOString();
-      this.activityLog?.error("watcher", `Auto-watch check failed: ${msg}`);
+      this.activityLog?.error("watcher", `Watcher check failed: ${msg}`);
       return null;
     } finally {
       this.running = false;
