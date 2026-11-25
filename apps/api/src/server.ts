@@ -8,6 +8,7 @@ import { registerHealthRoutes } from "./routes/health.js";
 import { registerImportRoutes } from "./routes/imports.js";
 import { registerLibraryRoutes } from "./routes/library.js";
 import { registerLogRoutes } from "./routes/logs.js";
+import { registerLyricsRoutes } from "./routes/lyrics.js";
 import { registerMediaRoutes } from "./routes/media.js";
 import { registerMetadataRoutes } from "./routes/metadata.js";
 import { registerPlaylistRoutes } from "./routes/playlists.js";
@@ -20,6 +21,7 @@ import { ArtistImageService } from "./services/artistImages.js";
 import { LibraryImporter } from "./services/importer.js";
 import { InboxWatcher } from "./services/inboxWatcher.js";
 import { LibraryOrganizer } from "./services/libraryOrganizer.js";
+import { LyricsService } from "./services/lyrics.js";
 import { MetadataLookupService } from "./services/metadataLookup.js";
 import { MusicBrainzClient } from "./services/musicbrainz.js";
 import { PlaylistBatchSearchService } from "./services/playlistBatchSearch.js";
@@ -38,6 +40,7 @@ export interface ServerHandle {
   musicBrainz: MusicBrainzClient;
   importer: LibraryImporter;
   libraryOrganizer: LibraryOrganizer;
+  lyricsService: LyricsService;
   inboxWatcher: InboxWatcher;
   batchSearchService: PlaylistBatchSearchService;
   playlistSync: PlaylistSyncService;
@@ -48,6 +51,7 @@ export interface BuildServerOptions {
   musicBrainzRateLimitMs?: number;
   batchSearchStaggerMs?: number;
   batchSearchPollMs?: number;
+  lyricsBatchDelayMs?: number;
 }
 
 /**
@@ -132,6 +136,18 @@ export async function buildServer(
     activityLog,
     logger: app.log,
   });
+  const lyricsService = new LyricsService({
+    dbContext,
+    activityLog,
+    logger: app.log,
+    fetchImpl: options?.fetchImpl,
+    batchDelayMs: options?.lyricsBatchDelayMs,
+  });
+  scanner.setOnTracksAdded((addedTrackIds) => {
+    if (settingsService.getPostProcessingSettings().autoFetchLyrics) {
+      lyricsService.startBatchFetch({ trackIds: addedTrackIds });
+    }
+  });
   const importer = new LibraryImporter({
     dbContext,
     musicDir: config.musicDir,
@@ -143,6 +159,7 @@ export async function buildServer(
     getLibraryOrganizationSettings: () => settingsService.getLibraryOrganizationSettings(),
     musicBrainz,
     metadataLookup,
+    lyricsService,
     batchSearchService,
     playlistSync,
     activityLog,
@@ -154,6 +171,7 @@ export async function buildServer(
     importer,
     settingsService,
     organizer: libraryOrganizer,
+    lyricsService,
     scanner,
     activityLog,
     logger: app.log,
@@ -179,6 +197,7 @@ export async function buildServer(
     activityLog,
   });
   await registerLogRoutes(app, { activityLog });
+  await registerLyricsRoutes(app, { lyricsService });
   await registerLibraryRoutes(app, { dbContext, scanner, albumTracklistService });
   await registerMediaRoutes(app, {
     dbContext,
@@ -227,6 +246,7 @@ export async function buildServer(
     musicBrainz,
     importer,
     libraryOrganizer,
+    lyricsService,
     inboxWatcher,
     batchSearchService,
     playlistSync,

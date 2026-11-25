@@ -25,6 +25,8 @@ import type {
   ImportsListResponse,
   InboxScanResult,
   LibraryOrganizationSettings,
+  LyricsBatchJobStatus,
+  LyricsLibraryStatsResponse,
   MetadataProvider,
   MissingTrackBatchJobStatus,
   MusicBrainzReleaseCandidate,
@@ -42,6 +44,7 @@ import type {
   SoulseekSearchResultsResponse,
   SoulseekSearchSummary,
   SystemSettingsResponse,
+  TrackLyricsResponse,
   TrackMetadataResponse,
   TrackMetadataSuggestion,
   TrackSummary,
@@ -839,4 +842,39 @@ export async function bulkImportExternalFolder(
     throw new Error(body?.error ?? `Bulk folder import failed (HTTP ${res.status})`);
   }
   return (await res.json()) as BulkImportFolderResponse;
+}
+
+export function fetchTrackLyrics(
+  trackId: number,
+  refresh = false,
+): Promise<TrackLyricsResponse> {
+  const qs = refresh ? "?refresh=true" : "";
+  return getJson<TrackLyricsResponse>(`/api/tracks/${trackId}/lyrics${qs}`);
+}
+
+export function fetchLyricsStatus(): Promise<LyricsLibraryStatsResponse> {
+  return getJson<LyricsLibraryStatsResponse>("/api/system/lyrics/status");
+}
+
+export async function startBatchLyricsFetch(
+  retryNotFound = false,
+): Promise<LyricsBatchJobStatus> {
+  const res = await fetch("/api/system/lyrics/fetch-missing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ retryNotFound }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not start lyrics fetch (HTTP ${res.status})`);
+  }
+  return (await res.json()) as LyricsBatchJobStatus;
+}
+
+export async function cancelBatchLyricsFetch(): Promise<LyricsBatchJobStatus> {
+  const res = await fetch("/api/system/lyrics/cancel", { method: "POST" });
+  if (!res.ok) {
+    throw new Error(`Could not cancel lyrics fetch (HTTP ${res.status})`);
+  }
+  return (await res.json()) as LyricsBatchJobStatus;
 }

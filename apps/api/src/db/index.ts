@@ -185,6 +185,15 @@ export function initDatabase(dbPath: string): DbContext {
       updated_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS track_lyrics (
+      track_id INTEGER PRIMARY KEY REFERENCES tracks(id) ON DELETE CASCADE,
+      source TEXT NOT NULL,
+      synced_lrc TEXT,
+      plain_lyrics TEXT,
+      instrumental INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON albums(artist_id);
     CREATE INDEX IF NOT EXISTS idx_tracks_album_id ON tracks(album_id);
     CREATE INDEX IF NOT EXISTS idx_tracks_artist_id ON tracks(artist_id);

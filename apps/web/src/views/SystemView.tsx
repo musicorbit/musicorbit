@@ -11,12 +11,14 @@ import {
   FolderTree,
   ListMusic,
   Loader2,
+  Mic2,
   Play,
   Radio,
   RefreshCw,
   RotateCcw,
   Search,
   Sparkles,
+  Square,
 } from "lucide-react";
 import type {
   AcquisitionStatusResponse,
@@ -25,6 +27,7 @@ import type {
   ImportFileAction,
   InboxScanResult,
   LibraryLayoutPreset,
+  LyricsLibraryStatsResponse,
   MultiDiscStyle,
   OrganizeApplyResponse,
   OrganizePreviewResponse,
@@ -34,10 +37,13 @@ import type {
 } from "@musicorbit/shared";
 import {
   applyLibraryOrganization,
+  cancelBatchLyricsFetch,
+  fetchLyricsStatus,
   fetchSystemSettings,
   previewLibraryOrganization,
   runPlaylistSyncNow,
   scanInbox,
+  startBatchLyricsFetch,
   updateLibraryOrganizationSettings,
   updatePlaylistSyncSettings,
   updatePostProcessingSettings,
@@ -167,6 +173,12 @@ export function SystemView({
   const [runningSync, setRunningSync] = useState(false);
   const [syncResult, setSyncResult] = useState<PlaylistSyncRunResult | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+
+  // Synced Lyrics backfill state
+  const [lyricsStats, setLyricsStats] = useState<LyricsLibraryStatsResponse | null>(null);
+  const [startingLyrics, setStartingLyrics] = useState(false);
+  const [lyricsError, setLyricsError] = useState<string | null>(null);
+
   const [savingPp, setSavingPp] = useState(false);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [ppError, setPpError] = useState<string | null>(null);
@@ -175,8 +187,12 @@ export function SystemView({
 
   const loadSettings = useCallback(async () => {
     try {
-      const next = await fetchSystemSettings();
+      const [next, lyr] = await Promise.all([
+        fetchSystemSettings(),
+        fetchLyricsStatus().catch(() => null),
+      ]);
       setSysSettings(next);
+      if (lyr) setLyricsStats(lyr);
       setFileAction(next.postProcessing.fileAction);
       setDuplicatePolicy(next.postProcessing.duplicatePolicy);
       setAutoWatchEnabled(next.postProcessing.autoWatchEnabled);
@@ -198,6 +214,41 @@ export function SystemView({
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  // Poll lyrics batch backfill progress while running
+  useEffect(() => {
+    if (lyricsStats?.job.state !== "running") return;
+    const timer = window.setInterval(() => {
+      void fetchLyricsStatus()
+        .then(setLyricsStats)
+        .catch(() => {});
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [lyricsStats?.job.state]);
+
+  const handleStartLyricsFetch = async (retryNotFound = false) => {
+    setStartingLyrics(true);
+    setLyricsError(null);
+    try {
+      await startBatchLyricsFetch(retryNotFound);
+      const next = await fetchLyricsStatus();
+      setLyricsStats(next);
+    } catch (err) {
+      setLyricsError(err instanceof Error ? err.message : "Could not start lyrics fetch");
+    } finally {
+      setStartingLyrics(false);
+    }
+  };
+
+  const handleCancelLyricsFetch = async () => {
+    try {
+      await cancelBatchLyricsFetch();
+      const next = await fetchLyricsStatus();
+      setLyricsStats(next);
+    } catch {
+      // Non-fatal
+    }
+  };
 
   const handleSaveOrganization = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -1288,6 +1339,140 @@ export function SystemView({
                     </code>
                     {syncResult.files.length > 0 ? ` (${syncResult.files.join(", ")})` : ""}.
                   </span>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Synced Lyrics (LRCLIB & .lrc Sidecars) */}
+          {lyricsStats && (
+            <section className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900/50 p-6">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 className="flex items-center gap-2 text-base font-semibold text-zinc-100">
+                    <Mic2 className="h-4 w-4 text-amber-400" />
+                    Synced Sing-Along Lyrics (LRCLIB &amp; <code>.lrc</code> Sidecars)
+                  </h3>
+                  <p className="mt-0.5 text-xs text-zinc-400">
+                    Fetches duration-matched time-synced lyrics from LRCLIB, caches them in SQLite,
+                    and writes <code>.lrc</code> sidecar files next to each song (compatible with
+                    Navidrome &amp; Symfonium). Click the microphone icon in the player bar while
+                    playing any song to sing along.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {lyricsStats.job.state === "running" ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleCancelLyricsFetch()}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-500/40 bg-red-500/15 px-3 py-1.5 text-xs font-semibold text-red-200 transition hover:bg-red-500/25"
+                    >
+                      <Square className="h-3.5 w-3.5 fill-current" />
+                      Stop
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        disabled={startingLyrics || lyricsStats.totalTracks === 0}
+                        onClick={() => void handleStartLyricsFetch(false)}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400 disabled:opacity-45"
+                      >
+                        {startingLyrics ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Mic2 className="h-3.5 w-3.5" />
+                        )}
+                        Fetch Missing Lyrics
+                      </button>
+
+                      {lyricsStats.missingLyrics > 0 && (
+                        <button
+                          type="button"
+                          disabled={startingLyrics}
+                          onClick={() => void handleStartLyricsFetch(true)}
+                          title="Re-query tracks that previously returned no lyrics match"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-45"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          Retry All Missing
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 rounded-xl border border-zinc-800/90 bg-zinc-950/60 p-4 sm:grid-cols-4">
+                <div>
+                  <p className="text-lg font-semibold text-emerald-400">
+                    {lyricsStats.withSyncedLyrics}
+                  </p>
+                  <p className="text-[11px] text-zinc-400">Synced (.lrc)</p>
+                </div>
+                <div>
+                  <p className="text-lg font-semibold text-zinc-200">
+                    {lyricsStats.withPlainOnly}
+                  </p>
+                  <p className="text-[11px] text-zinc-400">Plain Only</p>
+                </div>
+                <div>
+                  <p className="text-lg font-semibold text-zinc-300">
+                    {lyricsStats.instrumental}
+                  </p>
+                  <p className="text-[11px] text-zinc-400">Instrumental</p>
+                </div>
+                <div>
+                  <p className="text-lg font-semibold text-amber-300">
+                    {lyricsStats.missingLyrics}
+                  </p>
+                  <p className="text-[11px] text-zinc-400">Missing</p>
+                </div>
+              </div>
+
+              {lyricsStats.job.state === "running" && (
+                <div className="space-y-1.5 rounded-xl border border-zinc-800 bg-zinc-950/70 p-3 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-zinc-200">
+                      Fetching{" "}
+                      <strong className="text-amber-300">
+                        {lyricsStats.job.currentTrackTitle ?? "tracks…"}
+                      </strong>
+                    </span>
+                    <span className="shrink-0 font-mono text-zinc-400">
+                      {lyricsStats.job.processed} / {lyricsStats.job.total}
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                    <div
+                      className="h-full bg-amber-400 transition-all duration-300"
+                      style={{
+                        width: `${Math.round((lyricsStats.job.processed / Math.max(1, lyricsStats.job.total)) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {lyricsStats.job.state === "completed" && lyricsStats.job.total > 0 && (
+                <div className="flex items-start gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-200">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+                  <span>
+                    Finished checking <strong>{lyricsStats.job.total}</strong>{" "}
+                    {lyricsStats.job.total === 1 ? "track" : "tracks"} —{" "}
+                    <strong>{lyricsStats.job.syncedFound}</strong> synced (<code>.lrc</code> saved),{" "}
+                    <strong>{lyricsStats.job.plainFound}</strong> plain,{" "}
+                    <strong>{lyricsStats.job.instrumental}</strong> instrumental,{" "}
+                    <strong>{lyricsStats.job.notFound}</strong> not found.
+                  </span>
+                </div>
+              )}
+
+              {lyricsError && (
+                <div className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" />
+                  <span>{lyricsError}</span>
                 </div>
               )}
             </section>

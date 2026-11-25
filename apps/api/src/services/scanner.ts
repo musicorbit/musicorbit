@@ -184,6 +184,7 @@ export class LibraryScanner {
   private readonly logger?: FastifyBaseLogger;
   private activePromise: Promise<ScanStatusResponse> | null = null;
   private currentStatus: ScanStatusResponse | null = null;
+  private onTracksAddedCallback?: (addedTrackIds: number[]) => void;
 
   constructor(deps: LibraryScannerDeps) {
     this.dbContext = deps.dbContext;
@@ -191,6 +192,10 @@ export class LibraryScanner {
     this.coversDir = deps.coversDir;
     this.activityLog = deps.activityLog;
     this.logger = deps.logger;
+  }
+
+  setOnTracksAdded(cb: (addedTrackIds: number[]) => void): void {
+    this.onTracksAddedCallback = cb;
   }
 
   private get musicDir(): string {
@@ -271,6 +276,7 @@ export class LibraryScanner {
   async runScan(options?: {
     force?: boolean;
     quietIfNoChanges?: boolean;
+    skipPostScanHooks?: boolean;
   }): Promise<ScanStatusResponse> {
     if (this.activePromise) {
       return this.activePromise;
@@ -278,6 +284,7 @@ export class LibraryScanner {
 
     const force = Boolean(options?.force);
     const quietIfNoChanges = Boolean(options?.quietIfNoChanges);
+    const skipPostScanHooks = Boolean(options?.skipPostScanHooks);
     const startedAt = new Date();
     const inserted = this.dbContext.db
       .insert(scanJobs)
@@ -327,6 +334,7 @@ export class LibraryScanner {
         const existingByPath = new Map(existingRows.map((row) => [row.filePath, row]));
         const seenPaths = new Set<string>();
         const folderCoverCache = new Map<string, string | null>();
+        const addedTrackIds: number[] = [];
 
         for (const file of discovered) {
           seenPaths.add(file.filePath);
@@ -345,11 +353,12 @@ export class LibraryScanner {
           }
 
           try {
-            await this.indexFile(file, existing?.id ?? null, folderCoverCache);
+            const trackId = await this.indexFile(file, existing?.id ?? null, folderCoverCache);
             if (existing) {
               status.filesUpdated += 1;
             } else {
               status.filesAdded += 1;
+              if (trackId !== null) addedTrackIds.push(trackId);
             }
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -403,6 +412,13 @@ export class LibraryScanner {
             },
           );
         }
+        if (!skipPostScanHooks && addedTrackIds.length > 0 && this.onTracksAddedCallback) {
+          try {
+            this.onTracksAddedCallback(addedTrackIds);
+          } catch {
+            // Non-fatal hook error
+          }
+        }
         return this.getStatus();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -428,7 +444,7 @@ export class LibraryScanner {
     file: DiscoveredFile,
     existingTrackId: number | null,
     folderCoverCache: Map<string, string | null>,
-  ): Promise<void> {
+  ): Promise<number | null> {
     const metadata = await parseFile(file.filePath, { duration: true });
     const { common, format } = metadata;
 
@@ -512,8 +528,9 @@ export class LibraryScanner {
         })
         .where(eq(tracks.id, existingTrackId))
         .run();
+      return existingTrackId;
     } else {
-      this.dbContext.db
+      const inserted = this.dbContext.db
         .insert(tracks)
         .values({
           title,
@@ -532,7 +549,9 @@ export class LibraryScanner {
           createdAt: now,
           updatedAt: now,
         })
-        .run();
+        .returning({ id: tracks.id })
+        .get();
+      return inserted?.id ?? null;
     }
   }
 

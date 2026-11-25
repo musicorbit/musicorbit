@@ -680,6 +680,7 @@ export type ActivityLogCategory =
   | "scanner"
   | "importer"
   | "organizer"
+  | "lyrics"
   | "watcher"
   | "playlist"
   | "metadata"
@@ -714,4 +715,49 @@ export interface AuthStatusResponse {
   needsSetup: boolean;
   authenticated: boolean;
   user: AuthUser | null;
+}
+
+/**
+ * Synced sing-along lyrics (LRCLIB + .lrc sidecar files + SQLite cache).
+ */
+export interface SyncedLyricLine {
+  timeSeconds: number;
+  text: string;
+}
+
+export type TrackLyricsSource = "sidecar" | "embedded" | "lrclib" | "none";
+
+export interface TrackLyricsResponse {
+  trackId: number;
+  hasSynced: boolean;
+  hasPlain: boolean;
+  instrumental: boolean;
+  source: TrackLyricsSource;
+  syncedLines: SyncedLyricLine[];
+  plainLyrics: string | null;
+  lrcPath: string | null;
+  fetchedAt: string | null;
+}
+
+export interface LyricsBatchJobStatus {
+  state: "idle" | "running" | "completed" | "cancelled";
+  total: number;
+  processed: number;
+  syncedFound: number;
+  plainFound: number;
+  instrumental: number;
+  notFound: number;
+  errors: number;
+  currentTrackTitle: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface LyricsLibraryStatsResponse {
+  totalTracks: number;
+  withSyncedLyrics: number;
+  withPlainOnly: number;
+  instrumental: number;
+  missingLyrics: number;
+  job: LyricsBatchJobStatus;
 }

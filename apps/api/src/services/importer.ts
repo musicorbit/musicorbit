@@ -25,6 +25,7 @@ import type { DbContext } from "../db/index.js";
 import { albums, importItems, tracks } from "../db/schema.js";
 import type { ActivityLogService } from "./activityLog.js";
 import { DEFAULT_LIBRARY_ORGANIZATION, formatTrackRelativePath } from "./libraryLayout.js";
+import { getSidecarLrcPath, type LyricsService } from "./lyrics.js";
 import { isAllowedCoverArtUrl, type MetadataLookupService } from "./metadataLookup.js";
 import type { MusicBrainzClient } from "./musicbrainz.js";
 import type { PlaylistBatchSearchService } from "./playlistBatchSearch.js";
@@ -340,6 +341,7 @@ export interface LibraryImporterDeps {
   getLibraryOrganizationSettings?: () => LibraryOrganizationSettings;
   musicBrainz: MusicBrainzClient;
   metadataLookup?: MetadataLookupService;
+  lyricsService?: LyricsService;
   batchSearchService?: PlaylistBatchSearchService;
   playlistSync?: PlaylistSyncService;
   activityLog?: ActivityLogService;
@@ -375,6 +377,7 @@ export class LibraryImporter {
   private readonly getLibraryOrganizationSettingsFn: () => LibraryOrganizationSettings;
   private readonly musicBrainz: MusicBrainzClient;
   private readonly metadataLookup?: MetadataLookupService;
+  private readonly lyricsService?: LyricsService;
   private readonly batchSearchService?: PlaylistBatchSearchService;
   private readonly playlistSync?: PlaylistSyncService;
   private readonly activityLog?: ActivityLogService;
@@ -411,6 +414,7 @@ export class LibraryImporter {
       }));
     this.musicBrainz = deps.musicBrainz;
     this.metadataLookup = deps.metadataLookup;
+    this.lyricsService = deps.lyricsService;
     this.batchSearchService = deps.batchSearchService;
     this.playlistSync = deps.playlistSync;
     this.activityLog = deps.activityLog;
@@ -1049,6 +1053,16 @@ export class LibraryImporter {
               `${Date.now()}-${path.basename(existingDup.filePath)}`,
             );
             await moveFileSafe(existingDup.filePath, archiveDest).catch(() => {});
+            // Carry paired .lrc sidecar over to upgraded track (or clean it out of the old folder)
+            const oldLrc = getSidecarLrcPath(existingDup.filePath);
+            const newLrc = getSidecarLrcPath(destPath);
+            if (fs.existsSync(oldLrc) && path.resolve(oldLrc) !== path.resolve(newLrc)) {
+              if (!fs.existsSync(newLrc)) {
+                await moveFileSafe(oldLrc, newLrc).catch(() => {});
+              } else {
+                await fsp.unlink(oldLrc).catch(() => {});
+              }
+            }
             // Clean up now-empty old album/artist folder inside MUSIC_DIR
             await removeEmptyDir(oldDir, this.musicDir);
             duplicatesUpgraded += 1;
@@ -1072,17 +1086,39 @@ export class LibraryImporter {
       }
 
       let fetchedLyrics: string | null = null;
-      if (pp.autoFetchLyrics && this.metadataLookup) {
-        try {
-          const lrc = await this.metadataLookup.lookup({
-            provider: "lrclib",
-            title: track.title,
-            artist: trackArtist,
-            album: payload.album,
-          });
-          fetchedLyrics = lrc[0]?.fields.lyrics ?? null;
-        } catch {
-          // Non-fatal
+      if (pp.autoFetchLyrics) {
+        if (this.lyricsService) {
+          try {
+            let durationSec: number | null = null;
+            try {
+              const durMeta = await parseFile(destPath, { duration: true, skipCovers: true });
+              durationSec = durMeta.format.duration ?? null;
+            } catch {
+              // Non-fatal
+            }
+            const lrcResult = await this.lyricsService.fetchAndWriteSidecarForFile({
+              filePath: destPath,
+              artist: trackArtist,
+              title: track.title,
+              album: payload.album,
+              durationSeconds: durationSec,
+            });
+            fetchedLyrics = lrcResult.syncedLrc ?? lrcResult.plainLyrics ?? null;
+          } catch {
+            // Non-fatal
+          }
+        } else if (this.metadataLookup) {
+          try {
+            const lrc = await this.metadataLookup.lookup({
+              provider: "lrclib",
+              title: track.title,
+              artist: trackArtist,
+              album: payload.album,
+            });
+            fetchedLyrics = lrc[0]?.fields.lyrics ?? null;
+          } catch {
+            // Non-fatal
+          }
         }
       }
 

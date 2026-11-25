@@ -13,6 +13,7 @@ import {
   formatTrackRelativePath,
   getMissingOrganizationTagReason,
 } from "./libraryLayout.js";
+import { getSidecarLrcPath } from "./lyrics.js";
 import type { PlaylistSyncService } from "./playlistSync.js";
 import type { SettingsService } from "./settings.js";
 
@@ -477,6 +478,13 @@ export class LibraryOrganizer {
       try {
         const oldDir = path.dirname(item.currentPath);
         await moveFileHandlingCaseAndExdev(item.currentPath, item.targetPath);
+
+        // Move paired .lrc sidecar file right alongside the relocated audio file
+        const oldLrc = getSidecarLrcPath(item.currentPath);
+        const newLrc = getSidecarLrcPath(item.targetPath);
+        if (fs.existsSync(oldLrc) && path.resolve(oldLrc) !== path.resolve(newLrc)) {
+          await moveFileHandlingCaseAndExdev(oldLrc, newLrc).catch(() => {});
+        }
 
         const stat = await fsp.stat(item.targetPath);
         updateTrackPathStmt.run(

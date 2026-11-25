@@ -3,6 +3,7 @@ import type { InboxScanResult, InboxWatcherStatus } from "@musicorbit/shared";
 import type { ActivityLogService } from "./activityLog.js";
 import type { LibraryImporter } from "./importer.js";
 import type { LibraryOrganizer } from "./libraryOrganizer.js";
+import type { LyricsService } from "./lyrics.js";
 import type { LibraryScanner } from "./scanner.js";
 import type { SettingsService } from "./settings.js";
 
@@ -10,6 +11,7 @@ export interface InboxWatcherDeps {
   importer: LibraryImporter;
   settingsService: SettingsService;
   organizer?: LibraryOrganizer;
+  lyricsService?: LyricsService;
   scanner?: LibraryScanner;
   activityLog?: ActivityLogService;
   logger?: FastifyBaseLogger;
@@ -26,6 +28,7 @@ export class InboxWatcher {
   private readonly importer: LibraryImporter;
   private readonly settingsService: SettingsService;
   private readonly organizer?: LibraryOrganizer;
+  private readonly lyricsService?: LyricsService;
   private readonly scanner?: LibraryScanner;
   private readonly activityLog?: ActivityLogService;
   private readonly logger?: FastifyBaseLogger;
@@ -40,6 +43,7 @@ export class InboxWatcher {
     this.importer = deps.importer;
     this.settingsService = deps.settingsService;
     this.organizer = deps.organizer;
+    this.lyricsService = deps.lyricsService;
     this.scanner = deps.scanner;
     this.activityLog = deps.activityLog;
     this.logger = deps.logger;
@@ -128,10 +132,20 @@ export class InboxWatcher {
 
       if (org.autoOrganizeLibrary && org.layoutPreset !== "keep_existing" && this.organizer) {
         // Index any files dropped straight into MUSIC_DIR before organizing (quiet when nothing changed)
+        let filesAdded = 0;
         if (this.scanner) {
-          await this.scanner.runScan({ force: false, quietIfNoChanges: true });
+          const scanStatus = await this.scanner.runScan({
+            force: false,
+            quietIfNoChanges: true,
+            skipPostScanHooks: true,
+          });
+          filesAdded = scanStatus.filesAdded;
         }
         await this.organizer.apply({ requireStableFiles: true });
+        // Fetch synced .lrc sidecars AFTER files land in their final organized paths
+        if (filesAdded > 0 && pp.autoFetchLyrics && this.lyricsService) {
+          this.lyricsService.startBatchFetch();
+        }
       }
 
       this.lastCheckAt = new Date().toISOString();

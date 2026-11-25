@@ -170,3 +170,14 @@ export const albumTracklistCache = sqliteTable("album_tracklist_cache", {
   tracksJson: text("tracks_json").notNull().default("[]"),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
+
+export const trackLyrics = sqliteTable("track_lyrics", {
+  trackId: integer("track_id")
+    .primaryKey()
+    .references(() => tracks.id, { onDelete: "cascade" }),
+  source: text("source").notNull(), // "sidecar" | "embedded" | "lrclib" | "none"
+  syncedLrc: text("synced_lrc"),
+  plainLyrics: text("plain_lyrics"),
+  instrumental: integer("instrumental").notNull().default(0),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});

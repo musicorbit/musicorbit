@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import {
   AlertCircle,
   ListMusic,
+  Mic2,
   Pause,
   Play,
   Repeat,
@@ -18,6 +19,7 @@ import { usePlayer } from "../context/PlayerContext";
 import { useModalAccessibility } from "../hooks/useModalAccessibility";
 import { formatBitrate, formatCodec, formatDuration } from "../utils/format";
 import { AlbumCover } from "./AlbumCover";
+import { LyricsOverlay } from "./LyricsOverlay";
 
 interface PlayerBarProps {
   onSelectAlbum: (albumId: number) => void;
@@ -53,6 +55,7 @@ export function PlayerBar({ onSelectAlbum, onSelectArtist }: PlayerBarProps) {
   } = usePlayer();
 
   const [queueOpen, setQueueOpen] = useState(false);
+  const [lyricsOpen, setLyricsOpen] = useState(false);
   const queueDialogRef = useRef<HTMLDivElement | null>(null);
 
   useModalAccessibility(queueDialogRef, () => setQueueOpen(false), queueOpen);
@@ -66,6 +69,19 @@ export function PlayerBar({ onSelectAlbum, onSelectArtist }: PlayerBarProps) {
 
   return (
     <>
+      {/* Full-stage Spotify-style Synced Sing-Along Lyrics Overlay */}
+      {lyricsOpen && (
+        <LyricsOverlay
+          track={currentTrack}
+          currentTime={currentTime}
+          isPlaying={isPlaying}
+          onSeek={seek}
+          onClose={() => setLyricsOpen(false)}
+          onSelectAlbum={onSelectAlbum}
+          onSelectArtist={onSelectArtist}
+        />
+      )}
+
       {/* Slide-over Queue Drawer */}
       {queueOpen && (
         <div
@@ -154,7 +170,7 @@ export function PlayerBar({ onSelectAlbum, onSelectArtist }: PlayerBarProps) {
       )}
 
       {/* Fixed Bottom Player Bar */}
-      <footer className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-800/90 bg-zinc-950/95 px-4 py-3 backdrop-blur-xl">
+      <footer className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-800/90 bg-zinc-950/95 px-4 py-3 backdrop-blur-xl">
         <div className="mx-auto grid max-w-7xl grid-cols-1 items-center gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1fr)]">
           {/* Track info */}
           <div className="flex min-w-0 items-center gap-3">
@@ -282,16 +298,43 @@ export function PlayerBar({ onSelectAlbum, onSelectArtist }: PlayerBarProps) {
             </div>
           </div>
 
-          {/* Right controls: Codec badge, Queue, Volume */}
-          <div className="hidden items-center justify-end gap-3 md:flex">
-            <span className="rounded bg-zinc-900 px-2 py-0.5 text-[11px] font-medium text-zinc-400 ring-1 ring-zinc-800">
+          {/* Right controls: Codec badge, Lyrics, Queue, Volume */}
+          <div className="flex items-center justify-end gap-2 md:gap-3">
+            <span className="hidden rounded bg-zinc-900 px-2 py-0.5 text-[11px] font-medium text-zinc-400 ring-1 ring-zinc-800 lg:inline">
               {formatCodec(currentTrack.codec)}
               {bitrateLabel ? ` · ${bitrateLabel}` : ""}
             </span>
 
             <button
               type="button"
-              onClick={() => setQueueOpen((o) => !o)}
+              onClick={() => {
+                setLyricsOpen((open) => {
+                  const next = !open;
+                  if (next) setQueueOpen(false);
+                  return next;
+                });
+              }}
+              aria-label="Toggle lyrics"
+              aria-pressed={lyricsOpen}
+              title="Synced sing-along lyrics"
+              className={`rounded-lg p-2 transition ${
+                lyricsOpen
+                  ? "bg-amber-500/15 text-amber-400"
+                  : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100"
+              }`}
+            >
+              <Mic2 className="h-4 w-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setQueueOpen((open) => {
+                  const next = !open;
+                  if (next) setLyricsOpen(false);
+                  return next;
+                });
+              }}
               aria-label="Toggle queue"
               title="Play queue"
               className={`relative rounded-lg p-2 transition ${
@@ -308,7 +351,7 @@ export function PlayerBar({ onSelectAlbum, onSelectArtist }: PlayerBarProps) {
               )}
             </button>
 
-            <div className="flex items-center gap-1.5">
+            <div className="hidden items-center gap-1.5 md:flex">
               <button
                 type="button"
                 onClick={toggleMute}
