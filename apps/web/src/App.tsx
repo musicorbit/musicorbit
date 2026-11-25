@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
   Disc3,
+  HelpCircle,
   KeyRound,
   ListMusic,
   LogOut,
@@ -37,10 +38,12 @@ import {
   fetchScanStatus,
   fetchTracks,
   logoutUser,
+  setOnboardingCompleted,
   triggerScan,
 } from "./api/client";
 import { AuthGate } from "./components/AuthGate";
 import { ChangePasswordModal } from "./components/ChangePasswordModal";
+import { OnboardingTour } from "./components/OnboardingTour";
 import { PlayerBar } from "./components/PlayerBar";
 import { UploadMusicModal } from "./components/UploadMusicModal";
 import { PlayerProvider, usePlayer } from "./context/PlayerContext";
@@ -90,6 +93,8 @@ function MusicOrbitShell() {
   );
   const [uploadOpen, setUploadOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  const autoTourTriggeredForUserRef = useRef<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [startingScan, setStartingScan] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -205,6 +210,8 @@ function MusicOrbitShell() {
       setSearchQuery("");
       setUploadOpen(false);
       setChangePasswordOpen(false);
+      setTourOpen(false);
+      autoTourTriggeredForUserRef.current = null;
       setRoute({ view: "albums" });
       const next = await fetchAuthStatus().catch(() => ({
         authEnabled: true,
@@ -227,6 +234,34 @@ function MusicOrbitShell() {
       setSoulseekLaunch({ query: initialQuery.trim(), nonce: Date.now() });
     }
     setRoute({ view: "search" });
+  }, []);
+
+  // Auto-launch the spotlight onboarding tour once on a user's first login (after initial status loads)
+  useEffect(() => {
+    const user = authStatus?.user;
+    if (!authChecked || !isAuthorized || !user || loading) return;
+    if (user.onboardingCompleted) return;
+    if (autoTourTriggeredForUserRef.current === user.id) return;
+    autoTourTriggeredForUserRef.current = user.id;
+    setRoute({ view: "albums" });
+    setTourOpen(true);
+  }, [authChecked, isAuthorized, authStatus?.user, loading]);
+
+  const handleCompleteTour = useCallback(() => {
+    setTourOpen(false);
+    setAuthStatus((prev) =>
+      prev?.user
+        ? {
+            ...prev,
+            user: { ...prev.user, onboardingCompleted: true },
+          }
+        : prev,
+    );
+    void setOnboardingCompleted(true).catch(() => {});
+  }, []);
+
+  const handleEnsureAlbumsView = useCallback(() => {
+    setRoute((prev) => (prev.view === "albums" ? prev : { view: "albums" }));
   }, []);
 
   // Bounce away from routes that are unavailable for the current user's role/permissions
@@ -351,6 +386,7 @@ function MusicOrbitShell() {
               <button
                 key={id}
                 type="button"
+                data-tour={`nav-${id}`}
                 onClick={() => setRoute({ view: id })}
                 className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition ${
                   active
@@ -380,14 +416,29 @@ function MusicOrbitShell() {
 
         <div className="mt-6 space-y-2.5">
           {authStatus?.authEnabled && authStatus.user && (
-            <div className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs">
+            <div
+              data-tour="user-card"
+              className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs"
+            >
               <div className="min-w-0">
-                <p className="truncate text-zinc-100 font-medium">{authStatus.user.username}</p>
+                <p className="truncate font-medium text-zinc-100">{authStatus.user.username}</p>
                 <p className="text-[10px] text-zinc-500">
                   {authStatus.user.role === "admin" ? "Administrator" : "Member"}
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRoute({ view: "albums" });
+                    setTourOpen(true);
+                  }}
+                  title="Quick tour"
+                  aria-label="Replay quick tour"
+                  className="rounded p-1 text-zinc-400 transition hover:bg-zinc-800 hover:text-amber-300"
+                >
+                  <HelpCircle className="h-3.5 w-3.5" />
+                </button>
                 <button
                   type="button"
                   onClick={() => setChangePasswordOpen(true)}
@@ -410,8 +461,22 @@ function MusicOrbitShell() {
             </div>
           )}
 
-          <div className="rounded-lg border border-zinc-800/80 bg-zinc-900/60 p-3 text-xs text-zinc-400">
-            Open-source self-hosted music hub (AGPL-3.0).
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800/80 bg-zinc-900/60 p-3 text-xs text-zinc-400">
+            <span>Open-source self-hosted music hub (AGPL-3.0).</span>
+            {!authStatus?.authEnabled && (
+              <button
+                type="button"
+                onClick={() => {
+                  setRoute({ view: "albums" });
+                  setTourOpen(true);
+                }}
+                title="Replay quick tour"
+                aria-label="Replay quick tour"
+                className="shrink-0 rounded p-1 text-zinc-400 transition hover:bg-zinc-800 hover:text-amber-300"
+              >
+                <HelpCircle className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         </div>
       </aside>
@@ -460,6 +525,7 @@ function MusicOrbitShell() {
 
                 <button
                   type="button"
+                  data-tour="upload-btn"
                   onClick={() => setUploadOpen(true)}
                   title="Upload songs or an album folder from your computer"
                   className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-amber-400"
@@ -634,6 +700,17 @@ function MusicOrbitShell() {
         <ChangePasswordModal
           username={authStatus.user.username}
           onClose={() => setChangePasswordOpen(false)}
+        />
+      )}
+
+      {tourOpen && (
+        <OnboardingTour
+          username={authStatus?.user?.username ?? ""}
+          isAdmin={isAdmin}
+          authEnabled={Boolean(authStatus?.authEnabled)}
+          canUseSoulseek={canUseSoulseek}
+          onEnsureAlbumsView={handleEnsureAlbumsView}
+          onComplete={handleCompleteTour}
         />
       )}
     </div>

@@ -262,7 +262,25 @@ describe("Multi-User Authentication, Security, Isolation & slskd Routing", () =>
     assert.equal(setupBody.authenticated, true);
     assert.equal(setupBody.user?.role, "admin");
     assert.equal(setupBody.user?.canUseSoulseek, true);
+    assert.equal(setupBody.user?.onboardingCompleted, false);
     adminCookie = extractSessionCookie(setupRes.headers["set-cookie"]);
+
+    // Verify onboarding completion persists per user in SQLite
+    const onboardRes = await handle.app.inject({
+      method: "POST",
+      url: "/api/auth/onboarding",
+      headers: { cookie: adminCookie },
+      payload: { completed: true },
+    });
+    assert.equal(onboardRes.statusCode, 200);
+    const statusAfterOnboard = (
+      await handle.app.inject({
+        method: "GET",
+        url: "/api/auth/status",
+        headers: { cookie: adminCookie },
+      })
+    ).json() as AuthStatusResponse;
+    assert.equal(statusAfterOnboard.user?.onboardingCompleted, true);
 
     // Verify password is stored as salted scrypt hash — NEVER plaintext
     const dbUser = handle.dbContext.sqlite

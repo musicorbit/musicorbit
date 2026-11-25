@@ -104,6 +104,13 @@ export async function registerAuthRoutes(
     return row.cnt;
   };
 
+  const isOnboardingCompleted = (userId: number): boolean => {
+    const row = sqlite
+      .prepare("SELECT value FROM user_settings WHERE user_id = ? AND key = 'onboarding_completed'")
+      .get(userId) as { value: string } | undefined;
+    return row?.value === "true";
+  };
+
   const toAuthUser = (row: {
     id: number;
     username: string;
@@ -116,6 +123,7 @@ export async function registerAuthRoutes(
     role: row.role,
     musicDir: row.musicDir ? path.resolve(row.musicDir) : getDefaultMusicDir(),
     canUseSoulseek: row.role === "admin" || Boolean(row.canUseSoulseek),
+    onboardingCompleted: isOnboardingCompleted(row.id),
   });
 
   const resolveSession = (
@@ -184,6 +192,7 @@ export async function registerAuthRoutes(
         role: "admin",
         musicDir: getDefaultMusicDir(),
         canUseSoulseek: true,
+        onboardingCompleted: isOnboardingCompleted(1),
       };
       return;
     }
@@ -279,6 +288,7 @@ export async function registerAuthRoutes(
       role: "admin",
       musicDir: adminMusicDir,
       canUseSoulseek: true,
+      onboardingCompleted: false,
     };
 
     createSession(user.id, request, reply);
@@ -403,5 +413,27 @@ export async function registerAuthRoutes(
       userId: user.id,
     });
     return { ok: true };
+  });
+
+  // Persist first-login onboarding tour completion state per user
+  app.post("/api/auth/onboarding", async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      return reply.code(401).send({ error: "Authentication required" });
+    }
+    const body = (request.body ?? {}) as { completed?: unknown };
+    const completed = typeof body.completed === "boolean" ? body.completed : true;
+    const now = Date.now();
+    sqlite
+      .prepare(
+        `
+        INSERT INTO user_settings (user_id, key, value, updated_at)
+        VALUES (?, 'onboarding_completed', ?, ?)
+        ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `,
+      )
+      .run(user.id, completed ? "true" : "false", now);
+
+    return { ok: true, onboardingCompleted: completed };
   });
 }

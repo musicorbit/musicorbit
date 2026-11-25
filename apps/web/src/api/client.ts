@@ -982,6 +982,17 @@ export async function changePassword(payload: ChangePasswordRequest): Promise<vo
   }
 }
 
+export async function setOnboardingCompleted(completed = true): Promise<void> {
+  const res = await fetch("/api/auth/onboarding", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ completed }),
+  });
+  if (!res.ok) {
+    throw new Error(`Could not save onboarding state (HTTP ${res.status})`);
+  }
+}
+
 export function fetchUsers(): Promise<UserSummary[]> {
   return getJson<UserSummary[]>("/api/users");
 }

@@ -710,6 +710,7 @@ export interface AuthUser {
   role: "admin" | "user";
   musicDir: string;
   canUseSoulseek: boolean;
+  onboardingCompleted: boolean;
 }
 
 export interface AuthStatusResponse {
