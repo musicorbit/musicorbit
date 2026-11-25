@@ -83,7 +83,11 @@ function formatDateShort(iso: string): string {
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-export function LogsView() {
+interface LogsViewProps {
+  isAdmin?: boolean;
+}
+
+export function LogsView({ isAdmin = true }: LogsViewProps) {
   const [data, setData] = useState<ActivityLogsResponse | null>(null);
   const [category, setCategory] = useState<"" | ActivityLogCategory>("");
   const [level, setLevel] = useState<"" | ActivityLogLevel>("");
@@ -201,15 +205,17 @@ export function LogsView() {
             Export .log
           </a>
 
-          <button
-            type="button"
-            disabled={clearing || entries.length === 0}
-            onClick={() => void handleClear()}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-400 transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-40"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Clear
-          </button>
+          {isAdmin && (
+            <button
+              type="button"
+              disabled={clearing || entries.length === 0}
+              onClick={() => void handleClear()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-400 transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-40"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Clear
+            </button>
+          )}
         </div>
       </div>
 

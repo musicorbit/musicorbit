@@ -10,6 +10,7 @@ dist/
 .env.local
 data/
 sample-music/
+libraries/
 downloads/
 *.db
 *.db-shm

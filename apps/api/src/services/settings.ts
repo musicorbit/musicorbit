@@ -193,6 +193,56 @@ export class SettingsService {
     return overridden ? path.resolve(overridden) : this.defaultMusicDir;
   }
 
+  getPrimaryAdminId(): number {
+    const row = this.dbContext.sqlite
+      .prepare("SELECT id FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1")
+      .get() as { id: number } | undefined;
+    return row?.id ?? 1;
+  }
+
+  getUserMusicDir(userId?: number): string {
+    if (userId === undefined) return this.getMusicDir();
+    const row = this.dbContext.sqlite
+      .prepare("SELECT music_dir AS musicDir, role FROM users WHERE id = ?")
+      .get(userId) as { musicDir: string | null; role: string } | undefined;
+    if (row?.musicDir) {
+      return path.resolve(row.musicDir);
+    }
+    return this.getMusicDir();
+  }
+
+  private readUserSettingMap(userId: number): Map<string, string> {
+    const rows = this.dbContext.sqlite
+      .prepare("SELECT key, value FROM user_settings WHERE user_id = ?")
+      .all(userId) as Array<{ key: string; value: string }>;
+    const map = new Map<string, string>();
+    for (const r of rows) {
+      map.set(r.key, r.value);
+    }
+    return map;
+  }
+
+  private saveUserSetting(userId: number, key: string, value: string): void {
+    const existsUser = this.dbContext.sqlite
+      .prepare("SELECT id FROM users WHERE id = ?")
+      .get(userId) as { id: number } | undefined;
+    if (!existsUser) {
+      // Single-user / AUTH_ENABLED=false mode with no users table rows: persist in global settings
+      this.saveSetting(key, value);
+      return;
+    }
+    const now = Date.now();
+    this.dbContext.sqlite
+      .prepare(
+        `
+        INSERT INTO user_settings (user_id, key, value, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `,
+      )
+      .run(userId, key, value, now);
+  }
+
   getDownloadsDir(): string {
     const overridden = this.rawValues.get(KEYS.downloadsDir);
     return overridden ? path.resolve(overridden) : this.defaultDownloadsDir;
@@ -239,10 +289,22 @@ export class SettingsService {
     };
   }
 
-  getPlaylistSyncSettings(): PlaylistSyncSettings {
-    const defaultPlaylistsDir = path.join(this.getMusicDir(), "Playlists");
-    const overridden = this.rawValues.get(KEYS.playlistSyncDir);
-    const playlistsDir = overridden ? path.resolve(overridden) : defaultPlaylistsDir;
+  getPlaylistSyncSettings(userId?: number): PlaylistSyncSettings {
+    const targetMusicDir = this.getUserMusicDir(userId);
+    const defaultPlaylistsDir = path.join(targetMusicDir, "Playlists");
+
+    const userMap = userId !== undefined ? this.readUserSettingMap(userId) : null;
+    const useGlobalFallback = userId === undefined || userId === this.getPrimaryAdminId();
+
+    const rawDir =
+      userMap?.get(KEYS.playlistSyncDir) ??
+      (useGlobalFallback ? this.rawValues.get(KEYS.playlistSyncDir) : undefined);
+    const playlistsDir = rawDir ? path.resolve(rawDir) : defaultPlaylistsDir;
+
+    const rawEnabled =
+      userMap?.get(KEYS.playlistSyncEnabled) ??
+      (useGlobalFallback ? this.rawValues.get(KEYS.playlistSyncEnabled) : undefined);
+    const enabled = rawEnabled === "true" || rawEnabled === "1";
 
     let playlistsDirExists = false;
     try {
@@ -252,15 +314,20 @@ export class SettingsService {
     }
 
     return {
-      enabled: this.readBool(KEYS.playlistSyncEnabled, false),
+      enabled,
       playlistsDir,
       defaultPlaylistsDir,
       playlistsDirExists,
     };
   }
 
-  getLibraryOrganizationSettings(): LibraryOrganizationSettings {
-    const rawPreset = this.rawValues.get(KEYS.layoutPreset);
+  getLibraryOrganizationSettings(userId?: number): LibraryOrganizationSettings {
+    const userMap = userId !== undefined ? this.readUserSettingMap(userId) : null;
+    const useGlobalFallback = userId === undefined || userId === this.getPrimaryAdminId();
+    const readVal = (key: string): string | undefined =>
+      userMap?.get(key) ?? (useGlobalFallback ? this.rawValues.get(key) : undefined);
+
+    const rawPreset = readVal(KEYS.layoutPreset);
     const layoutPreset: LibraryLayoutPreset =
       rawPreset === "artist_track" ||
       rawPreset === "flat" ||
@@ -269,24 +336,45 @@ export class SettingsService {
         ? rawPreset
         : "artist_album_track";
 
-    const rawDisc = this.rawValues.get(KEYS.multiDiscStyle);
+    const rawDisc = readVal(KEYS.multiDiscStyle);
     const multiDiscStyle: MultiDiscStyle = rawDisc === "subfolder" ? "subfolder" : "prefix";
+
+    const rawYear = readVal(KEYS.includeYearInAlbumFolder);
+    const includeYearInAlbumFolder = rawYear === "true" || rawYear === "1";
+
+    const rawTrackNum = readVal(KEYS.includeTrackNumber);
+    const includeTrackNumber =
+      rawTrackNum === undefined ? true : rawTrackNum === "true" || rawTrackNum === "1";
+
+    const rawAutoOrg = readVal(KEYS.autoOrganizeLibrary);
+    const autoOrganizeLibrary =
+      layoutPreset === "keep_existing" ? false : rawAutoOrg === "true" || rawAutoOrg === "1";
 
     return {
       layoutPreset,
-      includeYearInAlbumFolder: this.readBool(KEYS.includeYearInAlbumFolder, false),
-      includeTrackNumber: this.readBool(KEYS.includeTrackNumber, true),
+      includeYearInAlbumFolder,
+      includeTrackNumber,
       multiDiscStyle,
-      autoOrganizeLibrary:
-        layoutPreset === "keep_existing" ? false : this.readBool(KEYS.autoOrganizeLibrary, false),
+      autoOrganizeLibrary,
     };
   }
 
-  getSettings(): SystemSettingsResponse {
-    const musicDir = this.getMusicDir();
+  listAutoOrganizeUserIds(): number[] {
+    const users = this.dbContext.sqlite
+      .prepare("SELECT id FROM users ORDER BY id ASC")
+      .all() as Array<{ id: number }>;
+    const candidateIds = users.length > 0 ? users.map((u) => u.id) : [1];
+    return candidateIds.filter((uid) => {
+      const org = this.getLibraryOrganizationSettings(uid);
+      return org.autoOrganizeLibrary && org.layoutPreset !== "keep_existing";
+    });
+  }
+
+  getSettings(userId?: number): SystemSettingsResponse {
+    const musicDir = this.getUserMusicDir(userId);
     const postProcessing = this.getPostProcessingSettings();
-    const libraryOrganization = this.getLibraryOrganizationSettings();
-    const playlistSync = this.getPlaylistSyncSettings();
+    const libraryOrganization = this.getLibraryOrganizationSettings(userId);
+    const playlistSync = this.getPlaylistSyncSettings(userId);
     let musicDirExists = false;
     try {
       musicDirExists = fs.existsSync(musicDir) && fs.statSync(musicDir).isDirectory();
@@ -298,7 +386,7 @@ export class SettingsService {
       musicDir,
       defaultMusicDir: this.defaultMusicDir,
       musicDirExists,
-      isOverridden: this.isMusicDirOverridden(),
+      isOverridden: userId === undefined ? this.isMusicDirOverridden() : musicDir !== this.defaultMusicDir,
       downloadsDir: postProcessing.downloadsDir,
       postProcessing,
       libraryOrganization,
@@ -307,13 +395,21 @@ export class SettingsService {
     };
   }
 
-  setMusicDir(rawPath: string): SystemSettingsResponse {
+  setMusicDir(rawPath: string, userId?: number): SystemSettingsResponse {
     const resolved = validateReadableDirectory(rawPath);
     this.saveSetting(KEYS.musicDir, resolved);
-    return this.getSettings();
+    // Keep the primary admin's user record aligned when admin changes global musicDir
+    const adminId = userId ?? this.getPrimaryAdminId();
+    this.dbContext.sqlite
+      .prepare("UPDATE users SET music_dir = ? WHERE id = ? AND role = 'admin'")
+      .run(resolved, adminId);
+    return this.getSettings(userId);
   }
 
-  updatePlaylistSync(input: PlaylistSyncUpdateInput): SystemSettingsResponse {
+  updatePlaylistSync(input: PlaylistSyncUpdateInput, userId?: number): SystemSettingsResponse {
+    const save = (key: string, val: string) =>
+      userId !== undefined ? this.saveUserSetting(userId, key, val) : this.saveSetting(key, val);
+
     if (input.playlistsDir !== undefined) {
       const expanded = expandHomeDir(input.playlistsDir);
       if (!expanded) {
@@ -328,39 +424,45 @@ export class SettingsService {
       } else {
         fs.mkdirSync(resolved, { recursive: true });
       }
-      this.saveSetting(KEYS.playlistSyncDir, resolved);
+      save(KEYS.playlistSyncDir, resolved);
     }
     if (input.enabled !== undefined) {
-      this.saveSetting(KEYS.playlistSyncEnabled, String(input.enabled));
+      save(KEYS.playlistSyncEnabled, String(input.enabled));
     }
-    return this.getSettings();
+    return this.getSettings(userId);
   }
 
-  updateLibraryOrganization(input: LibraryOrganizationUpdateInput): SystemSettingsResponse {
+  updateLibraryOrganization(
+    input: LibraryOrganizationUpdateInput,
+    userId?: number,
+  ): SystemSettingsResponse {
+    const save = (key: string, val: string) =>
+      userId !== undefined ? this.saveUserSetting(userId, key, val) : this.saveSetting(key, val);
+
     if (input.layoutPreset !== undefined) {
-      this.saveSetting(KEYS.layoutPreset, input.layoutPreset);
+      save(KEYS.layoutPreset, input.layoutPreset);
       if (input.layoutPreset === "keep_existing") {
-        this.saveSetting(KEYS.autoOrganizeLibrary, "false");
+        save(KEYS.autoOrganizeLibrary, "false");
       }
     }
     if (input.includeYearInAlbumFolder !== undefined) {
-      this.saveSetting(KEYS.includeYearInAlbumFolder, String(input.includeYearInAlbumFolder));
+      save(KEYS.includeYearInAlbumFolder, String(input.includeYearInAlbumFolder));
     }
     if (input.includeTrackNumber !== undefined) {
-      this.saveSetting(KEYS.includeTrackNumber, String(input.includeTrackNumber));
+      save(KEYS.includeTrackNumber, String(input.includeTrackNumber));
     }
     if (input.multiDiscStyle !== undefined) {
-      this.saveSetting(KEYS.multiDiscStyle, input.multiDiscStyle);
+      save(KEYS.multiDiscStyle, input.multiDiscStyle);
     }
     if (input.autoOrganizeLibrary !== undefined) {
       const effectivePreset =
-        input.layoutPreset ?? this.getLibraryOrganizationSettings().layoutPreset;
-      this.saveSetting(
+        input.layoutPreset ?? this.getLibraryOrganizationSettings(userId).layoutPreset;
+      save(
         KEYS.autoOrganizeLibrary,
         String(effectivePreset === "keep_existing" ? false : input.autoOrganizeLibrary),
       );
     }
-    return this.getSettings();
+    return this.getSettings(userId);
   }
 
   updatePostProcessing(input: PostProcessingUpdateInput): SystemSettingsResponse {

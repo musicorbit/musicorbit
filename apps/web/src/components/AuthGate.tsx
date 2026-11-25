@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertCircle, Disc3, Loader2, Lock, ShieldCheck } from "lucide-react";
+import { AlertCircle, Disc3, Eye, EyeOff, Loader2, Lock, ShieldCheck } from "lucide-react";
 import type { AuthStatusResponse } from "@musicorbit/shared";
 import { loginUser, setupAdmin } from "../api/client";
 
@@ -12,6 +12,7 @@ export function AuthGate({ needsSetup, onAuthenticated }: AuthGateProps) {
   const [username, setUsername] = useState(needsSetup ? "admin" : "");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,8 +57,9 @@ export function AuthGate({ needsSetup, onAuthenticated }: AuthGateProps) {
           <div className="mb-5 flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-100">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
             <span>
-              Create your local administrator account. Passwords are salted and hashed with scrypt
-              and stored only in your local SQLite database.
+              Create your administrator account. Any existing music library and playlists will be
+              linked to this account automatically. Passwords are salted per user and hashed with{" "}
+              <code>scrypt</code> — never stored in plaintext.
             </span>
           </div>
         )}
@@ -84,23 +86,33 @@ export function AuthGate({ needsSetup, onAuthenticated }: AuthGateProps) {
 
           <label className="block space-y-1">
             <span className="text-xs font-medium text-zinc-400">Password</span>
-            <input
-              type="password"
-              autoComplete={needsSetup ? "new-password" : "current-password"}
-              required
-              minLength={8}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={needsSetup ? "At least 8 characters" : ""}
-              className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none"
-            />
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"}
+                autoComplete={needsSetup ? "new-password" : "current-password"}
+                required
+                minLength={8}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={needsSetup ? "At least 8 characters" : ""}
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 py-2.5 pr-10 pl-3.5 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                className="absolute top-1/2 right-3 -translate-y-1/2 text-zinc-400 hover:text-zinc-200"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </label>
 
           {needsSetup && (
             <label className="block space-y-1">
               <span className="text-xs font-medium text-zinc-400">Confirm Password</span>
               <input
-                type="password"
+                type={showPassword ? "text" : "password"}
                 autoComplete="new-password"
                 required
                 minLength={8}

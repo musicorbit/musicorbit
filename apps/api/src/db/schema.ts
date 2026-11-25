@@ -1,24 +1,30 @@
-import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 /**
- * Core SQLite schema for MusicOrbit.
+ * Core SQLite schema for MusicOrbit (multi-user isolated libraries).
  */
 
-export const artists = sqliteTable("artists", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  name: text("name").notNull().unique(),
-  sortName: text("sort_name").notNull(),
-  imageHash: text("image_hash"), // Cached portrait filename in DATA_DIR/artist-images
-  imageCheckedAt: integer("image_checked_at", { mode: "timestamp_ms" }),
-  mbid: text("mbid"), // MusicBrainz Artist ID
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
-});
+export const artists = sqliteTable(
+  "artists",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id").notNull().default(1),
+    name: text("name").notNull(),
+    sortName: text("sort_name").notNull(),
+    imageHash: text("image_hash"), // Cached portrait filename in DATA_DIR/artist-images
+    imageCheckedAt: integer("image_checked_at", { mode: "timestamp_ms" }),
+    mbid: text("mbid"), // MusicBrainz Artist ID
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [uniqueIndex("idx_artists_user_name").on(table.userId, table.name)],
+);
 
 export const albums = sqliteTable(
   "albums",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id").notNull().default(1),
     title: text("title").notNull(),
     artistId: integer("artist_id")
       .notNull()
@@ -35,6 +41,7 @@ export const albums = sqliteTable(
 
 export const tracks = sqliteTable("tracks", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().default(1),
   title: text("title").notNull(),
   albumId: integer("album_id")
     .notNull()
@@ -58,6 +65,7 @@ export const tracks = sqliteTable("tracks", {
 
 export const scanJobs = sqliteTable("scan_jobs", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().default(1),
   status: text("status").notNull(), // "running" | "completed" | "failed"
   startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
   finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
@@ -72,6 +80,7 @@ export const scanJobs = sqliteTable("scan_jobs", {
 
 export const importItems = sqliteTable("import_items", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().default(1),
   sourceDir: text("source_dir").notNull().unique(),
   folderName: text("folder_name").notNull(),
   status: text("status").notNull(), // "needs_review" | "imported" | "failed" | "dismissed"
@@ -94,6 +103,7 @@ export const importItems = sqliteTable("import_items", {
 
 export const playlists = sqliteTable("playlists", {
   id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().default(1),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   coverHash: text("cover_hash"),
@@ -146,7 +156,31 @@ export const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   username: text("username").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
-  role: text("role").notNull().default("admin"), // "admin" | "user"
+  role: text("role").notNull().default("user"), // "admin" | "user"
+  musicDir: text("music_dir"),
+  canUseSoulseek: integer("can_use_soulseek").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const userSettings = sqliteTable(
+  "user_settings",
+  {
+    userId: integer("user_id").notNull().default(1),
+    key: text("key").notNull(),
+    value: text("value").notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.key] })],
+);
+
+export const downloadOwnership = sqliteTable("download_ownership", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  userId: integer("user_id").notNull().default(1),
+  slskdUsername: text("slskd_username").notNull(),
+  remoteFilename: text("remote_filename").notNull(),
+  basenameNorm: text("basename_norm").notNull(),
+  folderNorm: text("folder_norm").notNull(),
+  status: text("status").notNull().default("pending"), // "pending" | "imported"
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
 

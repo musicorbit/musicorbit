@@ -708,6 +708,8 @@ export interface AuthUser {
   id: number;
   username: string;
   role: "admin" | "user";
+  musicDir: string;
+  canUseSoulseek: boolean;
 }
 
 export interface AuthStatusResponse {
@@ -715,6 +717,41 @@ export interface AuthStatusResponse {
   needsSetup: boolean;
   authenticated: boolean;
   user: AuthUser | null;
+}
+
+export interface UserSummary {
+  id: number;
+  username: string;
+  role: "admin" | "user";
+  musicDir: string;
+  canUseSoulseek: boolean;
+  createdAt: string;
+  counts: {
+    artists: number;
+    albums: number;
+    tracks: number;
+    playlists: number;
+  };
+}
+
+export interface CreateUserRequest {
+  username: string;
+  password: string;
+  role?: "admin" | "user";
+  musicDir?: string;
+  canUseSoulseek?: boolean;
+}
+
+export interface UpdateUserRequest {
+  role?: "admin" | "user";
+  musicDir?: string;
+  canUseSoulseek?: boolean;
+  password?: string;
+}
+
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
 }
 
 /**

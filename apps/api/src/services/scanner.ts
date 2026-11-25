@@ -171,6 +171,7 @@ export interface LibraryScannerDeps {
   dbContext: DbContext;
   musicDir: string;
   getMusicDir?: () => string;
+  getUserMusicDir?: (userId: number) => string;
   coversDir: string;
   activityLog?: ActivityLogService;
   logger?: FastifyBaseLogger;
@@ -179,40 +180,47 @@ export interface LibraryScannerDeps {
 export class LibraryScanner {
   private readonly dbContext: DbContext;
   private readonly getMusicDirFn: () => string;
+  private readonly getUserMusicDirFn?: (userId: number) => string;
   private readonly coversDir: string;
   private readonly activityLog?: ActivityLogService;
   private readonly logger?: FastifyBaseLogger;
-  private activePromise: Promise<ScanStatusResponse> | null = null;
-  private currentStatus: ScanStatusResponse | null = null;
-  private onTracksAddedCallback?: (addedTrackIds: number[]) => void;
+  private readonly activePromises = new Map<number, Promise<ScanStatusResponse>>();
+  private readonly currentStatuses = new Map<number, ScanStatusResponse>();
+  private onTracksAddedCallback?: (addedTrackIds: number[], userId: number) => void;
 
   constructor(deps: LibraryScannerDeps) {
     this.dbContext = deps.dbContext;
     this.getMusicDirFn = deps.getMusicDir ?? (() => deps.musicDir);
+    this.getUserMusicDirFn = deps.getUserMusicDir;
     this.coversDir = deps.coversDir;
     this.activityLog = deps.activityLog;
     this.logger = deps.logger;
   }
 
-  setOnTracksAdded(cb: (addedTrackIds: number[]) => void): void {
+  setOnTracksAdded(cb: (addedTrackIds: number[], userId: number) => void): void {
     this.onTracksAddedCallback = cb;
   }
 
-  private get musicDir(): string {
+  private resolveMusicDir(userId: number): string {
+    if (this.getUserMusicDirFn) {
+      return this.getUserMusicDirFn(userId);
+    }
     return this.getMusicDirFn();
   }
 
   /**
-   * Returns live progress if a scan is running, or the latest completed scan from SQLite.
+   * Returns live progress if a scan is running for this user, or the latest completed scan from SQLite.
    */
-  getStatus(): ScanStatusResponse {
-    if (this.currentStatus) {
-      return { ...this.currentStatus, errors: [...this.currentStatus.errors] };
+  getStatus(userId = 1): ScanStatusResponse {
+    const live = this.currentStatuses.get(userId);
+    if (live) {
+      return { ...live, errors: [...live.errors] };
     }
 
     const lastJob = this.dbContext.db
       .select()
       .from(scanJobs)
+      .where(eq(scanJobs.userId, userId))
       .orderBy(desc(scanJobs.id))
       .limit(1)
       .get();
@@ -254,41 +262,47 @@ export class LibraryScanner {
   }
 
   /**
-   * Starts a background scan if one is not already running.
+   * Starts a background scan for the given user if one is not already running.
    */
-  startScan(options?: { force?: boolean }): {
+  startScan(options?: { force?: boolean; userId?: number }): {
     started: boolean;
     status: ScanStatusResponse;
   } {
-    if (this.activePromise) {
-      return { started: false, status: this.getStatus() };
+    const userId = options?.userId ?? 1;
+    if (this.activePromises.has(userId)) {
+      return { started: false, status: this.getStatus(userId) };
     }
 
     const promise = this.runScan(options);
     // Prevent unhandled rejection warnings when triggered fire-and-forget from an HTTP route
     promise.catch(() => {});
-    return { started: true, status: this.getStatus() };
+    return { started: true, status: this.getStatus(userId) };
   }
 
   /**
-   * Runs a full or incremental scan and resolves when finished.
+   * Runs a full or incremental scan for the given user and resolves when finished.
    */
   async runScan(options?: {
     force?: boolean;
     quietIfNoChanges?: boolean;
     skipPostScanHooks?: boolean;
+    userId?: number;
   }): Promise<ScanStatusResponse> {
-    if (this.activePromise) {
-      return this.activePromise;
+    const userId = options?.userId ?? 1;
+    const existingPromise = this.activePromises.get(userId);
+    if (existingPromise) {
+      return existingPromise;
     }
 
     const force = Boolean(options?.force);
     const quietIfNoChanges = Boolean(options?.quietIfNoChanges);
     const skipPostScanHooks = Boolean(options?.skipPostScanHooks);
+    const targetMusicDir = this.resolveMusicDir(userId);
     const startedAt = new Date();
     const inserted = this.dbContext.db
       .insert(scanJobs)
       .values({
+        userId,
         status: "running",
         startedAt,
       })
@@ -309,18 +323,18 @@ export class LibraryScanner {
       filesRemoved: 0,
       errors: [],
     };
-    this.currentStatus = status;
+    this.currentStatuses.set(userId, status);
 
-    this.activePromise = (async () => {
+    const runPromise = (async () => {
       try {
-        if (!fs.existsSync(this.musicDir)) {
-          throw new Error(`Music directory does not exist: ${this.musicDir}`);
+        if (!fs.existsSync(targetMusicDir)) {
+          throw new Error(`Music directory does not exist: ${targetMusicDir}`);
         }
 
-        const discovered = await discoverAudioFiles(this.musicDir);
+        const discovered = await discoverAudioFiles(targetMusicDir);
         status.filesTotal = discovered.length;
 
-        // Snapshot existing tracks for fast O(1) incremental diffing
+        // Snapshot existing tracks for this user for fast O(1) incremental diffing
         const existingRows = this.dbContext.db
           .select({
             id: tracks.id,
@@ -329,6 +343,7 @@ export class LibraryScanner {
             fileMtimeMs: tracks.fileMtimeMs,
           })
           .from(tracks)
+          .where(eq(tracks.userId, userId))
           .all();
 
         const existingByPath = new Map(existingRows.map((row) => [row.filePath, row]));
@@ -353,7 +368,13 @@ export class LibraryScanner {
           }
 
           try {
-            const trackId = await this.indexFile(file, existing?.id ?? null, folderCoverCache);
+            const trackId = await this.indexFile(
+              file,
+              existing?.id ?? null,
+              folderCoverCache,
+              userId,
+              targetMusicDir,
+            );
             if (existing) {
               status.filesUpdated += 1;
             } else {
@@ -362,8 +383,8 @@ export class LibraryScanner {
             }
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            const rel = path.relative(this.musicDir, file.filePath);
-            this.logger?.warn({ err, file: rel }, "Failed to index audio file");
+            const rel = path.relative(targetMusicDir, file.filePath);
+            this.logger?.warn({ err, file: rel, userId }, "Failed to index audio file");
             if (status.errors.length < MAX_RECORDED_ERRORS) {
               status.errors.push(`${rel}: ${msg}`);
             }
@@ -372,7 +393,7 @@ export class LibraryScanner {
           status.filesProcessed += 1;
         }
 
-        // Prune tracks whose files were deleted or moved out of MUSIC_DIR
+        // Prune tracks belonging to this user whose files were deleted or moved out of their MUSIC_DIR
         const missingIds = existingRows
           .filter((row) => !seenPaths.has(row.filePath))
           .map((row) => row.id);
@@ -381,12 +402,15 @@ export class LibraryScanner {
           // Delete in chunks to stay comfortably below SQLite's bind parameter limit
           for (let i = 0; i < missingIds.length; i += 500) {
             const chunk = missingIds.slice(i, i + 500);
-            this.dbContext.db.delete(tracks).where(inArray(tracks.id, chunk)).run();
+            this.dbContext.db
+              .delete(tracks)
+              .where(and(eq(tracks.userId, userId), inArray(tracks.id, chunk)))
+              .run();
           }
           status.filesRemoved = missingIds.length;
         }
 
-        this.pruneOrphans();
+        this.pruneOrphans(userId);
 
         status.state = "completed";
         status.finishedAt = new Date().toISOString();
@@ -402,7 +426,8 @@ export class LibraryScanner {
             "scanner",
             `${force ? "Full" : "Library"} scan completed: ${status.filesAdded} added, ${status.filesUpdated} updated, ${status.filesRemoved} removed, ${status.filesSkipped} unchanged`,
             {
-              musicDir: this.musicDir,
+              userId,
+              musicDir: targetMusicDir,
               total: status.filesTotal,
               added: status.filesAdded,
               updated: status.filesUpdated,
@@ -414,12 +439,12 @@ export class LibraryScanner {
         }
         if (!skipPostScanHooks && addedTrackIds.length > 0 && this.onTracksAddedCallback) {
           try {
-            this.onTracksAddedCallback(addedTrackIds);
+            this.onTracksAddedCallback(addedTrackIds, userId);
           } catch {
             // Non-fatal hook error
           }
         }
-        return this.getStatus();
+        return this.getStatus(userId);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         status.state = "failed";
@@ -429,21 +454,25 @@ export class LibraryScanner {
         }
         this.persistJob(status, msg);
         this.activityLog?.error("scanner", `Library scan failed: ${msg}`, {
-          musicDir: this.musicDir,
+          userId,
+          musicDir: targetMusicDir,
         });
-        return this.getStatus();
+        return this.getStatus(userId);
       } finally {
-        this.activePromise = null;
+        this.activePromises.delete(userId);
       }
     })();
 
-    return this.activePromise;
+    this.activePromises.set(userId, runPromise);
+    return runPromise;
   }
 
   private async indexFile(
     file: DiscoveredFile,
     existingTrackId: number | null,
     folderCoverCache: Map<string, string | null>,
+    userId: number,
+    targetMusicDir: string,
   ): Promise<number | null> {
     const metadata = await parseFile(file.filePath, { duration: true });
     const { common, format } = metadata;
@@ -460,7 +489,7 @@ export class LibraryScanner {
       common.albumartist?.trim() || common.artist?.trim() || "Unknown Artist";
     const albumTitle =
       common.album?.trim() ||
-      (parentDir !== this.musicDir ? parentFolderName : "Unknown Album");
+      (parentDir !== targetMusicDir ? parentFolderName : "Unknown Album");
 
     // Extract cover art: embedded picture takes precedence over folder cover file
     let coverHash: string | null = null;
@@ -477,6 +506,7 @@ export class LibraryScanner {
 
     const now = new Date();
     const albumArtistId = this.upsertArtist(
+      userId,
       albumArtistName,
       common.musicbrainz_artistid?.[0] ?? null,
       now,
@@ -484,12 +514,13 @@ export class LibraryScanner {
     const trackArtistId =
       trackArtistName === albumArtistName
         ? albumArtistId
-        : this.upsertArtist(trackArtistName, null, now);
+        : this.upsertArtist(userId, trackArtistName, null, now);
 
     const year = common.year && common.year > 0 ? common.year : null;
     const genre = common.genre?.[0]?.trim() || null;
     const albumId = this.upsertAlbum(
       {
+        userId,
         title: albumTitle,
         artistId: albumArtistId,
         year,
@@ -533,6 +564,7 @@ export class LibraryScanner {
       const inserted = this.dbContext.db
         .insert(tracks)
         .values({
+          userId,
           title,
           albumId,
           artistId: trackArtistId,
@@ -555,11 +587,11 @@ export class LibraryScanner {
     }
   }
 
-  private upsertArtist(name: string, mbid: string | null, now: Date): number {
+  private upsertArtist(userId: number, name: string, mbid: string | null, now: Date): number {
     const existing = this.dbContext.db
       .select({ id: artists.id, mbid: artists.mbid })
       .from(artists)
-      .where(eq(artists.name, name))
+      .where(and(eq(artists.userId, userId), eq(artists.name, name)))
       .get();
 
     if (existing) {
@@ -576,6 +608,7 @@ export class LibraryScanner {
     const inserted = this.dbContext.db
       .insert(artists)
       .values({
+        userId,
         name,
         sortName: makeSortName(name),
         mbid,
@@ -590,6 +623,7 @@ export class LibraryScanner {
 
   private upsertAlbum(
     input: {
+      userId: number;
       title: string;
       artistId: number;
       year: number | null;
@@ -641,6 +675,7 @@ export class LibraryScanner {
     const inserted = this.dbContext.db
       .insert(albums)
       .values({
+        userId: input.userId,
         title: input.title,
         artistId: input.artistId,
         year: input.year,
@@ -657,37 +692,46 @@ export class LibraryScanner {
   }
 
   /**
-   * Removes albums that no longer contain tracks and artists with no albums or tracks.
+   * Removes orphaned albums and artists belonging to this user that no longer contain tracks.
    */
-  private pruneOrphans(): void {
+  private pruneOrphans(userId: number): void {
     const activeAlbumIds = this.dbContext.db
       .selectDistinct({ albumId: tracks.albumId })
       .from(tracks)
+      .where(eq(tracks.userId, userId))
       .all()
       .map((r) => r.albumId);
 
     if (activeAlbumIds.length === 0) {
-      this.dbContext.db.delete(albums).run();
+      this.dbContext.db.delete(albums).where(eq(albums.userId, userId)).run();
     } else {
-      this.dbContext.db.delete(albums).where(notInArray(albums.id, activeAlbumIds)).run();
+      this.dbContext.db
+        .delete(albums)
+        .where(and(eq(albums.userId, userId), notInArray(albums.id, activeAlbumIds)))
+        .run();
     }
 
     const albumArtistIds = this.dbContext.db
       .selectDistinct({ artistId: albums.artistId })
       .from(albums)
+      .where(eq(albums.userId, userId))
       .all()
       .map((r) => r.artistId);
     const trackArtistIds = this.dbContext.db
       .selectDistinct({ artistId: tracks.artistId })
       .from(tracks)
+      .where(eq(tracks.userId, userId))
       .all()
       .map((r) => r.artistId);
     const activeArtistIds = Array.from(new Set([...albumArtistIds, ...trackArtistIds]));
 
     if (activeArtistIds.length === 0) {
-      this.dbContext.db.delete(artists).run();
+      this.dbContext.db.delete(artists).where(eq(artists.userId, userId)).run();
     } else {
-      this.dbContext.db.delete(artists).where(notInArray(artists.id, activeArtistIds)).run();
+      this.dbContext.db
+        .delete(artists)
+        .where(and(eq(artists.userId, userId), notInArray(artists.id, activeArtistIds)))
+        .run();
     }
   }
 

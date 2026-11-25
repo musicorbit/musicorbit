@@ -53,6 +53,8 @@ import { BulkImportFolderModal } from "../components/BulkImportFolderModal";
 import { DirectoryPickerModal } from "../components/DirectoryPickerModal";
 
 interface SystemViewProps {
+  isAdmin?: boolean;
+  canUseSoulseek?: boolean;
   health: HealthResponse | null;
   scanStatus: ScanStatusResponse | null;
   slskdStatus?: AcquisitionStatusResponse | null;
@@ -134,6 +136,8 @@ function computeExampleLayoutPaths(params: {
 }
 
 export function SystemView({
+  isAdmin = true,
+  canUseSoulseek = true,
   health,
   scanStatus,
   slskdStatus,
@@ -396,10 +400,12 @@ export function SystemView({
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-zinc-50">
-            System &amp; Library Scanner
+            {isAdmin ? "System & Library Scanner" : "Library Settings & Scanner"}
           </h2>
           <p className="mt-1 text-sm text-zinc-400">
-            Manage incremental audio scanning, library paths, and automated post-processing.
+            {isAdmin
+              ? "Manage incremental audio scanning, library paths, and automated post-processing."
+              : "Scan your personal library, organize folders, sync playlists, and fetch synced lyrics."}
           </p>
         </div>
 
@@ -440,7 +446,7 @@ export function SystemView({
 
       {health && (
         <>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className={`grid gap-4 ${isAdmin ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium tracking-wider text-zinc-400 uppercase">
@@ -454,29 +460,31 @@ export function SystemView({
               <p className="mt-1 text-xs text-zinc-500">Uptime: {health.uptimeSeconds}s</p>
             </div>
 
-            <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium tracking-wider text-zinc-400 uppercase">
-                  SQLite Database
-                </span>
-                <Database
-                  className={`h-4 w-4 ${
-                    health.database.connected ? "text-emerald-400" : "text-red-400"
-                  }`}
-                />
+            {isAdmin && (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium tracking-wider text-zinc-400 uppercase">
+                    SQLite Database
+                  </span>
+                  <Database
+                    className={`h-4 w-4 ${
+                      health.database.connected ? "text-emerald-400" : "text-red-400"
+                    }`}
+                  />
+                </div>
+                <p className="mt-3 text-xl font-semibold text-zinc-50">
+                  {health.database.connected ? "Connected" : "Error"}
+                </p>
+                <p className="mt-1 truncate text-xs text-zinc-500" title={health.database.path}>
+                  {health.database.path}
+                </p>
               </div>
-              <p className="mt-3 text-xl font-semibold text-zinc-50">
-                {health.database.connected ? "Connected" : "Error"}
-              </p>
-              <p className="mt-1 truncate text-xs text-zinc-500" title={health.database.path}>
-                {health.database.path}
-              </p>
-            </div>
+            )}
 
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium tracking-wider text-zinc-400 uppercase">
-                  Music Directory
+                  {isAdmin ? "Music Directory" : "Your Music Library"}
                 </span>
                 <FolderOpen
                   className={`h-4 w-4 ${
@@ -488,13 +496,15 @@ export function SystemView({
                 <p className="text-xl font-semibold text-zinc-50">
                   {health.musicDir.exists ? "Ready" : "Not Found Yet"}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => setPickerMode("music")}
-                  className="rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-200 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-300"
-                >
-                  Change Folder
-                </button>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setPickerMode("music")}
+                    className="rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-200 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-300"
+                  >
+                    Change Folder
+                  </button>
+                )}
               </div>
               <p className="mt-1 truncate text-xs text-zinc-500" title={health.musicDir.path}>
                 {health.musicDir.path}
@@ -507,24 +517,31 @@ export function SystemView({
               <div className="flex items-start gap-3">
                 <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
                 <div>
-                  <p className="font-medium">Point MusicOrbit at a music folder to scan</p>
+                  <p className="font-medium">
+                    {isAdmin
+                      ? "Point MusicOrbit at a music folder to scan"
+                      : "Your music library folder is not accessible yet"}
+                  </p>
                   <p className="mt-1 text-amber-200/80">
                     Current folder{" "}
                     <code className="rounded bg-zinc-900/80 px-1.5 py-0.5 text-xs">
                       {health.musicDir.path}
                     </code>{" "}
-                    does not exist yet. Click <strong>Select Music Folder</strong> to choose your
-                    library directory directly from the UI.
+                    {isAdmin
+                      ? "does not exist yet. Click Select Music Folder to choose your library directory directly from the UI."
+                      : "does not exist yet. Ask an administrator to verify your assigned library folder."}
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setPickerMode("music")}
-                className="shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400"
-              >
-                Select Music Folder
-              </button>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setPickerMode("music")}
+                  className="shrink-0 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400"
+                >
+                  Select Music Folder
+                </button>
+              )}
             </div>
           )}
 
@@ -677,14 +694,16 @@ export function SystemView({
                       </button>
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() => setBulkImportOpen(true)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-300"
-                    >
-                      <FolderInput className="h-3.5 w-3.5 text-amber-400" />
-                      Import Existing Folder…
-                    </button>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => setBulkImportOpen(true)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-300"
+                      >
+                        <FolderInput className="h-3.5 w-3.5 text-amber-400" />
+                        Import Existing Folder…
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -1017,8 +1036,8 @@ export function SystemView({
             );
           })()}
 
-          {/* Post-Processing & Automated Downloads Pipeline */}
-          {sysSettings && (
+          {/* Post-Processing & Automated Downloads Pipeline (Admin only) */}
+          {isAdmin && sysSettings && (
             <form
               onSubmit={(e) => void handleSavePostProcessing(e)}
               className="space-y-5 rounded-xl border border-zinc-800 bg-zinc-900/50 p-6"
@@ -1307,13 +1326,15 @@ export function SystemView({
                     automatically on scan.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setPickerMode("playlists")}
-                  className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-300"
-                >
-                  Change Folder
-                </button>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setPickerMode("playlists")}
+                    className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-amber-500/50 hover:bg-zinc-800 hover:text-amber-300"
+                  >
+                    Change Folder
+                  </button>
+                )}
               </div>
 
               <label className="flex cursor-pointer items-start gap-2.5 text-xs text-zinc-200">
@@ -1492,8 +1513,9 @@ export function SystemView({
             </section>
           )}
 
-          {/* Optional slskd (Soulseek) Integration Card */}
-          <section className="space-y-3 rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-6">
+          {/* Optional slskd (Soulseek) Integration Card (Admin only) */}
+          {isAdmin && (
+            <section className="space-y-3 rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <h3 className="flex items-center gap-2 text-base font-semibold text-zinc-100">
@@ -1524,7 +1546,7 @@ export function SystemView({
                   </span>
                 )}
 
-                {slskdStatus?.configured && onOpenSoulseek && (
+                {slskdStatus?.configured && canUseSoulseek && onOpenSoulseek && (
                   <button
                     type="button"
                     onClick={onOpenSoulseek}
@@ -1559,7 +1581,8 @@ export function SystemView({
                 <code className="text-zinc-200">.env</code> file and restart MusicOrbit.
               </p>
             )}
-          </section>
+            </section>
+          )}
         </>
       )}
 

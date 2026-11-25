@@ -51,9 +51,8 @@ export class InboxWatcher {
 
   private shouldRunTimer(): boolean {
     const pp = this.settingsService.getPostProcessingSettings();
-    const org = this.settingsService.getLibraryOrganizationSettings();
-    const orgActive = org.autoOrganizeLibrary && org.layoutPreset !== "keep_existing";
-    return pp.autoWatchEnabled || orgActive;
+    const orgUsers = this.settingsService.listAutoOrganizeUserIds();
+    return pp.autoWatchEnabled || orgUsers.length > 0;
   }
 
   getStatus(): InboxWatcherStatus {
@@ -73,7 +72,7 @@ export class InboxWatcher {
    */
   syncWithSettings(): void {
     const pp = this.settingsService.getPostProcessingSettings();
-    const org = this.settingsService.getLibraryOrganizationSettings();
+    const orgUsers = this.settingsService.listAutoOrganizeUserIds();
     if (!this.shouldRunTimer()) {
       this.stop();
       return;
@@ -95,7 +94,7 @@ export class InboxWatcher {
       `Background watcher started (checking every ${pp.autoWatchIntervalSeconds}s)`,
       {
         downloadsWatch: pp.autoWatchEnabled,
-        autoOrganizeLibrary: org.autoOrganizeLibrary && org.layoutPreset !== "keep_existing",
+        autoOrganizeUsers: orgUsers.length,
         downloadsDir: pp.downloadsDir,
       },
     );
@@ -115,7 +114,7 @@ export class InboxWatcher {
     this.lastError = null;
     try {
       const pp = this.settingsService.getPostProcessingSettings();
-      const org = this.settingsService.getLibraryOrganizationSettings();
+      const orgUsers = this.settingsService.listAutoOrganizeUserIds();
       let result: InboxScanResult | null = null;
 
       if (pp.autoWatchEnabled) {
@@ -130,21 +129,22 @@ export class InboxWatcher {
         }
       }
 
-      if (org.autoOrganizeLibrary && org.layoutPreset !== "keep_existing" && this.organizer) {
-        // Index any files dropped straight into MUSIC_DIR before organizing (quiet when nothing changed)
-        let filesAdded = 0;
-        if (this.scanner) {
-          const scanStatus = await this.scanner.runScan({
-            force: false,
-            quietIfNoChanges: true,
-            skipPostScanHooks: true,
-          });
-          filesAdded = scanStatus.filesAdded;
-        }
-        await this.organizer.apply({ requireStableFiles: true });
-        // Fetch synced .lrc sidecars AFTER files land in their final organized paths
-        if (filesAdded > 0 && pp.autoFetchLyrics && this.lyricsService) {
-          this.lyricsService.startBatchFetch();
+      if (orgUsers.length > 0 && this.organizer) {
+        for (const userId of orgUsers) {
+          let filesAdded = 0;
+          if (this.scanner) {
+            const scanStatus = await this.scanner.runScan({
+              userId,
+              force: false,
+              quietIfNoChanges: true,
+              skipPostScanHooks: true,
+            });
+            filesAdded = scanStatus.filesAdded;
+          }
+          await this.organizer.apply({ userId, requireStableFiles: true });
+          if (filesAdded > 0 && pp.autoFetchLyrics && this.lyricsService) {
+            this.lyricsService.startBatchFetch({ userId });
+          }
         }
       }
 

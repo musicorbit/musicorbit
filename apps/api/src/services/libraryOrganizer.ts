@@ -42,6 +42,7 @@ export interface LibraryOrganizerDeps {
 }
 
 export interface OrganizeOptions {
+  userId?: number;
   trackIds?: number[];
   requireStableFiles?: boolean;
   stabilityWindowMs?: number;
@@ -174,7 +175,7 @@ export class LibraryOrganizer {
   private readonly playlistSync?: PlaylistSyncService;
   private readonly activityLog?: ActivityLogService;
   private readonly logger?: FastifyBaseLogger;
-  private lastSkippedLogSignature: string | null = null;
+  private readonly lastSkippedLogSignatureByUser = new Map<number, string>();
 
   constructor(deps: LibraryOrganizerDeps) {
     this.dbContext = deps.dbContext;
@@ -184,7 +185,7 @@ export class LibraryOrganizer {
     this.logger = deps.logger;
   }
 
-  private loadIndexedTracks(): IndexedTrackForOrganize[] {
+  private loadIndexedTracks(userId: number): IndexedTrackForOrganize[] {
     return this.dbContext.sqlite
       .prepare(
         `
@@ -203,20 +204,22 @@ export class LibraryOrganizer {
         JOIN albums al ON al.id = t.album_id
         JOIN artists alb_ar ON alb_ar.id = al.artist_id
         JOIN artists trk_ar ON trk_ar.id = t.artist_id
+        WHERE t.user_id = ?
         ORDER BY lower(alb_ar.sort_name) ASC, lower(al.title) ASC, COALESCE(t.disc_number, 1) ASC, COALESCE(t.track_number, 9999) ASC, t.id ASC
       `,
       )
-      .all() as IndexedTrackForOrganize[];
+      .all(userId) as IndexedTrackForOrganize[];
   }
 
   /**
-   * Computes a non-destructive preview of every file move/skip/conflict in MUSIC_DIR.
+   * Computes a non-destructive preview of every file move/skip/conflict in the user's MUSIC_DIR.
    */
   async preview(options?: OrganizeOptions): Promise<OrganizePreviewResponse> {
-    const musicDir = this.settingsService.getMusicDir();
-    const orgSettings = this.settingsService.getLibraryOrganizationSettings();
-    const playlistsDir = this.settingsService.getPlaylistSyncSettings().playlistsDir;
-    const rows = this.loadIndexedTracks();
+    const userId = options?.userId ?? 1;
+    const musicDir = this.settingsService.getUserMusicDir(userId);
+    const orgSettings = this.settingsService.getLibraryOrganizationSettings(userId);
+    const playlistsDir = this.settingsService.getPlaylistSyncSettings(userId).playlistsDir;
+    const rows = this.loadIndexedTracks(userId);
     const stabilityWindowMs = options?.stabilityWindowMs ?? DEFAULT_STABILITY_WINDOW_MS;
     const now = Date.now();
 
@@ -457,7 +460,9 @@ export class LibraryOrganizer {
    * re-syncs .m3u8 playlists if enabled.
    */
   async apply(options?: OrganizeOptions): Promise<OrganizeApplyResponse> {
+    const userId = options?.userId ?? 1;
     const plan = await this.preview({
+      userId,
       requireStableFiles: options?.requireStableFiles,
       stabilityWindowMs: options?.stabilityWindowMs,
     });
@@ -468,7 +473,7 @@ export class LibraryOrganizer {
     );
 
     const updateTrackPathStmt = this.dbContext.sqlite.prepare(
-      "UPDATE tracks SET file_path = ?, file_mtime_ms = ?, updated_at = ? WHERE id = ?",
+      "UPDATE tracks SET file_path = ?, file_mtime_ms = ?, updated_at = ? WHERE id = ? AND user_id = ?",
     );
 
     let movedCount = 0;
@@ -492,6 +497,7 @@ export class LibraryOrganizer {
           Math.floor(stat.mtimeMs),
           Date.now(),
           item.trackId,
+          userId,
         );
 
         await removeEmptyDirUpTo(oldDir, plan.musicDir);
@@ -499,18 +505,18 @@ export class LibraryOrganizer {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(`${item.currentRelativePath}: ${msg}`);
-        this.logger?.warn({ err, trackId: item.trackId }, "Failed to organize track");
+        this.logger?.warn({ err, trackId: item.trackId, userId }, "Failed to organize track");
       }
     }
 
     let playlistsResynced = false;
     if (movedCount > 0) {
-      if (this.playlistSync && this.settingsService.getPlaylistSyncSettings().enabled) {
+      if (this.playlistSync && this.settingsService.getPlaylistSyncSettings(userId).enabled) {
         try {
-          await this.playlistSync.syncAllPlaylists();
+          await this.playlistSync.syncAllPlaylists(false, userId);
           playlistsResynced = true;
         } catch (err) {
-          this.logger?.warn({ err }, "Failed to re-sync playlists after organizing library");
+          this.logger?.warn({ err, userId }, "Failed to re-sync playlists after organizing library");
         }
       }
 
@@ -518,6 +524,7 @@ export class LibraryOrganizer {
         "organizer",
         `Organized ${movedCount} ${movedCount === 1 ? "track" : "tracks"} into "${plan.layoutPreset}" layout`,
         {
+          userId,
           layoutPreset: plan.layoutPreset,
           movedCount,
           skippedCount: plan.skippedUntaggedCount,
@@ -538,14 +545,15 @@ export class LibraryOrganizer {
         .map((i) => `${i.status}:${i.currentRelativePath}:${i.reason ?? ""}`)
         .sort()
         .join("|");
-      if (signature !== this.lastSkippedLogSignature) {
-        this.lastSkippedLogSignature = signature;
+      if (signature !== this.lastSkippedLogSignatureByUser.get(userId)) {
+        this.lastSkippedLogSignatureByUser.set(userId, signature);
         const sample = skippedItems[0]!;
         const summary =
           skippedItems.length === 1
             ? `Skipped organizing "${sample.currentRelativePath}": ${sample.reason ?? sample.status}`
             : `Skipped organizing ${skippedItems.length} files (${plan.conflictCount} conflicts, ${plan.skippedUntaggedCount} missing tags)`;
         this.activityLog?.warn("organizer", summary, {
+          userId,
           layoutPreset: plan.layoutPreset,
           items: skippedItems.slice(0, 15).map((i) => ({
             file: i.currentRelativePath,
@@ -555,7 +563,7 @@ export class LibraryOrganizer {
         });
       }
     } else {
-      this.lastSkippedLogSignature = null;
+      this.lastSkippedLogSignatureByUser.delete(userId);
     }
 
     return {

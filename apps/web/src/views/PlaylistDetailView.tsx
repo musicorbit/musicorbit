@@ -46,6 +46,7 @@ import { formatCodec, formatDuration, formatTotalDuration } from "../utils/forma
 
 interface PlaylistDetailViewProps {
   playlistId: number;
+  canUseSoulseek?: boolean;
   onBack: () => void;
   onSelectAlbum: (albumId: number) => void;
   onSelectArtist: (artistId: number) => void;
@@ -68,6 +69,7 @@ function formatCandidateLabel(c: MissingTrackSearchCandidate): string {
 
 export function PlaylistDetailView({
   playlistId,
+  canUseSoulseek = true,
   onBack,
   onSelectAlbum,
   onSelectArtist,
@@ -95,7 +97,7 @@ export function PlaylistDetailView({
       const [res, acq, job] = await Promise.all([
         fetchPlaylistDetail(playlistId),
         fetchAcquisitionStatus().catch(() => null),
-        fetchMissingTracksBatchStatus(playlistId).catch(() => null),
+        canUseSoulseek ? fetchMissingTracksBatchStatus(playlistId).catch(() => null) : Promise.resolve(null),
       ]);
       setDetail(res);
       setSlskdStatus(acq);
@@ -107,7 +109,7 @@ export function PlaylistDetailView({
     } finally {
       setLoading(false);
     }
-  }, [playlistId]);
+  }, [playlistId, canUseSoulseek]);
 
   useEffect(() => {
     void load();
@@ -303,8 +305,8 @@ export function PlaylistDetailView({
       : 0;
   const activeSearchingCount =
     batchJob?.items.filter((i) => i.state === "searching").length ?? 0;
-  const slskdConfigured = Boolean(slskdStatus?.configured);
-  const slskdReady = Boolean(slskdStatus?.configured && slskdStatus?.connected);
+  const slskdConfigured = Boolean(slskdStatus?.configured && canUseSoulseek);
+  const slskdReady = Boolean(slskdStatus?.configured && slskdStatus?.connected && canUseSoulseek);
 
   return (
     <div className="space-y-8">

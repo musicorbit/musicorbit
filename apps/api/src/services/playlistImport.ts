@@ -318,20 +318,37 @@ export function buildLibraryTrackMatcher(
  */
 export function recheckAllPlaylistsMissingTracks(
   sqlite: Database.Database,
-  musicDir: string,
+  musicDirOrResolver: string | ((userId: number) => string),
   batchSearchService?: PlaylistBatchSearchService,
+  userId?: number,
 ): number {
-  const missingRows = sqlite
-    .prepare(
-      `
-      SELECT id, playlist_id AS playlistId, title, artist, album
-      FROM playlist_missing_tracks
-      ORDER BY playlist_id ASC, position ASC, id ASC
-    `,
-    )
-    .all() as Array<{
+  const missingRows = (
+    userId !== undefined
+      ? sqlite
+          .prepare(
+            `
+            SELECT pmt.id, pmt.playlist_id AS playlistId, p.user_id AS userId, pmt.title, pmt.artist, pmt.album
+            FROM playlist_missing_tracks pmt
+            JOIN playlists p ON p.id = pmt.playlist_id
+            WHERE p.user_id = ?
+            ORDER BY pmt.playlist_id ASC, pmt.position ASC, pmt.id ASC
+          `,
+          )
+          .all(userId)
+      : sqlite
+          .prepare(
+            `
+            SELECT pmt.id, pmt.playlist_id AS playlistId, p.user_id AS userId, pmt.title, pmt.artist, pmt.album
+            FROM playlist_missing_tracks pmt
+            JOIN playlists p ON p.id = pmt.playlist_id
+            ORDER BY p.user_id ASC, pmt.playlist_id ASC, pmt.position ASC, pmt.id ASC
+          `,
+          )
+          .all()
+  ) as Array<{
     id: number;
     playlistId: number;
+    userId: number;
     title: string;
     artist: string;
     album: string | null;
@@ -339,20 +356,24 @@ export function recheckAllPlaylistsMissingTracks(
 
   if (missingRows.length === 0) return 0;
 
-  const allTracks = sqlite
-    .prepare(
-      `
-      SELECT t.id, t.title, ar.name AS artistName, t.file_path AS filePath
-      FROM tracks t
-      JOIN artists ar ON ar.id = t.artist_id
-    `,
-    )
-    .all() as LocalLibraryTrack[];
+  const rowsByUser = new Map<number, typeof missingRows>();
+  for (const row of missingRows) {
+    const list = rowsByUser.get(row.userId) ?? [];
+    list.push(row);
+    rowsByUser.set(row.userId, list);
+  }
 
-  const matcher = buildLibraryTrackMatcher(allTracks, musicDir);
   const now = Date.now();
   let totalMatched = 0;
 
+  const userTracksStmt = sqlite.prepare(
+    `
+    SELECT t.id, t.title, ar.name AS artistName, t.file_path AS filePath
+    FROM tracks t
+    JOIN artists ar ON ar.id = t.artist_id
+    WHERE t.user_id = ?
+  `,
+  );
   const maxPosStmt = sqlite.prepare(
     "SELECT COALESCE(MAX(position), -1) AS maxPos FROM playlist_tracks WHERE playlist_id = ?",
   );
@@ -366,27 +387,34 @@ export function recheckAllPlaylistsMissingTracks(
   const touchedPlaylists = new Set<number>();
 
   const tx = sqlite.transaction(() => {
-    for (const row of missingRows) {
-      const matchId = matcher.match({
-        title: row.title,
-        artist: row.artist,
-        album: row.album,
-        rawLabel: `${row.artist} - ${row.title}`,
-      });
-      if (matchId === null) continue;
+    for (const [ownerId, ownerMissing] of rowsByUser.entries()) {
+      const userTracks = userTracksStmt.all(ownerId) as LocalLibraryTrack[];
+      const ownerMusicDir =
+        typeof musicDirOrResolver === "function" ? musicDirOrResolver(ownerId) : musicDirOrResolver;
+      const matcher = buildLibraryTrackMatcher(userTracks, ownerMusicDir);
 
-      let nextPos = nextPosByPlaylist.get(row.playlistId);
-      if (nextPos === undefined) {
-        const res = maxPosStmt.get(row.playlistId) as { maxPos: number };
-        nextPos = res.maxPos + 1;
+      for (const row of ownerMissing) {
+        const matchId = matcher.match({
+          title: row.title,
+          artist: row.artist,
+          album: row.album,
+          rawLabel: `${row.artist} - ${row.title}`,
+        });
+        if (matchId === null) continue;
+
+        let nextPos = nextPosByPlaylist.get(row.playlistId);
+        if (nextPos === undefined) {
+          const res = maxPosStmt.get(row.playlistId) as { maxPos: number };
+          nextPos = res.maxPos + 1;
+        }
+
+        insertTrackStmt.run(row.playlistId, matchId, nextPos, now);
+        deleteMissingStmt.run(row.id);
+        batchSearchService?.removeTrackFromJob(row.playlistId, row.id);
+        nextPosByPlaylist.set(row.playlistId, nextPos + 1);
+        touchedPlaylists.add(row.playlistId);
+        totalMatched += 1;
       }
-
-      insertTrackStmt.run(row.playlistId, matchId, nextPos, now);
-      deleteMissingStmt.run(row.id);
-      batchSearchService?.removeTrackFromJob(row.playlistId, row.id);
-      nextPosByPlaylist.set(row.playlistId, nextPos + 1);
-      touchedPlaylists.add(row.playlistId);
-      totalMatched += 1;
     }
 
     for (const plId of touchedPlaylists) {

@@ -11,6 +11,7 @@ import type {
   UploadFileResponse,
 } from "@musicorbit/shared";
 import type { ActivityLogService } from "../services/activityLog.js";
+import { getRequestUser } from "../services/authHelpers.js";
 import { ImporterError, type LibraryImporter } from "../services/importer.js";
 import { sanitizeLayoutSegment } from "../services/libraryLayout.js";
 import { SUPPORTED_AUDIO_EXTENSIONS } from "../services/scanner.js";
@@ -92,16 +93,18 @@ export async function registerUploadRoutes(
   const maxFileBytes = deps.maxFileBytes ?? MAX_UPLOAD_FILE_BYTES;
   const { importer, activityLog } = deps;
 
-  const resolveBatchDir = (batchId: string): string | null => {
-    const candidate = path.resolve(uploadsRoot, batchId);
-    if (!candidate.startsWith(`${uploadsRoot}${path.sep}`)) return null;
+  const resolveBatchDir = (userId: number, batchId: string): string | null => {
+    const userRoot = path.resolve(uploadsRoot, `user-${userId}`);
+    const candidate = path.resolve(userRoot, batchId);
+    if (!candidate.startsWith(`${userRoot}${path.sep}`)) return null;
     return candidate;
   };
 
-  // Start a new upload batch session (creates an isolated staging folder under DATA_DIR/uploads)
-  app.post("/api/uploads/start", async (): Promise<StartUploadBatchResponse> => {
+  // Start a new per-user upload batch session under DATA_DIR/uploads/user-<id>/<batchId>
+  app.post("/api/uploads/start", async (request): Promise<StartUploadBatchResponse> => {
+    const user = getRequestUser(request);
     const batchId = crypto.randomUUID();
-    const batchDir = path.join(uploadsRoot, batchId);
+    const batchDir = path.join(uploadsRoot, `user-${user.id}`, batchId);
     await fsp.mkdir(batchDir, { recursive: true });
     return {
       batchId,
@@ -124,6 +127,7 @@ export async function registerUploadRoutes(
       "/api/uploads/:batchId/file",
       { bodyLimit: maxFileBytes + 1024 * 1024 },
       async (request, reply): Promise<UploadFileResponse> => {
+        const user = getRequestUser(request);
         const streamBody = request.body as Readable | undefined;
         const drainStream = async () => {
           if (streamBody && typeof streamBody[Symbol.asyncIterator] === "function") {
@@ -143,7 +147,7 @@ export async function registerUploadRoutes(
           return reply.code(400).send({ error: "Invalid upload batch ID." });
         }
 
-        const batchDir = resolveBatchDir(parsedParams.data.batchId);
+        const batchDir = resolveBatchDir(user.id, parsedParams.data.batchId);
         if (!batchDir || !fs.existsSync(batchDir)) {
           await drainStream();
           return reply.code(404).send({ error: "Upload session not found or already finalized." });
@@ -244,12 +248,13 @@ export async function registerUploadRoutes(
   app.post(
     "/api/uploads/:batchId/finalize",
     async (request, reply): Promise<FinalizeUploadBatchResponse> => {
+      const user = getRequestUser(request);
       const parsedParams = batchIdParamSchema.safeParse(request.params);
       if (!parsedParams.success) {
         return reply.code(400).send({ error: "Invalid upload batch ID." });
       }
 
-      const batchDir = resolveBatchDir(parsedParams.data.batchId);
+      const batchDir = resolveBatchDir(user.id, parsedParams.data.batchId);
       if (!batchDir || !fs.existsSync(batchDir)) {
         return reply.code(404).send({ error: "Upload session not found." });
       }
@@ -263,11 +268,11 @@ export async function registerUploadRoutes(
       try {
         activityLog?.info(
           "importer",
-          `Processing browser upload (${uploadedFiles} ${uploadedFiles === 1 ? "file" : "files"})`,
-          { batchId: parsedParams.data.batchId, uploadedFiles },
+          `Processing browser upload for @${user.username} (${uploadedFiles} ${uploadedFiles === 1 ? "file" : "files"})`,
+          { userId: user.id, batchId: parsedParams.data.batchId, uploadedFiles },
         );
 
-        const result = await importer.importExternalFolder(batchDir, "move");
+        const result = await importer.importExternalFolder(batchDir, "move", user.id);
         // Clean up batch folder if everything moved into MUSIC_DIR (keeps files if any await Review Queue)
         await cleanupEmptyStagingDir(batchDir);
 
@@ -291,11 +296,12 @@ export async function registerUploadRoutes(
 
   // Cancel and delete an incomplete upload batch cleanly
   app.delete("/api/uploads/:batchId", async (request, reply) => {
+    const user = getRequestUser(request);
     const parsedParams = batchIdParamSchema.safeParse(request.params);
     if (!parsedParams.success) {
       return reply.code(400).send({ error: "Invalid upload batch ID." });
     }
-    const batchDir = resolveBatchDir(parsedParams.data.batchId);
+    const batchDir = resolveBatchDir(user.id, parsedParams.data.batchId);
     if (batchDir && fs.existsSync(batchDir)) {
       await fsp.rm(batchDir, { recursive: true, force: true }).catch(() => {});
     }

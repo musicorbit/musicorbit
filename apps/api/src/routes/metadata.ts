@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { TrackMetadataResponse, TrackMetadataSuggestion } from "@musicorbit/shared";
 import type { DbContext } from "../db/index.js";
 import { MAX_ARTIST_IMAGE_BYTES } from "../services/artistImages.js";
+import { getRequestUser } from "../services/authHelpers.js";
 import {
   isAllowedCoverArtUrl,
   type MetadataLookupService,
@@ -79,19 +80,22 @@ export async function registerMetadataRoutes(
   const fetchImpl = deps.fetchImpl ?? fetch;
   const { sqlite } = dbContext;
 
-  const lookupTrack = (id: number) =>
+  const lookupTrack = (id: number, userId: number) =>
     sqlite
-      .prepare("SELECT id, album_id AS albumId, file_path AS filePath FROM tracks WHERE id = ?")
-      .get(id) as { id: number; albumId: number; filePath: string } | undefined;
+      .prepare(
+        "SELECT id, album_id AS albumId, file_path AS filePath FROM tracks WHERE id = ? AND user_id = ?",
+      )
+      .get(id, userId) as { id: number; albumId: number; filePath: string } | undefined;
 
   // Read every embedded tag + technical audio property directly from the file on disk
   app.get("/api/tracks/:id/metadata", async (request, reply): Promise<TrackMetadataResponse> => {
+    const user = getRequestUser(request);
     const parsed = idParamSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Invalid track ID" });
     }
 
-    const row = lookupTrack(parsed.data.id);
+    const row = lookupTrack(parsed.data.id, user.id);
     if (!row) {
       return reply.code(404).send({ error: "Track not found" });
     }
@@ -104,6 +108,7 @@ export async function registerMetadataRoutes(
 
   // Update embedded audio metadata in place and re-index SQLite immediately
   app.put("/api/tracks/:id/metadata", async (request, reply): Promise<TrackMetadataResponse> => {
+    const user = getRequestUser(request);
     const parsedId = idParamSchema.safeParse(request.params);
     if (!parsedId.success) {
       return reply.code(400).send({ error: "Invalid track ID" });
@@ -117,7 +122,7 @@ export async function registerMetadataRoutes(
       });
     }
 
-    const row = lookupTrack(parsedId.data.id);
+    const row = lookupTrack(parsedId.data.id, user.id);
     if (!row) {
       return reply.code(404).send({ error: "Track not found" });
     }
@@ -127,21 +132,22 @@ export async function registerMetadataRoutes(
 
     writeFullTrackMetadata(row.filePath, parsedBody.data);
 
-    // Re-scan so SQLite picks up updated artist, album, title, year, genre, track numbers
-    await scanner.runScan({ force: true });
+    // Re-scan this user's library so SQLite picks up updated artist, album, title, year, genre, track numbers
+    await scanner.runScan({ force: true, userId: user.id });
 
-    const refreshed = lookupTrack(row.id);
+    const refreshed = lookupTrack(row.id, user.id);
     return readFullTrackMetadata(row.id, refreshed?.albumId ?? row.albumId, row.filePath);
   });
 
   // Embed custom cover art directly inside the audio file
   app.put("/api/tracks/:id/cover", async (request, reply): Promise<TrackMetadataResponse> => {
+    const user = getRequestUser(request);
     const parsedId = idParamSchema.safeParse(request.params);
     if (!parsedId.success) {
       return reply.code(400).send({ error: "Invalid track ID" });
     }
 
-    const row = lookupTrack(parsedId.data.id);
+    const row = lookupTrack(parsedId.data.id, user.id);
     if (!row) {
       return reply.code(404).send({ error: "Track not found" });
     }
@@ -162,20 +168,21 @@ export async function registerMetadataRoutes(
     }
 
     writeEmbeddedCover(row.filePath, new Uint8Array(body), rawMime);
-    await scanner.runScan({ force: true });
+    await scanner.runScan({ force: true, userId: user.id });
 
-    const refreshed = lookupTrack(row.id);
+    const refreshed = lookupTrack(row.id, user.id);
     return readFullTrackMetadata(row.id, refreshed?.albumId ?? row.albumId, row.filePath);
   });
 
   // Remove embedded cover art from the audio file
   app.delete("/api/tracks/:id/cover", async (request, reply): Promise<TrackMetadataResponse> => {
+    const user = getRequestUser(request);
     const parsedId = idParamSchema.safeParse(request.params);
     if (!parsedId.success) {
       return reply.code(400).send({ error: "Invalid track ID" });
     }
 
-    const row = lookupTrack(parsedId.data.id);
+    const row = lookupTrack(parsedId.data.id, user.id);
     if (!row) {
       return reply.code(404).send({ error: "Track not found" });
     }
@@ -184,9 +191,9 @@ export async function registerMetadataRoutes(
     }
 
     clearEmbeddedCover(row.filePath);
-    await scanner.runScan({ force: true });
+    await scanner.runScan({ force: true, userId: user.id });
 
-    const refreshed = lookupTrack(row.id);
+    const refreshed = lookupTrack(row.id, user.id);
     return readFullTrackMetadata(row.id, refreshed?.albumId ?? row.albumId, row.filePath);
   });
 
@@ -194,12 +201,13 @@ export async function registerMetadataRoutes(
   app.get(
     "/api/tracks/:id/metadata/lookup",
     async (request, reply): Promise<TrackMetadataSuggestion[]> => {
+      const user = getRequestUser(request);
       const parsedId = idParamSchema.safeParse(request.params);
       if (!parsedId.success) {
         return reply.code(400).send({ error: "Invalid track ID" });
       }
 
-      const row = lookupTrack(parsedId.data.id);
+      const row = lookupTrack(parsedId.data.id, user.id);
       if (!row) {
         return reply.code(404).send({ error: "Track not found" });
       }
@@ -234,6 +242,7 @@ export async function registerMetadataRoutes(
   app.post(
     "/api/tracks/:id/cover/from-url",
     async (request, reply): Promise<TrackMetadataResponse> => {
+      const user = getRequestUser(request);
       const parsedId = idParamSchema.safeParse(request.params);
       if (!parsedId.success) {
         return reply.code(400).send({ error: "Invalid track ID" });
@@ -250,7 +259,7 @@ export async function registerMetadataRoutes(
         });
       }
 
-      const row = lookupTrack(parsedId.data.id);
+      const row = lookupTrack(parsedId.data.id, user.id);
       if (!row) {
         return reply.code(404).send({ error: "Track not found" });
       }
@@ -276,9 +285,9 @@ export async function registerMetadataRoutes(
       }
 
       writeEmbeddedCover(row.filePath, bytes, mime);
-      await scanner.runScan({ force: true });
+      await scanner.runScan({ force: true, userId: user.id });
 
-      const refreshed = lookupTrack(row.id);
+      const refreshed = lookupTrack(row.id, user.id);
       return readFullTrackMetadata(row.id, refreshed?.albumId ?? row.albumId, row.filePath);
     },
   );

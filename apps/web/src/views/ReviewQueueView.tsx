@@ -19,10 +19,11 @@ import { RetagAlbumModal } from "../components/RetagAlbumModal";
 import { formatBitrate, formatCodec } from "../utils/format";
 
 interface ReviewQueueViewProps {
+  isAdmin?: boolean;
   onLibraryChanged: () => void;
 }
 
-export function ReviewQueueView({ onLibraryChanged }: ReviewQueueViewProps) {
+export function ReviewQueueView({ isAdmin = true, onLibraryChanged }: ReviewQueueViewProps) {
   const [data, setData] = useState<ImportsListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
@@ -102,19 +103,21 @@ export function ReviewQueueView({ onLibraryChanged }: ReviewQueueViewProps) {
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            disabled={scanning}
-            onClick={() => void handleScanInbox()}
-            className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-amber-400 disabled:opacity-45"
-          >
-            {scanning ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <FolderInput className="h-4 w-4" />
-            )}
-            {scanning ? "Scanning Inbox…" : "Scan Inbox"}
-          </button>
+          {isAdmin && (
+            <button
+              type="button"
+              disabled={scanning}
+              onClick={() => void handleScanInbox()}
+              className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-amber-400 disabled:opacity-45"
+            >
+              {scanning ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FolderInput className="h-4 w-4" />
+              )}
+              {scanning ? "Scanning Inbox…" : "Scan Inbox"}
+            </button>
+          )}
 
           <button
             type="button"
@@ -128,8 +131,8 @@ export function ReviewQueueView({ onLibraryChanged }: ReviewQueueViewProps) {
         </div>
       </div>
 
-      {/* Downloads inbox path banner */}
-      {data && !data.downloadsDir.exists && (
+      {/* Downloads inbox path banner (Admin only) */}
+      {isAdmin && data && !data.downloadsDir.exists && (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5 text-sm text-zinc-300">
           <p className="font-medium text-zinc-100">Downloads inbox folder not created yet</p>
           <p className="mt-1 text-xs text-zinc-400">

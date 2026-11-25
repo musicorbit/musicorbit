@@ -3,12 +3,14 @@ import {
   Activity,
   AlertTriangle,
   Disc3,
+  KeyRound,
   ListMusic,
   LogOut,
   Music,
   RefreshCw,
   ScrollText,
   Search,
+  ShieldCheck,
   Sparkles,
   Upload,
   Users,
@@ -38,6 +40,7 @@ import {
   triggerScan,
 } from "./api/client";
 import { AuthGate } from "./components/AuthGate";
+import { ChangePasswordModal } from "./components/ChangePasswordModal";
 import { PlayerBar } from "./components/PlayerBar";
 import { UploadMusicModal } from "./components/UploadMusicModal";
 import { PlayerProvider, usePlayer } from "./context/PlayerContext";
@@ -52,6 +55,7 @@ import { ReviewQueueView } from "./views/ReviewQueueView";
 import { SearchView } from "./views/SearchView";
 import { SystemView } from "./views/SystemView";
 import { TracksView } from "./views/TracksView";
+import { UsersView } from "./views/UsersView";
 
 type Route =
   | { view: "albums" }
@@ -64,6 +68,7 @@ type Route =
   | { view: "search" }
   | { view: "review" }
   | { view: "system" }
+  | { view: "users" }
   | { view: "logs" };
 
 function MusicOrbitShell() {
@@ -84,6 +89,7 @@ function MusicOrbitShell() {
     null,
   );
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [startingScan, setStartingScan] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -189,6 +195,17 @@ function MusicOrbitShell() {
     try {
       await logoutUser();
     } finally {
+      setAlbums([]);
+      setArtists([]);
+      setTracks([]);
+      setPlaylists([]);
+      setHealth(null);
+      setScanStatus(null);
+      setNeedsReviewCount(0);
+      setSearchQuery("");
+      setUploadOpen(false);
+      setChangePasswordOpen(false);
+      setRoute({ view: "albums" });
       const next = await fetchAuthStatus().catch(() => ({
         authEnabled: true,
         authenticated: false,
@@ -199,7 +216,11 @@ function MusicOrbitShell() {
     }
   };
 
+  const isAdmin = !authStatus?.authEnabled || authStatus.user?.role === "admin";
   const slskdConfigured = Boolean(slskdStatus?.configured);
+  const canUseSoulseek =
+    slskdConfigured &&
+    (!authStatus?.authEnabled || isAdmin || Boolean(authStatus?.user?.canUseSoulseek));
 
   const handleOpenSoulseekSearch = useCallback((initialQuery?: string) => {
     if (initialQuery?.trim()) {
@@ -208,12 +229,14 @@ function MusicOrbitShell() {
     setRoute({ view: "search" });
   }, []);
 
-  // If slskd becomes unconfigured while user is on the search route, bounce back to Albums
+  // Bounce away from routes that are unavailable for the current user's role/permissions
   useEffect(() => {
-    if (slskdStatus && !slskdStatus.configured && route.view === "search") {
+    if (slskdStatus && !canUseSoulseek && route.view === "search") {
+      setRoute({ view: "albums" });
+    } else if (!isAdmin && route.view === "users") {
       setRoute({ view: "albums" });
     }
-  }, [slskdStatus, route.view]);
+  }, [slskdStatus, canUseSoulseek, isAdmin, route.view]);
 
   if (!authChecked) {
     return (
@@ -227,13 +250,25 @@ function MusicOrbitShell() {
     return (
       <AuthGate
         needsSetup={authStatus.needsSetup}
-        onAuthenticated={(next) => setAuthStatus(next)}
+        onAuthenticated={(next) => {
+          setRoute({ view: "albums" });
+          setAuthStatus(next);
+        }}
       />
     );
   }
 
   const navItems: Array<{
-    id: "albums" | "artists" | "tracks" | "playlists" | "search" | "review" | "system" | "logs";
+    id:
+      | "albums"
+      | "artists"
+      | "tracks"
+      | "playlists"
+      | "search"
+      | "review"
+      | "system"
+      | "users"
+      | "logs";
     label: string;
     icon: typeof Disc3;
     count: number | undefined;
@@ -243,7 +278,7 @@ function MusicOrbitShell() {
     { id: "artists", label: "Artists", icon: Users, count: health?.counts.artists },
     { id: "tracks", label: "Tracks", icon: Music, count: health?.counts.tracks },
     { id: "playlists", label: "Playlists", icon: ListMusic, count: playlists.length },
-    ...(slskdConfigured
+    ...(canUseSoulseek
       ? [{ id: "search" as const, label: "Soulseek Search", icon: Search, count: undefined }]
       : []),
     {
@@ -253,12 +288,29 @@ function MusicOrbitShell() {
       count: needsReviewCount > 0 ? needsReviewCount : undefined,
       highlightBadge: needsReviewCount > 0,
     },
-    { id: "system", label: "System & Scanner", icon: Activity, count: undefined },
+    {
+      id: "system",
+      label: isAdmin ? "System & Scanner" : "Library Settings",
+      icon: Activity,
+      count: undefined,
+    },
+    ...(authStatus?.authEnabled && isAdmin
+      ? [{ id: "users" as const, label: "Users", icon: ShieldCheck, count: undefined }]
+      : []),
     { id: "logs", label: "Activity Logs", icon: ScrollText, count: undefined },
   ];
 
   const isNavActive = (
-    id: "albums" | "artists" | "tracks" | "playlists" | "search" | "review" | "system" | "logs",
+    id:
+      | "albums"
+      | "artists"
+      | "tracks"
+      | "playlists"
+      | "search"
+      | "review"
+      | "system"
+      | "users"
+      | "logs",
   ) => {
     if (route.view === id) return true;
     if (id === "albums" && route.view === "album-detail") return true;
@@ -328,19 +380,33 @@ function MusicOrbitShell() {
 
         <div className="mt-6 space-y-2.5">
           {authStatus?.authEnabled && authStatus.user && (
-            <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs">
-              <span className="truncate text-zinc-300">
-                Signed in as <strong className="text-zinc-100">{authStatus.user.username}</strong>
-              </span>
-              <button
-                type="button"
-                onClick={() => void handleLogout()}
-                title="Sign out"
-                aria-label="Sign out"
-                className="ml-2 rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-              >
-                <LogOut className="h-3.5 w-3.5" />
-              </button>
+            <div className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs">
+              <div className="min-w-0">
+                <p className="truncate text-zinc-100 font-medium">{authStatus.user.username}</p>
+                <p className="text-[10px] text-zinc-500">
+                  {authStatus.user.role === "admin" ? "Administrator" : "Member"}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setChangePasswordOpen(true)}
+                  title="Change password"
+                  aria-label="Change password"
+                  className="rounded p-1 text-zinc-400 transition hover:bg-zinc-800 hover:text-amber-300"
+                >
+                  <KeyRound className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleLogout()}
+                  title="Sign out"
+                  aria-label="Sign out"
+                  className="rounded p-1 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           )}
 
@@ -448,7 +514,7 @@ function MusicOrbitShell() {
               onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
               onAlbumRetagged={() => void loadLibrary(searchQuery)}
               onPlaylistsChanged={() => void refreshPlaylists()}
-              slskdConfigured={slskdConfigured}
+              slskdConfigured={canUseSoulseek}
               onSearchSoulseek={handleOpenSoulseekSearch}
             />
           )}
@@ -500,6 +566,7 @@ function MusicOrbitShell() {
           {route.view === "playlist-detail" && (
             <PlaylistDetailView
               playlistId={route.playlistId}
+              canUseSoulseek={canUseSoulseek}
               onBack={() => setRoute({ view: "playlists" })}
               onSelectAlbum={(albumId) => setRoute({ view: "album-detail", albumId })}
               onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
@@ -507,7 +574,7 @@ function MusicOrbitShell() {
             />
           )}
 
-          {route.view === "search" && slskdConfigured && (
+          {route.view === "search" && canUseSoulseek && (
             <SearchView
               initialQuery={soulseekLaunch?.query}
               initialQueryNonce={soulseekLaunch?.nonce}
@@ -515,11 +582,16 @@ function MusicOrbitShell() {
           )}
 
           {route.view === "review" && (
-            <ReviewQueueView onLibraryChanged={() => void loadLibrary(searchQuery)} />
+            <ReviewQueueView
+              isAdmin={isAdmin}
+              onLibraryChanged={() => void loadLibrary(searchQuery)}
+            />
           )}
 
           {route.view === "system" && (
             <SystemView
+              isAdmin={isAdmin}
+              canUseSoulseek={canUseSoulseek}
               health={health}
               scanStatus={scanStatus}
               slskdStatus={slskdStatus}
@@ -534,7 +606,14 @@ function MusicOrbitShell() {
             />
           )}
 
-          {route.view === "logs" && <LogsView />}
+          {route.view === "users" && authStatus?.authEnabled && isAdmin && (
+            <UsersView
+              currentUserId={authStatus.user?.id ?? null}
+              slskdConfigured={slskdConfigured}
+            />
+          )}
+
+          {route.view === "logs" && <LogsView isAdmin={isAdmin} />}
         </div>
       </main>
 
@@ -548,6 +627,13 @@ function MusicOrbitShell() {
           onClose={() => setUploadOpen(false)}
           onUploaded={() => void loadLibrary(searchQuery)}
           onOpenReviewQueue={() => setRoute({ view: "review" })}
+        />
+      )}
+
+      {changePasswordOpen && authStatus?.user && (
+        <ChangePasswordModal
+          username={authStatus.user.username}
+          onClose={() => setChangePasswordOpen(false)}
         />
       )}
     </div>

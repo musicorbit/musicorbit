@@ -49,7 +49,7 @@ const envSchema = z.object({
   DOWNLOADS_DIR: z.string().min(1).default("./downloads"),
   AUTO_IMPORT_THRESHOLD: z.coerce.number().int().min(0).max(100).default(85),
   FETCH_ARTIST_IMAGES: booleanDefaultTrue,
-  AUTH_ENABLED: booleanDefaultFalse,
+  AUTH_ENABLED: booleanDefaultTrue,
   WEB_DIST_DIR: optionalString,
   SLSKD_URL: optionalUrl,
   SLSKD_API_KEY: optionalString,

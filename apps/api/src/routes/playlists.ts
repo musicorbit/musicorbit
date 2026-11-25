@@ -17,6 +17,7 @@ import type {
 import type { DbContext } from "../db/index.js";
 import type { ActivityLogService } from "../services/activityLog.js";
 import { SlskdError, type SlskdClient } from "../services/acquisition/slskd.js";
+import { getRequestUser, requireSoulseekAccess } from "../services/authHelpers.js";
 import type { PlaylistBatchSearchService } from "../services/playlistBatchSearch.js";
 import type { PlaylistSyncService } from "../services/playlistSync.js";
 import {
@@ -68,11 +69,17 @@ export interface PlaylistRouteDeps {
   dbContext: DbContext;
   musicDir: string;
   getMusicDir?: () => string;
+  getUserMusicDir?: (userId: number) => string;
   coversDir: string;
   slskdClient?: SlskdClient;
   batchSearchService?: PlaylistBatchSearchService;
   playlistSync?: PlaylistSyncService;
   activityLog?: ActivityLogService;
+  onDownloadEnqueued?: (
+    userId: number,
+    slskdUsername: string,
+    files: Array<{ filename: string; size?: number }>,
+  ) => void;
 }
 
 const idParamSchema = z.object({
@@ -214,11 +221,13 @@ export async function registerPlaylistRoutes(
   app: FastifyInstance,
   deps: PlaylistRouteDeps,
 ): Promise<void> {
-  const { dbContext, coversDir, slskdClient, batchSearchService, playlistSync, activityLog } = deps;
+  const { dbContext, coversDir, slskdClient, batchSearchService, playlistSync, activityLog, onDownloadEnqueued } = deps;
   const getMusicDir = deps.getMusicDir ?? (() => deps.musicDir);
+  const getUserMusicDir = (userId: number) =>
+    deps.getUserMusicDir ? deps.getUserMusicDir(userId) : getMusicDir();
   const { sqlite } = dbContext;
 
-  const selectPlaylistSummary = (playlistId: number): PlaylistSummary | null => {
+  const selectPlaylistSummary = (playlistId: number, userId: number): PlaylistSummary | null => {
     const row = sqlite
       .prepare(
         `
@@ -248,11 +257,11 @@ export async function registerPlaylistRoutes(
         FROM playlists p
         LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
         LEFT JOIN tracks t ON t.id = pt.track_id
-        WHERE p.id = ?
+        WHERE p.id = ? AND p.user_id = ?
         GROUP BY p.id
       `,
       )
-      .get(playlistId) as PlaylistRow | undefined;
+      .get(playlistId, userId) as PlaylistRow | undefined;
 
     return row ? toPlaylistSummary(row) : null;
   };
@@ -307,20 +316,22 @@ export async function registerPlaylistRoutes(
     return rows.map(toMissingTrack);
   };
 
-  const selectAllLibraryTracks = (): LocalLibraryTrack[] => {
+  const selectAllLibraryTracks = (userId: number): LocalLibraryTrack[] => {
     return sqlite
       .prepare(
         `
         SELECT t.id, t.title, ar.name AS artistName, t.file_path AS filePath
         FROM tracks t
         JOIN artists ar ON ar.id = t.artist_id
+        WHERE t.user_id = ?
       `,
       )
-      .all() as LocalLibraryTrack[];
+      .all(userId) as LocalLibraryTrack[];
   };
 
-  // List all playlists
-  app.get("/api/playlists", async (): Promise<PlaylistSummary[]> => {
+  // List all playlists for this user
+  app.get("/api/playlists", async (request): Promise<PlaylistSummary[]> => {
+    const user = getRequestUser(request);
     const rows = sqlite
       .prepare(
         `
@@ -350,17 +361,19 @@ export async function registerPlaylistRoutes(
         FROM playlists p
         LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
         LEFT JOIN tracks t ON t.id = pt.track_id
+        WHERE p.user_id = ?
         GROUP BY p.id
         ORDER BY p.updated_at DESC
       `,
       )
-      .all() as PlaylistRow[];
+      .all(user.id) as PlaylistRow[];
 
     return rows.map(toPlaylistSummary);
   });
 
   // Create playlist
   app.post("/api/playlists", async (request, reply): Promise<PlaylistSummary> => {
+    const user = getRequestUser(request);
     const parsed = createPlaylistBodySchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Playlist name is required." });
@@ -369,25 +382,26 @@ export async function registerPlaylistRoutes(
     const now = Date.now();
     const res = sqlite
       .prepare(
-        "INSERT INTO playlists (name, description, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO playlists (user_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
       )
-      .run(parsed.data.name, parsed.data.description, now, now);
+      .run(user.id, parsed.data.name, parsed.data.description, now, now);
 
     const createdId = Number(res.lastInsertRowid);
     await playlistSync?.syncPlaylist(createdId);
-    const created = selectPlaylistSummary(createdId)!;
+    const created = selectPlaylistSummary(createdId, user.id)!;
     reply.code(201);
     return created;
   });
 
   // Playlist detail + ordered tracks + missing tracks
   app.get("/api/playlists/:id", async (request, reply): Promise<PlaylistDetailResponse> => {
+    const user = getRequestUser(request);
     const parsed = idParamSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Invalid playlist ID" });
     }
 
-    const playlist = selectPlaylistSummary(parsed.data.id);
+    const playlist = selectPlaylistSummary(parsed.data.id, user.id);
     if (!playlist) {
       return reply.code(404).send({ error: "Playlist not found" });
     }
@@ -401,6 +415,7 @@ export async function registerPlaylistRoutes(
 
   // Rename / update description
   app.patch("/api/playlists/:id", async (request, reply): Promise<PlaylistSummary> => {
+    const user = getRequestUser(request);
     const parsedId = idParamSchema.safeParse(request.params);
     if (!parsedId.success) {
       return reply.code(400).send({ error: "Invalid playlist ID" });
@@ -410,49 +425,54 @@ export async function registerPlaylistRoutes(
       return reply.code(400).send({ error: "Invalid playlist update payload" });
     }
 
-    const existing = selectPlaylistSummary(parsedId.data.id);
+    const existing = selectPlaylistSummary(parsedId.data.id, user.id);
     if (!existing) {
       return reply.code(404).send({ error: "Playlist not found" });
     }
 
     const now = Date.now();
     sqlite
-      .prepare("UPDATE playlists SET name = ?, description = ?, updated_at = ? WHERE id = ?")
+      .prepare("UPDATE playlists SET name = ?, description = ?, updated_at = ? WHERE id = ? AND user_id = ?")
       .run(
         parsedBody.data.name ?? existing.name,
         parsedBody.data.description ?? existing.description,
         now,
         parsedId.data.id,
+        user.id,
       );
 
     await playlistSync?.syncPlaylist(parsedId.data.id);
-    return selectPlaylistSummary(parsedId.data.id)!;
+    return selectPlaylistSummary(parsedId.data.id, user.id)!;
   });
 
   // Delete playlist
   app.delete("/api/playlists/:id", async (request, reply) => {
+    const user = getRequestUser(request);
     const parsedId = idParamSchema.safeParse(request.params);
     if (!parsedId.success) {
       return reply.code(400).send({ error: "Invalid playlist ID" });
     }
     const existingRow = sqlite
-      .prepare("SELECT name, synced_filename AS syncedFilename FROM playlists WHERE id = ?")
-      .get(parsedId.data.id) as { name: string; syncedFilename: string | null } | undefined;
+      .prepare("SELECT name, synced_filename AS syncedFilename FROM playlists WHERE id = ? AND user_id = ?")
+      .get(parsedId.data.id, user.id) as { name: string; syncedFilename: string | null } | undefined;
 
-    batchSearchService?.cancel(parsedId.data.id);
-    const res = sqlite.prepare("DELETE FROM playlists WHERE id = ?").run(parsedId.data.id);
-    if (res.changes === 0) {
+    if (!existingRow) {
       return reply.code(404).send({ error: "Playlist not found" });
     }
+
+    batchSearchService?.cancel(parsedId.data.id);
+    sqlite.prepare("DELETE FROM playlists WHERE id = ? AND user_id = ?").run(parsedId.data.id, user.id);
     await playlistSync?.deleteSyncedPlaylist(
-      existingRow?.syncedFilename ?? null,
-      existingRow?.name,
+      existingRow.syncedFilename ?? null,
+      existingRow.name,
+      user.id,
     );
     return reply.code(204).send();
   });
 
   // Add tracks to playlist
   app.post("/api/playlists/:id/tracks", async (request, reply): Promise<PlaylistDetailResponse> => {
+    const user = getRequestUser(request);
     const parsedId = idParamSchema.safeParse(request.params);
     if (!parsedId.success) {
       return reply.code(400).send({ error: "Invalid playlist ID" });
@@ -462,7 +482,7 @@ export async function registerPlaylistRoutes(
       return reply.code(400).send({ error: "Provide at least one track ID" });
     }
 
-    const existing = selectPlaylistSummary(parsedId.data.id);
+    const existing = selectPlaylistSummary(parsedId.data.id, user.id);
     if (!existing) {
       return reply.code(404).send({ error: "Playlist not found" });
     }
@@ -476,11 +496,11 @@ export async function registerPlaylistRoutes(
     const insertStmt = sqlite.prepare(
       "INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)",
     );
-    const existsTrackStmt = sqlite.prepare("SELECT id FROM tracks WHERE id = ?");
+    const existsTrackStmt = sqlite.prepare("SELECT id FROM tracks WHERE id = ? AND user_id = ?");
 
     const tx = sqlite.transaction((trackIds: number[]) => {
       for (const tid of trackIds) {
-        if (!existsTrackStmt.get(tid)) continue;
+        if (!existsTrackStmt.get(tid, user.id)) continue;
         insertStmt.run(parsedId.data.id, tid, nextPos, now);
         nextPos += 1;
       }
@@ -490,7 +510,7 @@ export async function registerPlaylistRoutes(
     await playlistSync?.syncPlaylist(parsedId.data.id);
 
     return {
-      playlist: selectPlaylistSummary(parsedId.data.id)!,
+      playlist: selectPlaylistSummary(parsedId.data.id, user.id)!,
       tracks: selectPlaylistTracks(parsedId.data.id),
       missingTracks: selectMissingTracks(parsedId.data.id),
     };
@@ -498,9 +518,15 @@ export async function registerPlaylistRoutes(
 
   // Remove a track from playlist
   app.delete("/api/playlists/:id/tracks/:trackId", async (request, reply) => {
+    const user = getRequestUser(request);
     const parsed = removeTrackParamSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Invalid parameters" });
+    }
+
+    const existing = selectPlaylistSummary(parsed.data.id, user.id);
+    if (!existing) {
+      return reply.code(404).send({ error: "Playlist not found" });
     }
 
     const row = sqlite
@@ -520,7 +546,7 @@ export async function registerPlaylistRoutes(
     await playlistSync?.syncPlaylist(parsed.data.id);
 
     return {
-      playlist: selectPlaylistSummary(parsed.data.id)!,
+      playlist: selectPlaylistSummary(parsed.data.id, user.id)!,
       tracks: selectPlaylistTracks(parsed.data.id),
       missingTracks: selectMissingTracks(parsed.data.id),
     };
@@ -528,6 +554,7 @@ export async function registerPlaylistRoutes(
 
   // Reorder tracks inside a playlist
   app.put("/api/playlists/:id/tracks/reorder", async (request, reply) => {
+    const user = getRequestUser(request);
     const parsedId = idParamSchema.safeParse(request.params);
     if (!parsedId.success) {
       return reply.code(400).send({ error: "Invalid playlist ID" });
@@ -537,27 +564,31 @@ export async function registerPlaylistRoutes(
       return reply.code(400).send({ error: "Invalid trackIds order" });
     }
 
-    const existing = selectPlaylistSummary(parsedId.data.id);
+    const existing = selectPlaylistSummary(parsedId.data.id, user.id);
     if (!existing) {
       return reply.code(404).send({ error: "Playlist not found" });
     }
 
     const now = Date.now();
+    const existsTrackStmt = sqlite.prepare("SELECT id FROM tracks WHERE id = ? AND user_id = ?");
     const tx = sqlite.transaction((trackIds: number[]) => {
       sqlite.prepare("DELETE FROM playlist_tracks WHERE playlist_id = ?").run(parsedId.data.id);
       const insertStmt = sqlite.prepare(
         "INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)",
       );
-      trackIds.forEach((tid, idx) => {
-        insertStmt.run(parsedId.data.id, tid, idx, now);
-      });
+      let pos = 0;
+      for (const tid of trackIds) {
+        if (!existsTrackStmt.get(tid, user.id)) continue;
+        insertStmt.run(parsedId.data.id, tid, pos, now);
+        pos += 1;
+      }
       sqlite.prepare("UPDATE playlists SET updated_at = ? WHERE id = ?").run(now, parsedId.data.id);
     });
     tx(parsedBody.data.trackIds);
     await playlistSync?.syncPlaylist(parsedId.data.id);
 
     return {
-      playlist: selectPlaylistSummary(parsedId.data.id)!,
+      playlist: selectPlaylistSummary(parsedId.data.id, user.id)!,
       tracks: selectPlaylistTracks(parsedId.data.id),
       missingTracks: selectMissingTracks(parsedId.data.id),
     };
@@ -565,17 +596,18 @@ export async function registerPlaylistRoutes(
 
   // Export playlist as standard #EXTM3U (.m3u8) compatible with Navidrome, Symfonium, VLC
   app.get("/api/playlists/:id/export.m3u8", async (request, reply) => {
+    const user = getRequestUser(request);
     const parsed = idParamSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Invalid playlist ID" });
     }
 
-    const playlist = selectPlaylistSummary(parsed.data.id);
+    const playlist = selectPlaylistSummary(parsed.data.id, user.id);
     if (!playlist) {
       return reply.code(404).send({ error: "Playlist not found" });
     }
 
-    const activeMusicDir = getMusicDir();
+    const activeMusicDir = getUserMusicDir(user.id);
     const tracks = selectPlaylistTracks(parsed.data.id);
     const lines = ["#EXTM3U", `#PLAYLIST:${playlist.name}`];
     for (const track of tracks) {
@@ -593,6 +625,7 @@ export async function registerPlaylistRoutes(
 
   // Import an .m3u8 or .csv (Exportify / Spotify / generic) playlist
   app.post("/api/playlists/import", async (request, reply): Promise<ImportM3u8Response> => {
+    const user = getRequestUser(request);
     const parsed = importPlaylistBodySchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Provide a playlist name and .m3u8 or .csv content." });
@@ -613,7 +646,7 @@ export async function registerPlaylistRoutes(
       });
     }
 
-    const matcher = buildLibraryTrackMatcher(selectAllLibraryTracks(), getMusicDir());
+    const matcher = buildLibraryTrackMatcher(selectAllLibraryTracks(user.id), getUserMusicDir(user.id));
     const matchedIds: number[] = [];
     const missingEntries: Array<{ position: number; title: string; artist: string; album: string | null; rawLabel: string }> = [];
 
@@ -636,9 +669,9 @@ export async function registerPlaylistRoutes(
     const desc = format === "csv" ? "Imported from CSV" : "Imported from M3U8";
     const res = sqlite
       .prepare(
-        "INSERT INTO playlists (name, description, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO playlists (user_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
       )
-      .run(parsed.data.name, desc, now, now);
+      .run(user.id, parsed.data.name, desc, now, now);
     const playlistId = Number(res.lastInsertRowid);
 
     const insertTrackStmt = sqlite.prepare(
@@ -661,11 +694,11 @@ export async function registerPlaylistRoutes(
     activityLog?.success(
       "playlist",
       `Imported ${format.toUpperCase()} playlist "${parsed.data.name}": ${matchedIds.length} matched, ${missingTracks.length} missing`,
-      { playlistId, format, matchedCount: matchedIds.length, missingCount: missingTracks.length },
+      { userId: user.id, playlistId, format, matchedCount: matchedIds.length, missingCount: missingTracks.length },
     );
     reply.code(201);
     return {
-      playlist: selectPlaylistSummary(playlistId)!,
+      playlist: selectPlaylistSummary(playlistId, user.id)!,
       format,
       matchedCount: matchedIds.length,
       missingCount: missingTracks.length,
@@ -674,21 +707,25 @@ export async function registerPlaylistRoutes(
     };
   });
 
-  // Re-check missing tracks against the current local library (e.g. after downloading & scanning)
+  // Re-check missing tracks against the current user's local library
   app.post(
     "/api/playlists/:id/recheck-missing",
     async (request, reply): Promise<RecheckMissingTracksResponse> => {
+      const user = getRequestUser(request);
       const parsedId = idParamSchema.safeParse(request.params);
       if (!parsedId.success) {
         return reply.code(400).send({ error: "Invalid playlist ID" });
       }
-      const existing = selectPlaylistSummary(parsedId.data.id);
+      const existing = selectPlaylistSummary(parsedId.data.id, user.id);
       if (!existing) {
         return reply.code(404).send({ error: "Playlist not found" });
       }
 
       const missing = selectMissingTracks(parsedId.data.id);
-      const matcher = buildLibraryTrackMatcher(selectAllLibraryTracks(), getMusicDir());
+      const matcher = buildLibraryTrackMatcher(
+        selectAllLibraryTracks(user.id),
+        getUserMusicDir(user.id),
+      );
 
       const maxPosRow = sqlite
         .prepare("SELECT COALESCE(MAX(position), -1) AS maxPos FROM playlist_tracks WHERE playlist_id = ?")
@@ -732,7 +769,7 @@ export async function registerPlaylistRoutes(
 
       const remaining = selectMissingTracks(parsedId.data.id);
       return {
-        playlist: selectPlaylistSummary(parsedId.data.id)!,
+        playlist: selectPlaylistSummary(parsedId.data.id, user.id)!,
         newlyMatchedCount,
         remainingMissingCount: remaining.length,
         tracks: selectPlaylistTracks(parsedId.data.id),
@@ -743,9 +780,14 @@ export async function registerPlaylistRoutes(
 
   // Dismiss a missing track from a playlist
   app.delete("/api/playlists/:id/missing/:missingId", async (request, reply) => {
+    const user = getRequestUser(request);
     const parsed = missingTrackParamSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Invalid parameters" });
+    }
+    const existing = selectPlaylistSummary(parsed.data.id, user.id);
+    if (!existing) {
+      return reply.code(404).send({ error: "Playlist not found" });
     }
     const res = sqlite
       .prepare("DELETE FROM playlist_missing_tracks WHERE id = ? AND playlist_id = ?")
@@ -755,16 +797,19 @@ export async function registerPlaylistRoutes(
     }
     batchSearchService?.removeTrackFromJob(parsed.data.id, parsed.data.missingId);
     return {
-      playlist: selectPlaylistSummary(parsed.data.id)!,
+      playlist: selectPlaylistSummary(parsed.data.id, user.id)!,
       tracks: selectPlaylistTracks(parsed.data.id),
       missingTracks: selectMissingTracks(parsed.data.id),
     };
   });
 
-  // Start a rate-limited batch Soulseek search across missing tracks (all or selected IDs)
+  // Start a rate-limited batch Soulseek search across missing tracks (requires Soulseek permission)
   app.post(
     "/api/playlists/:id/missing/search-batch",
     async (request, reply): Promise<MissingTrackBatchJobStatus> => {
+      const user = requireSoulseekAccess(request, reply);
+      if (!user) return reply as never;
+
       const parsedId = idParamSchema.safeParse(request.params);
       if (!parsedId.success) {
         return reply.code(400).send({ error: "Invalid playlist ID" });
@@ -782,7 +827,7 @@ export async function registerPlaylistRoutes(
         });
       }
 
-      const existing = selectPlaylistSummary(parsedId.data.id);
+      const existing = selectPlaylistSummary(parsedId.data.id, user.id);
       if (!existing) {
         return reply.code(404).send({ error: "Playlist not found" });
       }
@@ -811,9 +856,14 @@ export async function registerPlaylistRoutes(
   app.get(
     "/api/playlists/:id/missing/search-batch",
     async (request, reply): Promise<MissingTrackBatchJobStatus> => {
+      const user = requireSoulseekAccess(request, reply);
+      if (!user) return reply as never;
       const parsedId = idParamSchema.safeParse(request.params);
       if (!parsedId.success) {
         return reply.code(400).send({ error: "Invalid playlist ID" });
+      }
+      if (!selectPlaylistSummary(parsedId.data.id, user.id)) {
+        return reply.code(404).send({ error: "Playlist not found" });
       }
       if (!batchSearchService) {
         return reply.code(503).send({ error: "Soulseek batch search is unavailable." });
@@ -826,9 +876,14 @@ export async function registerPlaylistRoutes(
   app.delete(
     "/api/playlists/:id/missing/search-batch",
     async (request, reply): Promise<MissingTrackBatchJobStatus> => {
+      const user = requireSoulseekAccess(request, reply);
+      if (!user) return reply as never;
       const parsedId = idParamSchema.safeParse(request.params);
       if (!parsedId.success) {
         return reply.code(400).send({ error: "Invalid playlist ID" });
+      }
+      if (!selectPlaylistSummary(parsedId.data.id, user.id)) {
+        return reply.code(404).send({ error: "Playlist not found" });
       }
       if (!batchSearchService) {
         return reply.code(503).send({ error: "Soulseek batch search is unavailable." });
@@ -839,6 +894,9 @@ export async function registerPlaylistRoutes(
 
   // Enqueue a chosen Soulseek file for a missing track and mark it as queued
   app.post("/api/playlists/:id/missing/:missingId/download", async (request, reply) => {
+    const user = requireSoulseekAccess(request, reply);
+    if (!user) return;
+
     const parsedParams = missingTrackParamSchema.safeParse(request.params);
     if (!parsedParams.success) {
       return reply.code(400).send({ error: "Invalid parameters" });
@@ -851,6 +909,10 @@ export async function registerPlaylistRoutes(
       return reply.code(503).send({
         error: "slskd is not configured. Set SLSKD_URL and SLSKD_API_KEY in .env first.",
       });
+    }
+
+    if (!selectPlaylistSummary(parsedParams.data.id, user.id)) {
+      return reply.code(404).send({ error: "Playlist not found" });
     }
 
     const row = sqlite
@@ -871,14 +933,23 @@ export async function registerPlaylistRoutes(
       throw err;
     }
 
+    onDownloadEnqueued?.(user.id, parsedBody.data.username, [
+      { filename: parsedBody.data.filename, size: parsedBody.data.size },
+    ]);
+
     sqlite
       .prepare("UPDATE playlist_missing_tracks SET status = 'queued' WHERE id = ?")
       .run(parsedParams.data.missingId);
     batchSearchService?.markTrackQueued(parsedParams.data.id, parsedParams.data.missingId);
     activityLog?.info(
       "acquisition",
-      `Queued download from @${parsedBody.data.username}: ${path.basename(parsedBody.data.filename)}`,
-      { playlistId: parsedParams.data.id, username: parsedBody.data.username, filename: parsedBody.data.filename },
+      `Queued download for @${user.username} from @${parsedBody.data.username}: ${path.basename(parsedBody.data.filename)}`,
+      {
+        userId: user.id,
+        playlistId: parsedParams.data.id,
+        username: parsedBody.data.username,
+        filename: parsedBody.data.filename,
+      },
     );
 
     return reply.code(202).send({
@@ -889,14 +960,15 @@ export async function registerPlaylistRoutes(
 
   // Serve a playlist's custom cover image
   app.get("/api/playlists/:id/cover", async (request, reply) => {
+    const user = getRequestUser(request);
     const parsed = idParamSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Invalid playlist ID" });
     }
 
     const row = sqlite
-      .prepare("SELECT cover_hash AS coverHash FROM playlists WHERE id = ?")
-      .get(parsed.data.id) as { coverHash: string | null } | undefined;
+      .prepare("SELECT cover_hash AS coverHash FROM playlists WHERE id = ? AND user_id = ?")
+      .get(parsed.data.id, user.id) as { coverHash: string | null } | undefined;
 
     if (!row || !row.coverHash) {
       return reply.code(404).send({ error: "Custom playlist cover not set" });
@@ -910,18 +982,19 @@ export async function registerPlaylistRoutes(
 
     const ext = path.extname(safeFileName).toLowerCase();
     reply.header("Content-Type", IMAGE_MIME_BY_EXT[ext] ?? "image/jpeg");
-    reply.header("Cache-Control", "public, max-age=31536000, immutable");
+    reply.header("Cache-Control", "private, max-age=31536000, immutable");
     return reply.send(fs.createReadStream(fullPath));
   });
 
   // Upload a custom cover image for a playlist (raw image/* binary body up to 5 MB)
   app.put("/api/playlists/:id/cover", async (request, reply): Promise<PlaylistSummary> => {
+    const user = getRequestUser(request);
     const parsed = idParamSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Invalid playlist ID" });
     }
 
-    const existing = selectPlaylistSummary(parsed.data.id);
+    const existing = selectPlaylistSummary(parsed.data.id, user.id);
     if (!existing) {
       return reply.code(404).send({ error: "Playlist not found" });
     }
@@ -954,16 +1027,17 @@ export async function registerPlaylistRoutes(
 
     const now = Date.now();
     sqlite
-      .prepare("UPDATE playlists SET cover_hash = ?, updated_at = ? WHERE id = ?")
-      .run(fileName, now, parsed.data.id);
+      .prepare("UPDATE playlists SET cover_hash = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+      .run(fileName, now, parsed.data.id, user.id);
 
-    return selectPlaylistSummary(parsed.data.id)!;
+    return selectPlaylistSummary(parsed.data.id, user.id)!;
   });
 
-  // Set a playlist's cover image from an existing library album's artwork
+  // Set a playlist's cover image from an existing library album's artwork (owned by this user)
   app.post(
     "/api/playlists/:id/cover/from-album",
     async (request, reply): Promise<PlaylistSummary> => {
+      const user = getRequestUser(request);
       const parsedId = idParamSchema.safeParse(request.params);
       if (!parsedId.success) {
         return reply.code(400).send({ error: "Invalid playlist ID" });
@@ -973,14 +1047,14 @@ export async function registerPlaylistRoutes(
         return reply.code(400).send({ error: "Please provide a valid album ID." });
       }
 
-      const existing = selectPlaylistSummary(parsedId.data.id);
+      const existing = selectPlaylistSummary(parsedId.data.id, user.id);
       if (!existing) {
         return reply.code(404).send({ error: "Playlist not found" });
       }
 
       const albumRow = sqlite
-        .prepare("SELECT cover_hash AS coverHash FROM albums WHERE id = ?")
-        .get(parsedBody.data.albumId) as { coverHash: string | null } | undefined;
+        .prepare("SELECT cover_hash AS coverHash FROM albums WHERE id = ? AND user_id = ?")
+        .get(parsedBody.data.albumId, user.id) as { coverHash: string | null } | undefined;
 
       if (!albumRow || !albumRow.coverHash) {
         return reply.code(404).send({ error: "That album does not have cover artwork." });
@@ -993,30 +1067,31 @@ export async function registerPlaylistRoutes(
 
       const now = Date.now();
       sqlite
-        .prepare("UPDATE playlists SET cover_hash = ?, updated_at = ? WHERE id = ?")
-        .run(safeAlbumCover, now, parsedId.data.id);
+        .prepare("UPDATE playlists SET cover_hash = ?, updated_at = ? WHERE id = ? AND user_id = ?")
+        .run(safeAlbumCover, now, parsedId.data.id, user.id);
 
-      return selectPlaylistSummary(parsedId.data.id)!;
+      return selectPlaylistSummary(parsedId.data.id, user.id)!;
     },
   );
 
   // Clear custom playlist cover (reverts to automatic first-track album artwork)
   app.delete("/api/playlists/:id/cover", async (request, reply): Promise<PlaylistSummary> => {
+    const user = getRequestUser(request);
     const parsed = idParamSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Invalid playlist ID" });
     }
 
-    const existing = selectPlaylistSummary(parsed.data.id);
+    const existing = selectPlaylistSummary(parsed.data.id, user.id);
     if (!existing) {
       return reply.code(404).send({ error: "Playlist not found" });
     }
 
     const now = Date.now();
     sqlite
-      .prepare("UPDATE playlists SET cover_hash = NULL, updated_at = ? WHERE id = ?")
-      .run(now, parsed.data.id);
+      .prepare("UPDATE playlists SET cover_hash = NULL, updated_at = ? WHERE id = ? AND user_id = ?")
+      .run(now, parsed.data.id, user.id);
 
-    return selectPlaylistSummary(parsed.data.id)!;
+    return selectPlaylistSummary(parsed.data.id, user.id)!;
   });
 }

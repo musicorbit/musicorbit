@@ -174,20 +174,10 @@ export class LyricsService {
   private readonly fetchImpl: typeof fetch;
   private readonly batchDelayMs: number;
 
-  private batchStatus: LyricsBatchJobStatus = {
-    state: "idle",
-    total: 0,
-    processed: 0,
-    syncedFound: 0,
-    plainFound: 0,
-    instrumental: 0,
-    notFound: 0,
-    errors: 0,
-    currentTrackTitle: null,
-    startedAt: null,
-    finishedAt: null,
-  };
-  private batchCancelRequested = false;
+  private readonly batchJobs = new Map<
+    number,
+    { status: LyricsBatchJobStatus; cancelRequested: boolean }
+  >();
 
   constructor(deps: LyricsServiceDeps) {
     this.dbContext = deps.dbContext;
@@ -197,10 +187,50 @@ export class LyricsService {
     this.batchDelayMs = deps.batchDelayMs ?? 350;
   }
 
-  private getTrackById(trackId: number): TrackRowForLyrics | null {
-    const row = this.dbContext.sqlite
-      .prepare(
-        `
+  private getOrCreateBatchJob(userId: number): {
+    status: LyricsBatchJobStatus;
+    cancelRequested: boolean;
+  } {
+    let entry = this.batchJobs.get(userId);
+    if (!entry) {
+      entry = {
+        status: {
+          state: "idle",
+          total: 0,
+          processed: 0,
+          syncedFound: 0,
+          plainFound: 0,
+          instrumental: 0,
+          notFound: 0,
+          errors: 0,
+          currentTrackTitle: null,
+          startedAt: null,
+          finishedAt: null,
+        },
+        cancelRequested: false,
+      };
+      this.batchJobs.set(userId, entry);
+    }
+    return entry;
+  }
+
+  private getTrackById(trackId: number, userId?: number): TrackRowForLyrics | null {
+    const sql =
+      userId !== undefined
+        ? `
+        SELECT
+          t.id,
+          t.title,
+          ar.name AS artistName,
+          al.title AS albumTitle,
+          t.duration_seconds AS durationSeconds,
+          t.file_path AS filePath
+        FROM tracks t
+        JOIN artists ar ON ar.id = t.artist_id
+        JOIN albums al ON al.id = t.album_id
+        WHERE t.id = ? AND t.user_id = ?
+      `
+        : `
         SELECT
           t.id,
           t.title,
@@ -212,9 +242,12 @@ export class LyricsService {
         JOIN artists ar ON ar.id = t.artist_id
         JOIN albums al ON al.id = t.album_id
         WHERE t.id = ?
-      `,
-      )
-      .get(trackId) as TrackRowForLyrics | undefined;
+      `;
+    const row = (
+      userId !== undefined
+        ? this.dbContext.sqlite.prepare(sql).get(trackId, userId)
+        : this.dbContext.sqlite.prepare(sql).get(trackId)
+    ) as TrackRowForLyrics | undefined;
     return row ?? null;
   }
 
@@ -526,9 +559,9 @@ export class LyricsService {
    */
   async getTrackLyrics(
     trackId: number,
-    options?: { refresh?: boolean },
+    options?: { refresh?: boolean; userId?: number },
   ): Promise<TrackLyricsResponse | null> {
-    const track = this.getTrackById(trackId);
+    const track = this.getTrackById(trackId, options?.userId);
     if (!track) return null;
 
     const forceRefresh = Boolean(options?.refresh);
@@ -722,9 +755,9 @@ export class LyricsService {
   }
 
   /**
-   * Returns library-wide lyrics coverage counts + current batch fetch status.
+   * Returns per-user library lyrics coverage counts + current batch fetch status.
    */
-  getStats(): LyricsLibraryStatsResponse {
+  getStats(userId = 1): LyricsLibraryStatsResponse {
     const rows = this.dbContext.sqlite
       .prepare(
         `
@@ -737,9 +770,10 @@ export class LyricsService {
           tl.instrumental
         FROM tracks t
         LEFT JOIN track_lyrics tl ON tl.track_id = t.id
+        WHERE t.user_id = ?
       `,
       )
-      .all() as Array<{
+      .all(userId) as Array<{
       id: number;
       filePath: string;
       source: TrackLyricsSource | null;
@@ -767,25 +801,29 @@ export class LyricsService {
       }
     }
 
+    const job = this.getOrCreateBatchJob(userId);
     return {
       totalTracks: rows.length,
       withSyncedLyrics,
       withPlainOnly,
       instrumental,
       missingLyrics,
-      job: { ...this.batchStatus },
+      job: { ...job.status },
     };
   }
 
   /**
-   * Starts a polite background job to fetch missing synced lyrics across the entire library.
+   * Starts a polite background job to fetch missing synced lyrics across a user's library.
    */
   startBatchFetch(options?: {
+    userId?: number;
     retryNotFound?: boolean;
     trackIds?: number[];
   }): LyricsBatchJobStatus {
-    if (this.batchStatus.state === "running") {
-      return { ...this.batchStatus };
+    const userId = options?.userId ?? 1;
+    const job = this.getOrCreateBatchJob(userId);
+    if (job.status.state === "running") {
+      return { ...job.status };
     }
 
     const retryNotFound = Boolean(options?.retryNotFound);
@@ -807,10 +845,11 @@ export class LyricsService {
         JOIN artists ar ON ar.id = t.artist_id
         JOIN albums al ON al.id = t.album_id
         LEFT JOIN track_lyrics tl ON tl.track_id = t.id
+        WHERE t.user_id = ?
         ORDER BY t.id ASC
       `,
       )
-      .all() as Array<
+      .all(userId) as Array<
       TrackRowForLyrics & {
         cachedSource: TrackLyricsSource | null;
         syncedLrc: string | null;
@@ -827,8 +866,8 @@ export class LyricsService {
       return true;
     });
 
-    this.batchCancelRequested = false;
-    this.batchStatus = {
+    job.cancelRequested = false;
+    job.status = {
       state: targets.length === 0 ? "completed" : "running",
       total: targets.length,
       processed: 0,
@@ -843,66 +882,68 @@ export class LyricsService {
     };
 
     if (targets.length === 0) {
-      return { ...this.batchStatus };
+      return { ...job.status };
     }
 
     this.activityLog?.info(
       "lyrics",
       `Started fetching synced lyrics for ${targets.length} ${targets.length === 1 ? "track" : "tracks"}`,
-      { total: targets.length, retryNotFound },
+      { userId, total: targets.length, retryNotFound },
     );
 
     void (async () => {
       for (const track of targets) {
-        if (this.batchCancelRequested) {
-          this.batchStatus.state = "cancelled";
-          this.batchStatus.currentTrackTitle = null;
-          this.batchStatus.finishedAt = new Date().toISOString();
+        if (job.cancelRequested) {
+          job.status.state = "cancelled";
+          job.status.currentTrackTitle = null;
+          job.status.finishedAt = new Date().toISOString();
           this.activityLog?.warn(
             "lyrics",
-            `Lyrics fetch cancelled after ${this.batchStatus.processed} of ${this.batchStatus.total} tracks`,
-            { ...this.batchStatus },
+            `Lyrics fetch cancelled after ${job.status.processed} of ${job.status.total} tracks`,
+            { userId, ...job.status },
           );
           return;
         }
 
-        this.batchStatus.currentTrackTitle = `${track.artistName} — ${track.title}`;
+        job.status.currentTrackTitle = `${track.artistName} — ${track.title}`;
         try {
           const res = await this.getTrackLyrics(track.id, {
+            userId,
             refresh: retryNotFound && track.cachedSource === "none",
           });
-          if (res?.hasSynced) this.batchStatus.syncedFound += 1;
-          else if (res?.instrumental) this.batchStatus.instrumental += 1;
-          else if (res?.hasPlain) this.batchStatus.plainFound += 1;
-          else this.batchStatus.notFound += 1;
+          if (res?.hasSynced) job.status.syncedFound += 1;
+          else if (res?.instrumental) job.status.instrumental += 1;
+          else if (res?.hasPlain) job.status.plainFound += 1;
+          else job.status.notFound += 1;
         } catch {
-          this.batchStatus.errors += 1;
+          job.status.errors += 1;
         } finally {
-          this.batchStatus.processed += 1;
+          job.status.processed += 1;
         }
 
-        if (this.batchDelayMs > 0 && !this.batchCancelRequested) {
+        if (this.batchDelayMs > 0 && !job.cancelRequested) {
           await new Promise((r) => setTimeout(r, this.batchDelayMs));
         }
       }
 
-      this.batchStatus.state = "completed";
-      this.batchStatus.currentTrackTitle = null;
-      this.batchStatus.finishedAt = new Date().toISOString();
+      job.status.state = "completed";
+      job.status.currentTrackTitle = null;
+      job.status.finishedAt = new Date().toISOString();
       this.activityLog?.success(
         "lyrics",
-        `Lyrics fetch completed: ${this.batchStatus.syncedFound} synced, ${this.batchStatus.plainFound} plain, ${this.batchStatus.notFound} not found`,
-        { ...this.batchStatus },
+        `Lyrics fetch completed: ${job.status.syncedFound} synced, ${job.status.plainFound} plain, ${job.status.notFound} not found`,
+        { userId, ...job.status },
       );
     })();
 
-    return { ...this.batchStatus };
+    return { ...job.status };
   }
 
-  cancelBatchFetch(): LyricsBatchJobStatus {
-    if (this.batchStatus.state === "running") {
-      this.batchCancelRequested = true;
+  cancelBatchFetch(userId = 1): LyricsBatchJobStatus {
+    const job = this.getOrCreateBatchJob(userId);
+    if (job.status.state === "running") {
+      job.cancelRequested = true;
     }
-    return { ...this.batchStatus };
+    return { ...job.status };
   }
 }

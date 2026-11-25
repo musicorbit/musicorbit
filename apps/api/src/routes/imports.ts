@@ -11,6 +11,7 @@ import type {
   RetagAlbumResponse,
   TrackMetadataSuggestion,
 } from "@musicorbit/shared";
+import { getRequestUser, requireAdmin } from "../services/authHelpers.js";
 import { ImporterError, type LibraryImporter } from "../services/importer.js";
 import type { MetadataLookupService } from "../services/metadataLookup.js";
 import type { MusicBrainzClient } from "../services/musicbrainz.js";
@@ -115,37 +116,47 @@ export async function registerImportRoutes(
     },
   );
 
-  // List Review Queue & import history
+  // List Review Queue & import history for the authenticated user
   app.get("/api/imports", async (request): Promise<ImportsListResponse> => {
+    const user = getRequestUser(request);
     const query = listImportsQuerySchema.parse(request.query);
-    return importer.listItems(query.status as ImportItemStatus | undefined);
+    return importer.listItems(query.status as ImportItemStatus | undefined, user.id);
   });
 
-  // Scan DOWNLOADS_DIR for completed downloads, auto-import confident matches, queue the rest
-  app.post("/api/imports/scan", async (): Promise<InboxScanResult> => {
+  // Scan DOWNLOADS_DIR for completed downloads, routing each item to its requesting user (Admin only)
+  app.post("/api/imports/scan", async (request, reply): Promise<InboxScanResult> => {
+    if (!requireAdmin(request, reply)) return reply as never;
     return importer.scanInbox();
   });
 
-  // One-off bulk import from an external folder into MUSIC_DIR using the post-processing pipeline
+  // One-off bulk import from a server-side external folder into Admin's MUSIC_DIR (Admin only)
   app.post(
     "/api/imports/bulk-folder",
     async (request, reply): Promise<BulkImportFolderResponse> => {
+      const admin = requireAdmin(request, reply);
+      if (!admin) return reply as never;
+
       const parsed = bulkImportBodySchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "Please provide a valid source folder path." });
       }
       try {
-        return await importer.importExternalFolder(parsed.data.sourceDir, parsed.data.fileAction);
+        return await importer.importExternalFolder(
+          parsed.data.sourceDir,
+          parsed.data.fileAction,
+          admin.id,
+        );
       } catch (err) {
         return handleImporterError(reply, err);
       }
     },
   );
 
-  // Apply chosen MusicBrainz release or manual tags to a Review Queue item & move to library
+  // Apply chosen MusicBrainz release or manual tags to a Review Queue item & move to user's library
   app.post(
     "/api/imports/:id/apply",
     async (request, reply): Promise<ApplyImportResponse> => {
+      const user = getRequestUser(request);
       const parsedId = idParamSchema.safeParse(request.params);
       if (!parsedId.success) {
         return reply.code(400).send({ error: "Invalid import ID" });
@@ -158,7 +169,7 @@ export async function registerImportRoutes(
         });
       }
       try {
-        return await importer.applyImport(parsedId.data.id, parsedBody.data);
+        return await importer.applyImport(parsedId.data.id, parsedBody.data, { userId: user.id });
       } catch (err) {
         return handleImporterError(reply, err);
       }
@@ -167,12 +178,13 @@ export async function registerImportRoutes(
 
   // Dismiss an inbox review item without deleting files on disk
   app.post("/api/imports/:id/dismiss", async (request, reply) => {
+    const user = getRequestUser(request);
     const parsedId = idParamSchema.safeParse(request.params);
     if (!parsedId.success) {
       return reply.code(400).send({ error: "Invalid import ID" });
     }
     try {
-      importer.dismissImport(parsedId.data.id);
+      importer.dismissImport(parsedId.data.id, user.id);
       return reply.code(200).send({ id: parsedId.data.id, status: "dismissed" });
     } catch (err) {
       return handleImporterError(reply, err);
@@ -217,6 +229,7 @@ export async function registerImportRoutes(
   app.post(
     "/api/albums/:id/retag",
     async (request, reply): Promise<RetagAlbumResponse> => {
+      const user = getRequestUser(request);
       const parsedId = idParamSchema.safeParse(request.params);
       if (!parsedId.success) {
         return reply.code(400).send({ error: "Invalid album ID" });
@@ -229,7 +242,7 @@ export async function registerImportRoutes(
         });
       }
       try {
-        return await importer.retagExistingAlbum(parsedId.data.id, parsedBody.data);
+        return await importer.retagExistingAlbum(parsedId.data.id, parsedBody.data, user.id);
       } catch (err) {
         return handleImporterError(reply, err);
       }

@@ -6,6 +6,7 @@ import type {
   ActivityLogsResponse,
 } from "@musicorbit/shared";
 import type { ActivityLogService } from "../services/activityLog.js";
+import { getRequestUser, requireAdmin } from "../services/authHelpers.js";
 
 export interface LogRouteDeps {
   activityLog: ActivityLogService;
@@ -14,7 +15,17 @@ export interface LogRouteDeps {
 const listLogsQuerySchema = z.object({
   level: z.enum(["info", "success", "warn", "error"]).optional(),
   category: z
-    .enum(["scanner", "importer", "watcher", "playlist", "metadata", "acquisition", "system"])
+    .enum([
+      "scanner",
+      "importer",
+      "watcher",
+      "playlist",
+      "metadata",
+      "acquisition",
+      "organizer",
+      "lyrics",
+      "system",
+    ])
     .optional(),
   q: z.string().trim().optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
@@ -27,27 +38,33 @@ export async function registerLogRoutes(
   const { activityLog } = deps;
 
   app.get("/api/system/logs", async (request): Promise<ActivityLogsResponse> => {
+    const user = getRequestUser(request);
+    const scopedUserId = user.role === "admin" ? undefined : user.id;
     const parsed = listLogsQuerySchema.safeParse(request.query);
     if (!parsed.success) {
-      return activityLog.list();
+      return activityLog.list({ userId: scopedUserId });
     }
     return activityLog.list({
       level: parsed.data.level as ActivityLogLevel | undefined,
       category: parsed.data.category as ActivityLogCategory | undefined,
       search: parsed.data.q,
       limit: parsed.data.limit,
+      userId: scopedUserId,
     });
   });
 
-  app.get("/api/system/logs/export", async (_request, reply) => {
-    const text = activityLog.exportPlainText(2000);
+  app.get("/api/system/logs/export", async (request, reply) => {
+    const user = getRequestUser(request);
+    const scopedUserId = user.role === "admin" ? undefined : user.id;
+    const text = activityLog.exportPlainText(2000, scopedUserId);
     const stamp = new Date().toISOString().slice(0, 10);
     reply.header("Content-Type", "text/plain; charset=utf-8");
     reply.header("Content-Disposition", `attachment; filename="musicorbit-${stamp}.log"`);
     return reply.send(text);
   });
 
-  app.delete("/api/system/logs", async (_request, reply) => {
+  app.delete("/api/system/logs", async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
     const cleared = activityLog.clear();
     return reply.code(200).send({ cleared });
   });

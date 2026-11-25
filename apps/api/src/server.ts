@@ -1,3 +1,4 @@
+import path from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import type { AppConfig } from "./config.js";
@@ -15,10 +16,12 @@ import { registerPlaylistRoutes } from "./routes/playlists.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerStaticWeb } from "./routes/staticWeb.js";
 import { registerUploadRoutes } from "./routes/uploads.js";
+import { registerUserRoutes } from "./routes/users.js";
 import { SlskdClient } from "./services/acquisition/slskd.js";
 import { ActivityLogService } from "./services/activityLog.js";
 import { AlbumTracklistService } from "./services/albumTracklist.js";
 import { ArtistImageService } from "./services/artistImages.js";
+import { AudioTranscoder } from "./services/audioTranscoder.js";
 import { LibraryImporter } from "./services/importer.js";
 import { InboxWatcher } from "./services/inboxWatcher.js";
 import { LibraryOrganizer } from "./services/libraryOrganizer.js";
@@ -87,11 +90,13 @@ export async function buildServer(
     defaultAutoImportThreshold: config.autoImportThreshold,
   });
   const getMusicDir = () => settingsService.getMusicDir();
+  const getUserMusicDir = (userId: number) => settingsService.getUserMusicDir(userId);
 
   const scanner = new LibraryScanner({
     dbContext,
     musicDir: config.musicDir,
     getMusicDir,
+    getUserMusicDir,
     coversDir: config.coversDir,
     activityLog,
     logger: app.log,
@@ -145,20 +150,23 @@ export async function buildServer(
     fetchImpl: options?.fetchImpl,
     batchDelayMs: options?.lyricsBatchDelayMs,
   });
-  scanner.setOnTracksAdded((addedTrackIds) => {
+  scanner.setOnTracksAdded((addedTrackIds, userId) => {
     if (settingsService.getPostProcessingSettings().autoFetchLyrics) {
-      lyricsService.startBatchFetch({ trackIds: addedTrackIds });
+      lyricsService.startBatchFetch({ userId, trackIds: addedTrackIds });
     }
   });
   const importer = new LibraryImporter({
     dbContext,
     musicDir: config.musicDir,
     getMusicDir,
+    getUserMusicDir,
+    getPrimaryAdminId: () => settingsService.getPrimaryAdminId(),
     downloadsDir: config.downloadsDir,
     dataDir: config.dataDir,
     autoImportThreshold: config.autoImportThreshold,
     getPostProcessingSettings: () => settingsService.getPostProcessingSettings(),
-    getLibraryOrganizationSettings: () => settingsService.getLibraryOrganizationSettings(),
+    getLibraryOrganizationSettings: (userId) =>
+      settingsService.getLibraryOrganizationSettings(userId ?? 1),
     musicBrainz,
     metadataLookup,
     lyricsService,
@@ -186,10 +194,16 @@ export async function buildServer(
     downloadsDir: settingsService.getDownloadsDir(),
   });
 
-  // Register auth routes & optional onRequest protection hook before protected routes
-  await registerAuthRoutes(app, { dbContext, authEnabled: config.authEnabled });
+  // Register auth routes & onRequest protection hook before protected routes
+  await registerAuthRoutes(app, {
+    dbContext,
+    authEnabled: config.authEnabled,
+    getDefaultMusicDir: getMusicDir,
+    activityLog,
+  });
+  await registerUserRoutes(app, { dbContext, settingsService, activityLog });
 
-  await registerHealthRoutes(app, { config, dbContext, getMusicDir });
+  await registerHealthRoutes(app, { config, dbContext, getMusicDir, getUserMusicDir });
   await registerSettingsRoutes(app, {
     settingsService,
     scanner,
@@ -201,13 +215,24 @@ export async function buildServer(
   await registerLogRoutes(app, { activityLog });
   await registerLyricsRoutes(app, { lyricsService });
   await registerLibraryRoutes(app, { dbContext, scanner, albumTracklistService });
+  const audioTranscoder = new AudioTranscoder({
+    cacheDir: path.join(config.dataDir, "transcode-cache"),
+    logger: app.log,
+  });
   await registerMediaRoutes(app, {
     dbContext,
     coversDir: config.coversDir,
     artistImagesDir: config.artistImagesDir,
     artistImageService,
+    audioTranscoder,
   });
-  await registerAcquisitionRoutes(app, { slskdClient });
+  await registerAcquisitionRoutes(app, {
+    slskdClient,
+    onDownloadEnqueued: (userId, slskdUsername, files) =>
+      importer.recordDownloadOwnership(userId, slskdUsername, files),
+    userOwnsSlskdFile: (userId, slskdUsername, remoteFilename) =>
+      importer.userOwnsSlskdFile(userId, slskdUsername, remoteFilename),
+  });
   await registerImportRoutes(app, { importer, musicBrainz, metadataLookup });
   await registerUploadRoutes(app, {
     dataDir: config.dataDir,
@@ -225,11 +250,14 @@ export async function buildServer(
     dbContext,
     musicDir: config.musicDir,
     getMusicDir,
+    getUserMusicDir,
     coversDir: config.coversDir,
     slskdClient,
     batchSearchService,
     playlistSync,
     activityLog,
+    onDownloadEnqueued: (userId, slskdUsername, files) =>
+      importer.recordDownloadOwnership(userId, slskdUsername, files),
   });
 
   // Serve production frontend bundle when WEB_DIST_DIR is configured (e.g. Docker)

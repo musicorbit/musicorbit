@@ -5,6 +5,7 @@ import type {
   LyricsLibraryStatsResponse,
   TrackLyricsResponse,
 } from "@musicorbit/shared";
+import { getRequestUser } from "../services/authHelpers.js";
 import type { LyricsService } from "../services/lyrics.js";
 
 export interface LyricsRouteDeps {
@@ -36,6 +37,7 @@ export async function registerLyricsRoutes(
 
   // Fetch (or return cached / sidecar / embedded) synced + plain lyrics for a track
   app.get("/api/tracks/:id/lyrics", async (request, reply): Promise<TrackLyricsResponse> => {
+    const user = getRequestUser(request);
     const parsedParams = idParamSchema.safeParse(request.params);
     if (!parsedParams.success) {
       return reply.code(400).send({ error: "Invalid track ID" });
@@ -46,6 +48,7 @@ export async function registerLyricsRoutes(
     }
 
     const res = await lyricsService.getTrackLyrics(parsedParams.data.id, {
+      userId: user.id,
       refresh: parsedQuery.data.refresh,
     });
     if (!res) {
@@ -54,20 +57,23 @@ export async function registerLyricsRoutes(
     return res;
   });
 
-  // Coverage stats + live batch fetch job progress
-  app.get("/api/system/lyrics/status", async (): Promise<LyricsLibraryStatsResponse> => {
-    return lyricsService.getStats();
+  // Coverage stats + live batch fetch job progress for the authenticated user
+  app.get("/api/system/lyrics/status", async (request): Promise<LyricsLibraryStatsResponse> => {
+    const user = getRequestUser(request);
+    return lyricsService.getStats(user.id);
   });
 
-  // Start background batch fetch for tracks missing synced lyrics
+  // Start background batch fetch for tracks missing synced lyrics in this user's library
   app.post(
     "/api/system/lyrics/fetch-missing",
     async (request, reply): Promise<LyricsBatchJobStatus> => {
+      const user = getRequestUser(request);
       const parsed = fetchMissingBodySchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "Invalid request body" });
       }
       const status = lyricsService.startBatchFetch({
+        userId: user.id,
         retryNotFound: parsed.data?.retryNotFound,
       });
       reply.code(status.state === "running" ? 202 : 200);
@@ -75,8 +81,9 @@ export async function registerLyricsRoutes(
     },
   );
 
-  // Cancel an active background batch fetch
-  app.post("/api/system/lyrics/cancel", async (): Promise<LyricsBatchJobStatus> => {
-    return lyricsService.cancelBatchFetch();
+  // Cancel an active background batch fetch for this user
+  app.post("/api/system/lyrics/cancel", async (request): Promise<LyricsBatchJobStatus> => {
+    const user = getRequestUser(request);
+    return lyricsService.cancelBatchFetch(user.id);
   });
 }

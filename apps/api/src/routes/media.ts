@@ -6,6 +6,11 @@ import { z } from "zod";
 import type { ArtistImageCandidate, ArtistImageUpdateResponse } from "@musicorbit/shared";
 import type { DbContext } from "../db/index.js";
 import {
+  needsBrowserTranscode,
+  type AudioTranscoder,
+} from "../services/audioTranscoder.js";
+import { getRequestUser } from "../services/authHelpers.js";
+import {
   ArtistImageValidationError,
   MAX_ARTIST_IMAGE_BYTES,
   type ArtistImageService,
@@ -16,6 +21,7 @@ export interface MediaRouteDeps {
   coversDir: string;
   artistImagesDir: string;
   artistImageService: ArtistImageService;
+  audioTranscoder?: AudioTranscoder;
 }
 
 const idParamSchema = z.object({
@@ -96,7 +102,7 @@ export async function registerMediaRoutes(
   app: FastifyInstance,
   deps: MediaRouteDeps,
 ): Promise<void> {
-  const { dbContext, coversDir, artistImagesDir, artistImageService } = deps;
+  const { dbContext, coversDir, artistImagesDir, artistImageService, audioTranscoder } = deps;
   const { sqlite } = dbContext;
 
   // Accept raw image binary uploads up to 5 MB for PUT /api/artists/:id/image
@@ -111,30 +117,49 @@ export async function registerMediaRoutes(
   /**
    * Streams an audio track by ID with HTTP 206 Partial Content support so
    * browsers can scrub/seek cleanly without downloading the entire file first.
+   * Automatically transcodes browser-unsupported codecs (e.g. ALAC .m4a) to
+   * cached lossless FLAC so Chrome, Firefox, and Edge play them seamlessly.
    */
   app.get("/api/tracks/:id/stream", async (request, reply) => {
+    const user = getRequestUser(request);
     const parsed = idParamSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Invalid track ID" });
     }
 
     const row = sqlite
-      .prepare("SELECT file_path AS filePath FROM tracks WHERE id = ?")
-      .get(parsed.data.id) as { filePath: string } | undefined;
+      .prepare("SELECT file_path AS filePath, codec FROM tracks WHERE id = ? AND user_id = ?")
+      .get(parsed.data.id, user.id) as { filePath: string; codec: string | null } | undefined;
 
     if (!row) {
       return reply.code(404).send({ error: "Track not found" });
     }
 
+    let streamPath = row.filePath;
+    if (!fs.existsSync(streamPath)) {
+      return reply.code(404).send({ error: "Audio file missing on disk" });
+    }
+
+    if (audioTranscoder && needsBrowserTranscode(row.codec, row.filePath)) {
+      try {
+        streamPath = await audioTranscoder.ensureBrowserPlayableFlac(row.filePath);
+      } catch (err) {
+        app.log.warn(
+          { err, trackId: parsed.data.id, codec: row.codec },
+          "Could not transcode track for browser playback; falling back to original file",
+        );
+      }
+    }
+
     let stat: fs.Stats;
     try {
-      stat = await fsp.stat(row.filePath);
+      stat = await fsp.stat(streamPath);
     } catch {
       return reply.code(404).send({ error: "Audio file missing on disk" });
     }
 
     const fileSize = stat.size;
-    const ext = path.extname(row.filePath).toLowerCase();
+    const ext = path.extname(streamPath).toLowerCase();
     const contentType = AUDIO_MIME_TYPES[ext] ?? "application/octet-stream";
 
     const rangeHeader = request.headers.range;
@@ -152,7 +177,7 @@ export async function registerMediaRoutes(
       reply.header("Cache-Control", "private, max-age=3600");
       reply.header("Content-Range", `bytes ${range.start}-${range.end}/${fileSize}`);
       reply.header("Content-Length", chunkSize);
-      return reply.send(fs.createReadStream(row.filePath, { start: range.start, end: range.end }));
+      return reply.send(fs.createReadStream(streamPath, { start: range.start, end: range.end }));
     }
 
     reply.code(200);
@@ -160,23 +185,22 @@ export async function registerMediaRoutes(
     reply.header("Content-Type", contentType);
     reply.header("Cache-Control", "private, max-age=3600");
     reply.header("Content-Length", fileSize);
-    return reply.send(fs.createReadStream(row.filePath));
+    return reply.send(fs.createReadStream(streamPath));
   });
 
   /**
    * Serves cached album artwork from DATA_DIR/covers.
-   * Cover filenames are content-addressed SHA-256 hashes, so long-lived immutable
-   * browser caching is safe and makes scrolling large grids instant.
    */
   app.get("/api/albums/:id/cover", async (request, reply) => {
+    const user = getRequestUser(request);
     const parsed = idParamSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Invalid album ID" });
     }
 
     const row = sqlite
-      .prepare("SELECT cover_hash AS coverHash FROM albums WHERE id = ?")
-      .get(parsed.data.id) as { coverHash: string | null } | undefined;
+      .prepare("SELECT cover_hash AS coverHash FROM albums WHERE id = ? AND user_id = ?")
+      .get(parsed.data.id, user.id) as { coverHash: string | null } | undefined;
 
     if (!row || !row.coverHash) {
       return reply.code(404).send({ error: "Album cover not found" });
@@ -198,7 +222,7 @@ export async function registerMediaRoutes(
 
     reply.header("Content-Type", contentType);
     reply.header("Content-Length", stat.size);
-    reply.header("Cache-Control", "public, max-age=31536000, immutable");
+    reply.header("Cache-Control", "private, max-age=31536000, immutable");
     return reply.send(fs.createReadStream(fullPath));
   });
 
@@ -207,9 +231,17 @@ export async function registerMediaRoutes(
    * them once on first request when FETCH_ARTIST_IMAGES=true.
    */
   app.get("/api/artists/:id/image", async (request, reply) => {
+    const user = getRequestUser(request);
     const parsed = idParamSchema.safeParse(request.params);
     if (!parsed.success) {
       return reply.code(400).send({ error: "Invalid artist ID" });
+    }
+
+    const owned = sqlite
+      .prepare("SELECT id FROM artists WHERE id = ? AND user_id = ?")
+      .get(parsed.data.id, user.id) as { id: number } | undefined;
+    if (!owned) {
+      return reply.code(404).send({ error: "Artist not found" });
     }
 
     const fileName = await artistImageService.resolveArtistImage(parsed.data.id);
@@ -232,7 +264,7 @@ export async function registerMediaRoutes(
 
     reply.header("Content-Type", contentType);
     reply.header("Content-Length", stat.size);
-    reply.header("Cache-Control", "public, max-age=86400");
+    reply.header("Cache-Control", "private, max-age=86400");
     return reply.send(fs.createReadStream(fullPath));
   });
 
@@ -243,14 +275,15 @@ export async function registerMediaRoutes(
   app.get(
     "/api/artists/:id/image/candidates",
     async (request, reply): Promise<ArtistImageCandidate[]> => {
+      const user = getRequestUser(request);
       const parsed = idParamSchema.safeParse(request.params);
       if (!parsed.success) {
         return reply.code(400).send({ error: "Invalid artist ID" });
       }
 
       const row = sqlite
-        .prepare("SELECT name FROM artists WHERE id = ?")
-        .get(parsed.data.id) as { name: string } | undefined;
+        .prepare("SELECT name FROM artists WHERE id = ? AND user_id = ?")
+        .get(parsed.data.id, user.id) as { name: string } | undefined;
 
       if (!row) {
         return reply.code(404).send({ error: "Artist not found" });
@@ -268,14 +301,15 @@ export async function registerMediaRoutes(
   app.put(
     "/api/artists/:id/image",
     async (request, reply): Promise<ArtistImageUpdateResponse> => {
+      const user = getRequestUser(request);
       const parsed = idParamSchema.safeParse(request.params);
       if (!parsed.success) {
         return reply.code(400).send({ error: "Invalid artist ID" });
       }
 
       const exists = sqlite
-        .prepare("SELECT id FROM artists WHERE id = ?")
-        .get(parsed.data.id) as { id: number } | undefined;
+        .prepare("SELECT id FROM artists WHERE id = ? AND user_id = ?")
+        .get(parsed.data.id, user.id) as { id: number } | undefined;
       if (!exists) {
         return reply.code(404).send({ error: "Artist not found" });
       }
@@ -310,6 +344,7 @@ export async function registerMediaRoutes(
   app.post(
     "/api/artists/:id/image/from-url",
     async (request, reply): Promise<ArtistImageUpdateResponse> => {
+      const user = getRequestUser(request);
       const parsedParams = idParamSchema.safeParse(request.params);
       if (!parsedParams.success) {
         return reply.code(400).send({ error: "Invalid artist ID" });
@@ -321,8 +356,8 @@ export async function registerMediaRoutes(
       }
 
       const exists = sqlite
-        .prepare("SELECT id FROM artists WHERE id = ?")
-        .get(parsedParams.data.id) as { id: number } | undefined;
+        .prepare("SELECT id FROM artists WHERE id = ? AND user_id = ?")
+        .get(parsedParams.data.id, user.id) as { id: number } | undefined;
       if (!exists) {
         return reply.code(404).send({ error: "Artist not found" });
       }
@@ -348,14 +383,15 @@ export async function registerMediaRoutes(
   app.delete(
     "/api/artists/:id/image",
     async (request, reply): Promise<ArtistImageUpdateResponse> => {
+      const user = getRequestUser(request);
       const parsed = idParamSchema.safeParse(request.params);
       if (!parsed.success) {
         return reply.code(400).send({ error: "Invalid artist ID" });
       }
 
       const exists = sqlite
-        .prepare("SELECT id FROM artists WHERE id = ?")
-        .get(parsed.data.id) as { id: number } | undefined;
+        .prepare("SELECT id FROM artists WHERE id = ? AND user_id = ?")
+        .get(parsed.data.id, user.id) as { id: number } | undefined;
       if (!exists) {
         return reply.code(404).send({ error: "Artist not found" });
       }

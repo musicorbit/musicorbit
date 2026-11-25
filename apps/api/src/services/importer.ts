@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { parseFile } from "music-metadata";
 import type { FastifyBaseLogger } from "fastify";
 import type {
@@ -22,7 +22,7 @@ import type {
   RetagTrackOverride,
 } from "@musicorbit/shared";
 import type { DbContext } from "../db/index.js";
-import { albums, importItems, tracks } from "../db/schema.js";
+import { albums, downloadOwnership, importItems, tracks } from "../db/schema.js";
 import type { ActivityLogService } from "./activityLog.js";
 import { DEFAULT_LIBRARY_ORGANIZATION, formatTrackRelativePath } from "./libraryLayout.js";
 import { getSidecarLrcPath, type LyricsService } from "./lyrics.js";
@@ -334,11 +334,13 @@ export interface LibraryImporterDeps {
   dbContext: DbContext;
   musicDir: string;
   getMusicDir?: () => string;
+  getUserMusicDir?: (userId: number) => string;
+  getPrimaryAdminId?: () => number;
   downloadsDir: string;
   dataDir?: string;
   autoImportThreshold: number;
   getPostProcessingSettings?: () => PostProcessingSettings;
-  getLibraryOrganizationSettings?: () => LibraryOrganizationSettings;
+  getLibraryOrganizationSettings?: (userId?: number) => LibraryOrganizationSettings;
   musicBrainz: MusicBrainzClient;
   metadataLookup?: MetadataLookupService;
   lyricsService?: LyricsService;
@@ -355,6 +357,19 @@ export interface ScanInboxOptions {
   fileActionOverride?: ImportFileAction;
   requireStableFiles?: boolean;
   stabilityWindowMs?: number;
+  userId?: number;
+}
+
+function extractRemoteBasename(remoteFilename: string): string {
+  const parts = remoteFilename.split(/[\\/]/).filter(Boolean);
+  return (parts[parts.length - 1] ?? remoteFilename).trim().toLowerCase();
+}
+
+function extractRemoteParentFolder(remoteFilename: string): string | null {
+  const parts = remoteFilename.split(/[\\/]/).filter(Boolean);
+  if (parts.length < 2) return null;
+  const parent = parts[parts.length - 2]?.trim().toLowerCase();
+  return parent || null;
 }
 
 interface ExistingDuplicateTrack {
@@ -370,11 +385,13 @@ interface ExistingDuplicateTrack {
 export class LibraryImporter {
   private readonly dbContext: DbContext;
   private readonly getMusicDirFn: () => string;
+  private readonly getUserMusicDirFn?: (userId: number) => string;
+  private readonly getPrimaryAdminIdFn: () => number;
   private readonly defaultDownloadsDir: string;
   private readonly dataDir: string;
   private readonly defaultAutoImportThreshold: number;
   private readonly getPostProcessingSettingsFn: () => PostProcessingSettings;
-  private readonly getLibraryOrganizationSettingsFn: () => LibraryOrganizationSettings;
+  private readonly getLibraryOrganizationSettingsFn: (userId?: number) => LibraryOrganizationSettings;
   private readonly musicBrainz: MusicBrainzClient;
   private readonly metadataLookup?: MetadataLookupService;
   private readonly lyricsService?: LyricsService;
@@ -388,6 +405,8 @@ export class LibraryImporter {
   constructor(deps: LibraryImporterDeps) {
     this.dbContext = deps.dbContext;
     this.getMusicDirFn = deps.getMusicDir ?? (() => deps.musicDir);
+    this.getUserMusicDirFn = deps.getUserMusicDir;
+    this.getPrimaryAdminIdFn = deps.getPrimaryAdminId ?? (() => 1);
     this.defaultDownloadsDir = deps.downloadsDir;
     this.dataDir = deps.dataDir ?? path.dirname(deps.dbContext.dbPath);
     this.defaultAutoImportThreshold = deps.autoImportThreshold;
@@ -423,25 +442,152 @@ export class LibraryImporter {
     this.logger = deps.logger;
   }
 
-  private get musicDir(): string {
-    return this.getMusicDirFn();
+  private getUserMusicDir(userId: number): string {
+    return this.getUserMusicDirFn ? this.getUserMusicDirFn(userId) : this.getMusicDirFn();
   }
 
   private get settings(): PostProcessingSettings {
     return this.getPostProcessingSettingsFn();
   }
 
-  private get organizationSettings(): LibraryOrganizationSettings {
-    return this.getLibraryOrganizationSettingsFn();
+  private getOrganizationSettings(userId: number): LibraryOrganizationSettings {
+    return this.getLibraryOrganizationSettingsFn(userId);
   }
 
-  listItems(statusFilter?: ImportItemStatus): ImportsListResponse {
+  /**
+   * Records which MusicOrbit user requested each Soulseek file so completed downloads
+   * in the shared DOWNLOADS_DIR route automatically to that user's private library.
+   */
+  recordDownloadOwnership(
+    userId: number,
+    slskdUsername: string,
+    files: Array<{ filename: string; size?: number }>,
+  ): void {
+    const now = new Date();
+    for (const f of files) {
+      const basenameNorm = extractRemoteBasename(f.filename);
+      if (!basenameNorm) continue;
+      const folderNorm = extractRemoteParentFolder(f.filename) ?? "";
+      this.dbContext.db
+        .insert(downloadOwnership)
+        .values({
+          userId,
+          slskdUsername,
+          remoteFilename: f.filename,
+          basenameNorm,
+          folderNorm,
+          status: "pending",
+          createdAt: now,
+        })
+        .run();
+    }
+  }
+
+  /**
+   * Checks whether a given slskd transfer belongs to userId (used to filter the
+   * shared slskd Downloads list for non-admin users).
+   */
+  userOwnsSlskdFile(userId: number, slskdUsername: string, remoteFilename: string): boolean {
+    const normBase = extractRemoteBasename(remoteFilename);
+    const row = this.dbContext.sqlite
+      .prepare(
+        `
+        SELECT id FROM download_ownership
+        WHERE user_id = ?
+          AND (
+            (slskd_username = ? AND remote_filename = ?)
+            OR (slskd_username = ? AND basename_norm = ?)
+          )
+        LIMIT 1
+      `,
+      )
+      .get(userId, slskdUsername, remoteFilename, slskdUsername, normBase) as
+      | { id: number }
+      | undefined;
+    return Boolean(row);
+  }
+
+  private resolveDownloadOwners(item: DiscoveredInboxItem): {
+    userIds: number[];
+    matchedRowIdsByUser: Map<number, number[]>;
+  } {
+    const pendingRows = this.dbContext.sqlite
+      .prepare(
+        `
+        SELECT id, user_id AS userId, basename_norm AS basenameNorm, folder_norm AS folderNorm
+        FROM download_ownership
+        WHERE status = 'pending'
+        ORDER BY created_at ASC, id ASC
+      `,
+      )
+      .all() as Array<{
+      id: number;
+      userId: number;
+      basenameNorm: string;
+      folderNorm: string;
+    }>;
+
+    const audioBasenames = new Set(
+      item.audioFiles.map((fp) => path.basename(fp).toLowerCase()),
+    );
+    const folderLower = item.isLooseFile ? null : item.folderName.toLowerCase();
+
+    const matchedRowIdsByUser = new Map<number, number[]>();
+    const orderedUserIds: number[] = [];
+
+    for (const row of pendingRows) {
+      const fileMatch = audioBasenames.has(row.basenameNorm);
+      const folderMatch =
+        folderLower !== null &&
+        row.folderNorm.length > 0 &&
+        row.folderNorm === folderLower;
+      if (!fileMatch && !folderMatch) continue;
+
+      let ids = matchedRowIdsByUser.get(row.userId);
+      if (!ids) {
+        ids = [];
+        matchedRowIdsByUser.set(row.userId, ids);
+        orderedUserIds.push(row.userId);
+      }
+      ids.push(row.id);
+    }
+
+    if (orderedUserIds.length === 0) {
+      return {
+        userIds: [this.getPrimaryAdminIdFn()],
+        matchedRowIdsByUser,
+      };
+    }
+
+    return { userIds: orderedUserIds, matchedRowIdsByUser };
+  }
+
+  private markOwnershipImported(rowIds: number[] | undefined): void {
+    if (!rowIds || rowIds.length === 0) return;
+    const stmt = this.dbContext.sqlite.prepare(
+      "UPDATE download_ownership SET status = 'imported' WHERE id = ?",
+    );
+    for (const id of rowIds) {
+      stmt.run(id);
+    }
+  }
+
+  listItems(statusFilter?: ImportItemStatus, userId?: number): ImportsListResponse {
     const pp = this.settings;
-    const rows = statusFilter
+    const whereClause =
+      statusFilter && userId !== undefined
+        ? and(eq(importItems.status, statusFilter), eq(importItems.userId, userId))
+        : statusFilter
+          ? eq(importItems.status, statusFilter)
+          : userId !== undefined
+            ? eq(importItems.userId, userId)
+            : undefined;
+
+    const rows = whereClause
       ? this.dbContext.db
           .select()
           .from(importItems)
-          .where(eq(importItems.status, statusFilter))
+          .where(whereClause)
           .orderBy(desc(importItems.updatedAt))
           .all()
       : this.dbContext.db.select().from(importItems).orderBy(desc(importItems.updatedAt)).all();
@@ -453,7 +599,7 @@ export class LibraryImporter {
       if (row.status === "needs_review") {
         for (const f of files) {
           const trackArtist = f.currentArtist || row.detectedArtist;
-          const dup = this.findExistingDuplicate(trackArtist, f.currentTitle);
+          const dup = this.findExistingDuplicate(trackArtist, f.currentTitle, row.userId);
           if (dup) {
             const incomingScore = computeAudioQualityScore(f.codec ?? f.extension, f.bitrate);
             const existingScore = computeAudioQualityScore(dup.codec, dup.bitrate);
@@ -496,9 +642,15 @@ export class LibraryImporter {
       };
     });
 
-    const needsReviewRow = this.dbContext.sqlite
-      .prepare("SELECT COUNT(*) AS cnt FROM import_items WHERE status = 'needs_review'")
-      .get() as { cnt: number } | undefined;
+    const needsReviewRow = (
+      userId !== undefined
+        ? this.dbContext.sqlite
+            .prepare("SELECT COUNT(*) AS cnt FROM import_items WHERE status = 'needs_review' AND user_id = ?")
+            .get(userId)
+        : this.dbContext.sqlite
+            .prepare("SELECT COUNT(*) AS cnt FROM import_items WHERE status = 'needs_review'")
+            .get()
+    ) as { cnt: number } | undefined;
 
     return {
       downloadsDir: {
@@ -511,12 +663,13 @@ export class LibraryImporter {
   }
 
   /**
-   * One-off bulk import from an external folder (e.g. initial migration of an existing
-   * messy music folder) using the same tagging, layout, duplicate, and Review Queue pipeline.
+   * One-off bulk import from an external folder (or browser upload batch) into userId's musicDir
+   * using the same tagging, layout, duplicate, and Review Queue pipeline.
    */
   async importExternalFolder(
     rawSourceDir: string,
     fileAction: ImportFileAction = "copy",
+    userId = 1,
   ): Promise<BulkImportFolderResponse> {
     const trimmed = rawSourceDir.trim();
     if (!trimmed) {
@@ -538,7 +691,7 @@ export class LibraryImporter {
       throw new ImporterError(`Source path is not a directory: ${resolvedSource}`, 400);
     }
 
-    const resolvedMusic = path.resolve(this.musicDir);
+    const resolvedMusic = path.resolve(this.getUserMusicDir(userId));
     const relFromMusic = path.relative(resolvedMusic, resolvedSource);
     const relFromSource = path.relative(resolvedSource, resolvedMusic);
     const overlapsMusicDir =
@@ -556,19 +709,20 @@ export class LibraryImporter {
     this.activityLog?.info(
       "importer",
       `Starting bulk folder import from ${resolvedSource} (${fileAction})`,
-      { sourceDir: resolvedSource, fileAction },
+      { userId, sourceDir: resolvedSource, fileAction },
     );
 
     const scanResult = await this.scanInbox({
       sourceDir: resolvedSource,
       fileActionOverride: fileAction,
       requireStableFiles: false,
+      userId,
     });
 
     this.activityLog?.success(
       "importer",
       `Bulk import finished: ${scanResult.autoImported} imported, ${scanResult.needsReview} sent to Review Queue, ${scanResult.skipped} skipped`,
-      { sourceDir: resolvedSource, fileAction, ...scanResult },
+      { userId, sourceDir: resolvedSource, fileAction, ...scanResult },
     );
 
     return {
@@ -602,32 +756,6 @@ export class LibraryImporter {
     };
 
     for (const item of discovered) {
-      const existing = this.dbContext.db
-        .select()
-        .from(importItems)
-        .where(eq(importItems.sourceDir, item.sourceKey))
-        .get();
-
-      // Skip only when the exact same file paths were already queued/dismissed/copied-imported
-      if (existing) {
-        const prevFiles = this.safeParseJson<ImportSourceFile[]>(existing.filesJson, []).map(
-          (f) => f.filePath,
-        );
-        const sameFiles =
-          prevFiles.length === item.audioFiles.length &&
-          prevFiles.every((fp, i) => fp === item.audioFiles[i]);
-
-        if (
-          sameFiles &&
-          (existing.status === "needs_review" ||
-            existing.status === "dismissed" ||
-            (existing.status === "imported" && effectiveFileAction === "copy"))
-        ) {
-          result.skipped += 1;
-          continue;
-        }
-      }
-
       if (options?.requireStableFiles) {
         const stable = await areFilesStable(
           item.folderPath,
@@ -641,21 +769,64 @@ export class LibraryImporter {
         }
       }
 
+      // Resolve target owner(s): explicit userId for uploads/bulk imports, or download_ownership routing for shared slskd downloads
+      const ownerResolution =
+        options?.userId !== undefined
+          ? { userIds: [options.userId], matchedRowIdsByUser: new Map<number, number[]>() }
+          : this.resolveDownloadOwners(item);
+      const targetUserIds = ownerResolution.userIds;
+
+      // Inspect files & fetch MusicBrainz candidates once per discovered item, then route per target user
+      let files: ImportSourceFile[];
+      let isSingleTrack: boolean;
+      let folderName: string;
+      let detectedArtist: string;
+      let detectedAlbum: string;
+      let detectedYear: number | null;
+      let candidates: MusicBrainzReleaseCandidate[] = [];
+      let top: MusicBrainzReleaseCandidate | null = null;
+      let confidence = 0;
+
+      // Fast-skip when single-owner item was already queued/dismissed/copied-imported with identical files
+      if (targetUserIds.length === 1) {
+        const existing = this.dbContext.db
+          .select()
+          .from(importItems)
+          .where(eq(importItems.sourceDir, item.sourceKey))
+          .get();
+        if (existing && existing.userId === targetUserIds[0]) {
+          const prevFiles = this.safeParseJson<ImportSourceFile[]>(existing.filesJson, []).map(
+            (f) => f.filePath,
+          );
+          const sameFiles =
+            prevFiles.length === item.audioFiles.length &&
+            prevFiles.every((fp, i) => fp === item.audioFiles[i]);
+          if (
+            sameFiles &&
+            (existing.status === "needs_review" ||
+              existing.status === "dismissed" ||
+              (existing.status === "imported" && effectiveFileAction === "copy"))
+          ) {
+            result.skipped += 1;
+            continue;
+          }
+        }
+      }
+
       try {
-        const files = await this.inspectSourceFiles(item.audioFiles);
-        const isSingleTrack = files.length === 1;
-        const folderName = item.folderName;
+        files = await this.inspectSourceFiles(item.audioFiles);
+        isSingleTrack = files.length === 1;
+        folderName = item.folderName;
         const hints = parseFolderHints(
           item.isLooseFile ? path.basename(folderName, path.extname(folderName)) : folderName,
         );
 
-        const detectedArtist =
+        detectedArtist =
           mostCommonString(files.map((f) => f.currentArtist)) ?? hints.artist ?? "Unknown Artist";
-        const detectedAlbum =
+        detectedAlbum =
           mostCommonString(files.map((f) => f.currentAlbum)) ?? hints.album ?? folderName;
-        const detectedYear = hints.year;
+        detectedYear = hints.year;
 
-        let candidates: MusicBrainzReleaseCandidate[] = [];
         try {
           candidates = await this.musicBrainz.searchReleases({
             artist: detectedArtist,
@@ -666,12 +837,99 @@ export class LibraryImporter {
           this.logger?.warn({ err, folderName }, "MusicBrainz lookup failed during inbox scan");
         }
 
-        const top = candidates[0] ?? null;
-        const confidence = top?.score ?? 0;
-        const now = new Date();
-
-        const itemId = this.upsertImportItem({
+        top = candidates[0] ?? null;
+        confidence = top?.score ?? 0;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.activityLog?.error("importer", `Failed to inspect "${item.folderName}": ${msg}`, {
+          source: item.sourceKey,
+        });
+        result.failed += 1;
+        this.upsertImportItem({
+          userId: targetUserIds[0] ?? this.getPrimaryAdminIdFn(),
           sourceDir: item.sourceKey,
+          folderName: item.folderName,
+          status: "failed",
+          detectedArtist: "Unknown Artist",
+          detectedAlbum: item.folderName,
+          detectedYear: null,
+          trackCount: item.audioFiles.length,
+          confidence: 0,
+          matchedMbid: null,
+          matchedArtist: null,
+          matchedAlbum: null,
+          matchedYear: null,
+          matchedCoverUrl: null,
+          candidates: [],
+          files: [],
+          errorMessage: msg,
+          now: new Date(),
+        });
+        continue;
+      }
+
+      // Match single track or MusicBrainz album release once so multi-user routing doesn't hit APIs twice
+      const singleMatch =
+        isSingleTrack && this.metadataLookup
+          ? await this.tryMatchSingleTrack(
+              files[0]!,
+              detectedArtist,
+              detectedAlbum,
+              pp.autoImportThreshold,
+            )
+          : null;
+
+      let albumReleaseDetail: Awaited<ReturnType<MusicBrainzClient["getReleaseDetail"]>> | null = null;
+      const canAutoImportAlbum =
+        !singleMatch &&
+        top !== null &&
+        confidence >= pp.autoImportThreshold &&
+        top.trackCount === files.length;
+      if (canAutoImportAlbum && top) {
+        try {
+          albumReleaseDetail = await this.musicBrainz.getReleaseDetail(top.mbid);
+        } catch (err) {
+          this.logger?.warn({ err, folderName }, "Failed to fetch MusicBrainz release detail");
+        }
+      }
+
+      for (let ownerIdx = 0; ownerIdx < targetUserIds.length; ownerIdx++) {
+        const targetUserId = targetUserIds[ownerIdx]!;
+        const isLastOwner = ownerIdx === targetUserIds.length - 1;
+        // If 2+ users requested the same download, copy for earlier users so the files remain for the last user
+        const ownerFileAction: ImportFileAction = isLastOwner ? effectiveFileAction : "copy";
+        const ownerSourceKey =
+          ownerIdx === 0 ? item.sourceKey : `${item.sourceKey}#u${targetUserId}`;
+        const ownerOwnershipIds = ownerResolution.matchedRowIdsByUser.get(targetUserId);
+
+        const existingForOwner = this.dbContext.db
+          .select()
+          .from(importItems)
+          .where(eq(importItems.sourceDir, ownerSourceKey))
+          .get();
+
+        if (existingForOwner && existingForOwner.userId === targetUserId) {
+          const prevFiles = this.safeParseJson<ImportSourceFile[]>(existingForOwner.filesJson, []).map(
+            (f) => f.filePath,
+          );
+          const sameFiles =
+            prevFiles.length === item.audioFiles.length &&
+            prevFiles.every((fp, i) => fp === item.audioFiles[i]);
+          if (
+            sameFiles &&
+            (existingForOwner.status === "needs_review" ||
+              existingForOwner.status === "dismissed" ||
+              (existingForOwner.status === "imported" && ownerFileAction === "copy"))
+          ) {
+            result.skipped += 1;
+            continue;
+          }
+        }
+
+        const now = new Date();
+        const itemId = this.upsertImportItem({
+          userId: targetUserId,
+          sourceDir: ownerSourceKey,
           folderName,
           status: "needs_review",
           detectedArtist,
@@ -690,84 +948,71 @@ export class LibraryImporter {
           now,
         });
 
-        // 1. Single-Track Mode FIRST when there is 1 audio file (prevents renaming songs like
-        //    "Doin' Time" or "West Coast" to a 1-track single release named after the album!)
-        if (isSingleTrack && this.metadataLookup) {
+        // 1. Single-Track Mode FIRST
+        if (singleMatch) {
           const singleFile = files[0]!;
-          const singleMatch = await this.tryMatchSingleTrack(
-            singleFile,
-            detectedArtist,
-            detectedAlbum,
-            pp.autoImportThreshold,
-          );
+          if (
+            pp.duplicatePolicy === "review" &&
+            this.findExistingDuplicate(singleMatch.artist, singleMatch.title, targetUserId)
+          ) {
+            result.needsReview += 1;
+            this.markOwnershipImported(ownerOwnershipIds);
+            continue;
+          }
 
-          if (singleMatch) {
-            if (
-              pp.duplicatePolicy === "review" &&
-              this.findExistingDuplicate(singleMatch.artist, singleMatch.title)
-            ) {
-              result.needsReview += 1;
-              continue;
-            }
-
-            try {
-              await this.applyImport(
-                itemId,
-                {
-                  artist: singleMatch.albumArtist,
-                  album: singleMatch.album,
-                  year: singleMatch.year,
-                  genre: singleMatch.genre,
-                  coverArtUrl: singleMatch.coverArtUrl,
-                  tracks: [
-                    {
-                      filePath: singleFile.filePath,
-                      title: singleMatch.title,
-                      artist: singleMatch.artist,
-                      trackNumber: singleMatch.trackNumber,
-                      discNumber: singleMatch.discNumber,
-                    },
-                  ],
-                },
-                {
-                  coverArtUrl: singleMatch.coverArtUrl,
-                  fileActionOverride: effectiveFileAction,
-                  sourceRoot: scanRoot,
-                },
-              );
-              result.autoImported += 1;
-              continue;
-            } catch (err) {
-              this.logger?.warn(
-                { err, folderName },
-                "Single-track auto-import failed; leaving in Review Queue",
-              );
-            }
+          try {
+            await this.applyImport(
+              itemId,
+              {
+                artist: singleMatch.albumArtist,
+                album: singleMatch.album,
+                year: singleMatch.year,
+                genre: singleMatch.genre,
+                coverArtUrl: singleMatch.coverArtUrl,
+                tracks: [
+                  {
+                    filePath: singleFile.filePath,
+                    title: singleMatch.title,
+                    artist: singleMatch.artist,
+                    trackNumber: singleMatch.trackNumber,
+                    discNumber: singleMatch.discNumber,
+                  },
+                ],
+              },
+              {
+                coverArtUrl: singleMatch.coverArtUrl,
+                fileActionOverride: ownerFileAction,
+                sourceRoot: scanRoot,
+              },
+            );
+            this.markOwnershipImported(ownerOwnershipIds);
+            result.autoImported += 1;
+            continue;
+          } catch (err) {
+            this.logger?.warn(
+              { err, folderName, userId: targetUserId },
+              "Single-track auto-import failed; leaving in Review Queue",
+            );
           }
         }
 
-        // 2. Album Auto-Import (MusicBrainz release match with exact track count)
-        const canAutoImportAlbum =
-          top !== null &&
-          confidence >= pp.autoImportThreshold &&
-          top.trackCount === files.length;
-
-        if (canAutoImportAlbum) {
+        // 2. Album Auto-Import
+        if (albumReleaseDetail && top) {
           try {
-            const detail = await this.musicBrainz.getReleaseDetail(top.mbid);
+            const detail = albumReleaseDetail;
 
-            // Safety guard for 1-track releases: NEVER blindly overwrite a single track's title
-            // with an album title unless the MusicBrainz track title actually matches the song!
             if (isSingleTrack) {
-              const fileTitleNorm = normalizeForMatching(stripLeadingTrackNumber(files[0]!.currentTitle));
+              const fileTitleNorm = normalizeForMatching(
+                stripLeadingTrackNumber(files[0]!.currentTitle),
+              );
               const mbTitleNorm = normalizeForMatching(detail.tracks[0]?.title ?? "");
               if (!fileTitleNorm || !mbTitleNorm || fileTitleNorm !== mbTitleNorm) {
                 result.needsReview += 1;
+                this.markOwnershipImported(ownerOwnershipIds);
                 continue;
               }
             }
 
-            // Map MusicBrainz release tracks by title similarity FIRST, then trackNumber, then index
             const usedMbIndices = new Set<number>();
             const trackOverrides: RetagTrackOverride[] = files.map((file, idx) => {
               const normFileTitle = normalizeForMatching(stripLeadingTrackNumber(file.currentTitle));
@@ -804,10 +1049,11 @@ export class LibraryImporter {
             if (
               pp.duplicatePolicy === "review" &&
               trackOverrides.some((t) =>
-                Boolean(this.findExistingDuplicate(t.artist ?? detail.artist, t.title)),
+                Boolean(this.findExistingDuplicate(t.artist ?? detail.artist, t.title, targetUserId)),
               )
             ) {
               result.needsReview += 1;
+              this.markOwnershipImported(ownerOwnershipIds);
               continue;
             }
 
@@ -824,51 +1070,28 @@ export class LibraryImporter {
               },
               {
                 coverArtUrl: top.coverArtUrl,
-                fileActionOverride: effectiveFileAction,
+                fileActionOverride: ownerFileAction,
                 sourceRoot: scanRoot,
               },
             );
+            this.markOwnershipImported(ownerOwnershipIds);
             result.autoImported += 1;
             continue;
           } catch (err) {
             this.logger?.warn(
-              { err, folderName },
+              { err, folderName, userId: targetUserId },
               "Auto-import failed; leaving item in Review Queue",
             );
           }
         }
 
+        this.markOwnershipImported(ownerOwnershipIds);
         result.needsReview += 1;
         this.activityLog?.info(
           "importer",
           `Queued "${folderName}" for manual review (${files.length} ${files.length === 1 ? "track" : "tracks"}, best match ${Math.round(confidence)}%)`,
-          { source: item.sourceKey, detectedArtist, detectedAlbum, confidence },
+          { userId: targetUserId, source: item.sourceKey, detectedArtist, detectedAlbum, confidence },
         );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.activityLog?.error("importer", `Failed to inspect "${item.folderName}": ${msg}`, {
-          source: item.sourceKey,
-        });
-        result.failed += 1;
-        this.upsertImportItem({
-          sourceDir: item.sourceKey,
-          folderName: item.folderName,
-          status: "failed",
-          detectedArtist: "Unknown Artist",
-          detectedAlbum: item.folderName,
-          detectedYear: null,
-          trackCount: item.audioFiles.length,
-          confidence: 0,
-          matchedMbid: null,
-          matchedArtist: null,
-          matchedAlbum: null,
-          matchedYear: null,
-          matchedCoverUrl: null,
-          candidates: [],
-          files: [],
-          errorMessage: msg,
-          now: new Date(),
-        });
       }
     }
 
@@ -877,20 +1100,20 @@ export class LibraryImporter {
 
   /**
    * Tags every file in a Review Queue item, handles duplicates according to policy/resolution,
-   * moves/copies them into MUSIC_DIR/Artist/Album/Track, embeds cover/lyrics if enabled,
-   * rescans the library, and automatically backfills missing tracks on all playlists.
+   * moves/copies them into the owning user's MUSIC_DIR, embeds cover/lyrics if enabled,
+   * rescans that user's library, and automatically backfills missing tracks on their playlists.
    */
   async applyImport(
     importId: number,
     payload: ApplyTaggingRequest,
     extra?: {
+      userId?: number;
       coverArtUrl?: string | null;
       fileActionOverride?: ImportFileAction;
       sourceRoot?: string;
     },
   ): Promise<ApplyImportResponse> {
     const pp = this.settings;
-    const org = this.organizationSettings;
     const effectiveFileAction: ImportFileAction = extra?.fileActionOverride ?? pp.fileAction;
     const sourceRoot = extra?.sourceRoot ? path.resolve(extra.sourceRoot) : path.resolve(pp.downloadsDir);
 
@@ -900,9 +1123,14 @@ export class LibraryImporter {
       .where(eq(importItems.id, importId))
       .get();
 
-    if (!row) {
+    if (!row || (extra?.userId !== undefined && row.userId !== extra.userId)) {
       throw new ImporterError("Import item not found.", 404);
     }
+
+    const ownerId = row.userId;
+    const targetMusicDir = this.getUserMusicDir(ownerId);
+    await fsp.mkdir(targetMusicDir, { recursive: true });
+    const org = this.getOrganizationSettings(ownerId);
 
     const storedFiles = this.safeParseJson<ImportSourceFile[]>(row.filesJson, []);
     const allowedPaths = new Set(storedFiles.map((f) => f.filePath));
@@ -917,7 +1145,7 @@ export class LibraryImporter {
       tracksToProcess.map((t) => t.discNumber ?? 1).filter((d) => d > 0),
     );
     const hasMultipleDiscs = discNumbers.size > 1;
-    let destinationDir = path.join(this.musicDir, safeArtist);
+    let destinationDir = path.join(targetMusicDir, safeArtist);
 
     let remoteCover: { bytes: Uint8Array; mimeType: string } | null = null;
     const coverCandidateUrl = extra?.coverArtUrl ?? payload.coverArtUrl ?? row.matchedCoverUrl;
@@ -979,11 +1207,11 @@ export class LibraryImporter {
           sanitizePathSegment(payload.album, "Unknown Album"),
           formatTrackFilename(trackNumber, discNumber, hasMultipleDiscs, track.title, ext),
         );
-      const destPath = path.join(this.musicDir, relTarget);
+      const destPath = path.join(targetMusicDir, relTarget);
       destinationDir = path.dirname(destPath);
 
-      // Duplicate & Quality-Upgrade Handling
-      const existingDup = this.findExistingDuplicate(trackArtist, track.title);
+      // Duplicate & Quality-Upgrade Handling (strictly within ownerId's library)
+      const existingDup = this.findExistingDuplicate(trackArtist, track.title, ownerId);
       if (existingDup && dupResolution !== "keep_both") {
         const incomingScore = computeAudioQualityScore(incomingCodec, incomingBitrate);
         const existingScore = computeAudioQualityScore(existingDup.codec, existingDup.bitrate);
@@ -1017,6 +1245,7 @@ export class LibraryImporter {
             "importer",
             `Skipped duplicate "${track.title}" by ${trackArtist} (existing quality >= incoming)`,
             {
+              userId: ownerId,
               source: track.filePath,
               existing: existingDup.filePath,
               existingCodec: existingDup.codec,
@@ -1053,7 +1282,6 @@ export class LibraryImporter {
               `${Date.now()}-${path.basename(existingDup.filePath)}`,
             );
             await moveFileSafe(existingDup.filePath, archiveDest).catch(() => {});
-            // Carry paired .lrc sidecar over to upgraded track (or clean it out of the old folder)
             const oldLrc = getSidecarLrcPath(existingDup.filePath);
             const newLrc = getSidecarLrcPath(destPath);
             if (fs.existsSync(oldLrc) && path.resolve(oldLrc) !== path.resolve(newLrc)) {
@@ -1063,13 +1291,13 @@ export class LibraryImporter {
                 await fsp.unlink(oldLrc).catch(() => {});
               }
             }
-            // Clean up now-empty old album/artist folder inside MUSIC_DIR
-            await removeEmptyDir(oldDir, this.musicDir);
+            await removeEmptyDir(oldDir, targetMusicDir);
             duplicatesUpgraded += 1;
             this.activityLog?.success(
               "importer",
               `Upgraded "${track.title}" by ${trackArtist} (${existingDup.codec ?? "old"} → ${incomingCodec ?? ext})`,
               {
+                userId: ownerId,
                 replaced: existingDup.filePath,
                 archivedTo: archiveDest,
                 playlistEntriesPreserved: savedEntries.length,
@@ -1149,10 +1377,11 @@ export class LibraryImporter {
     }
 
     // Only transfer folder covers / remove empty folder when source was a subfolder (not loose file)
+    const cleanSourcePath = row.sourceDir.replace(/#u\d+$/, "");
     const sourceParentDir =
-      fs.existsSync(row.sourceDir) && fs.statSync(row.sourceDir).isDirectory()
-        ? row.sourceDir
-        : path.dirname(row.sourceDir);
+      fs.existsSync(cleanSourcePath) && fs.statSync(cleanSourcePath).isDirectory()
+        ? cleanSourcePath
+        : path.dirname(cleanSourcePath);
     const isSubfolder = path.resolve(sourceParentDir) !== sourceRoot;
 
     if (isSubfolder) {
@@ -1179,12 +1408,12 @@ export class LibraryImporter {
       .where(eq(importItems.id, importId))
       .run();
 
-    await this.scanner.runScan();
+    await this.scanner.runScan({ userId: ownerId });
 
     // Restore playlist memberships for any upgraded/replaced tracks at their exact original positions
     if (playlistMigrations.length > 0) {
       const findTrackByPathStmt = this.dbContext.sqlite.prepare(
-        "SELECT id FROM tracks WHERE file_path = ?",
+        "SELECT id FROM tracks WHERE file_path = ? AND user_id = ?",
       );
       const insertPlTrackStmt = this.dbContext.sqlite.prepare(
         "INSERT INTO playlist_tracks (playlist_id, track_id, position, added_at) VALUES (?, ?, ?, ?)",
@@ -1195,7 +1424,9 @@ export class LibraryImporter {
       const nowMs = Date.now();
       const tx = this.dbContext.sqlite.transaction(() => {
         for (const mig of playlistMigrations) {
-          const newRow = findTrackByPathStmt.get(mig.newDestPath) as { id: number } | undefined;
+          const newRow = findTrackByPathStmt.get(mig.newDestPath, ownerId) as
+            | { id: number }
+            | undefined;
           if (!newRow) continue;
           const touched = new Set<number>();
           for (const entry of mig.entries) {
@@ -1212,18 +1443,20 @@ export class LibraryImporter {
 
     const playlistsBackfilled = recheckAllPlaylistsMissingTracks(
       this.dbContext.sqlite,
-      this.musicDir,
+      targetMusicDir,
       this.batchSearchService,
+      ownerId,
     );
 
     if (playlistsBackfilled > 0 || playlistMigrations.length > 0) {
-      await this.playlistSync?.syncAllPlaylists().catch(() => {});
+      await this.playlistSync?.syncAllPlaylists(false, ownerId).catch(() => {});
     }
 
     this.activityLog?.success(
       "importer",
       `Imported "${payload.artist} — ${payload.album}" (${filesImported} ${filesImported === 1 ? "file" : "files"} ${effectiveFileAction === "copy" ? "copied" : "moved"}${duplicatesUpgraded > 0 ? `, ${duplicatesUpgraded} upgraded` : ""}${duplicatesSkipped > 0 ? `, ${duplicatesSkipped} duplicate skipped` : ""}${playlistsBackfilled > 0 ? `, ${playlistsBackfilled} playlist entries backfilled` : ""})`,
       {
+        userId: ownerId,
         destinationDir,
         filesImported,
         duplicatesUpgraded,
@@ -1243,14 +1476,14 @@ export class LibraryImporter {
     };
   }
 
-  dismissImport(importId: number): void {
+  dismissImport(importId: number, userId?: number): void {
     const existing = this.dbContext.db
-      .select({ id: importItems.id })
+      .select({ id: importItems.id, userId: importItems.userId })
       .from(importItems)
       .where(eq(importItems.id, importId))
       .get();
 
-    if (!existing) {
+    if (!existing || (userId !== undefined && existing.userId !== userId)) {
       throw new ImporterError("Import item not found.", 404);
     }
 
@@ -1264,16 +1497,17 @@ export class LibraryImporter {
   async retagExistingAlbum(
     albumId: number,
     payload: ApplyTaggingRequest,
+    userId?: number,
   ): Promise<RetagAlbumResponse> {
     const album = this.dbContext.db.select().from(albums).where(eq(albums.id, albumId)).get();
-    if (!album) {
+    if (!album || (userId !== undefined && album.userId !== userId)) {
       throw new ImporterError("Album not found.", 404);
     }
 
     const albumTracks = this.dbContext.db
       .select({ id: tracks.id, filePath: tracks.filePath })
       .from(tracks)
-      .where(eq(tracks.albumId, albumId))
+      .where(and(eq(tracks.albumId, albumId), eq(tracks.userId, album.userId)))
       .all();
 
     const allowedPaths = new Set(albumTracks.map((t) => t.filePath));
@@ -1304,12 +1538,16 @@ export class LibraryImporter {
       filesUpdated += 1;
     }
 
-    await this.scanner.runScan({ force: true });
+    await this.scanner.runScan({ force: true, userId: album.userId });
 
     return { albumId, filesUpdated };
   }
 
-  private findExistingDuplicate(artist: string, title: string): ExistingDuplicateTrack | null {
+  private findExistingDuplicate(
+    artist: string,
+    title: string,
+    userId = 1,
+  ): ExistingDuplicateTrack | null {
     const normTitle = normalizeForMatching(title);
     if (!normTitle) return null;
 
@@ -1328,9 +1566,10 @@ export class LibraryImporter {
         FROM tracks t
         JOIN artists ar ON ar.id = t.artist_id
         JOIN albums al ON al.id = t.album_id
+        WHERE t.user_id = ?
       `,
       )
-      .all() as ExistingDuplicateTrack[];
+      .all(userId) as ExistingDuplicateTrack[];
 
     for (const row of allRows) {
       // Ignore stale SQLite entries whose files were already removed on disk
@@ -1547,6 +1786,7 @@ export class LibraryImporter {
   }
 
   private upsertImportItem(input: {
+    userId: number;
     sourceDir: string;
     folderName: string;
     status: ImportItemStatus;
@@ -1572,6 +1812,7 @@ export class LibraryImporter {
       .get();
 
     const values = {
+      userId: input.userId,
       folderName: input.folderName,
       status: input.status,
       detectedArtist: input.detectedArtist,

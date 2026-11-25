@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type {
@@ -8,11 +9,17 @@ import type {
   SystemSettingsResponse,
 } from "@musicorbit/shared";
 import type { ActivityLogService } from "../services/activityLog.js";
+import { getRequestUser, requireAdmin } from "../services/authHelpers.js";
 import type { InboxWatcher } from "../services/inboxWatcher.js";
 import type { LibraryOrganizer } from "../services/libraryOrganizer.js";
 import type { PlaylistSyncService } from "../services/playlistSync.js";
 import type { LibraryScanner } from "../services/scanner.js";
 import { SettingsError, type SettingsService } from "../services/settings.js";
+
+function isPathInsideOrEqual(target: string, root: string): boolean {
+  const rel = path.relative(path.resolve(root), path.resolve(target));
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
 
 export interface SettingsRouteDeps {
   settingsService: SettingsService;
@@ -70,13 +77,15 @@ export async function registerSettingsRoutes(
   const { settingsService, scanner, inboxWatcher, libraryOrganizer, playlistSync, activityLog } =
     deps;
 
-  app.get("/api/system/settings", async (): Promise<SystemSettingsResponse> => {
-    return settingsService.getSettings();
+  app.get("/api/system/settings", async (request): Promise<SystemSettingsResponse> => {
+    const user = getRequestUser(request);
+    return settingsService.getSettings(user.id);
   });
 
   app.get(
     "/api/system/browse-dirs",
-    async (request): Promise<BrowseDirectoriesResponse> => {
+    async (request, reply): Promise<BrowseDirectoriesResponse> => {
+      if (!requireAdmin(request, reply)) return reply as never;
       const parsed = browseQuerySchema.safeParse(request.query);
       const rawPath = parsed.success ? parsed.data.path : undefined;
       return settingsService.browseDirectories(rawPath);
@@ -86,6 +95,9 @@ export async function registerSettingsRoutes(
   app.put(
     "/api/system/music-dir",
     async (request, reply): Promise<SystemSettingsResponse> => {
+      const admin = requireAdmin(request, reply);
+      if (!admin) return reply as never;
+
       const parsed = updateMusicDirBodySchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "Please provide a valid folder path." });
@@ -94,12 +106,13 @@ export async function registerSettingsRoutes(
       try {
         const updated = settingsService.setMusicDir(parsed.data.path);
         activityLog?.info("system", `Music directory changed to ${updated.musicDir}`, {
+          userId: admin.id,
           scanNow: parsed.data.scanNow,
         });
         if (parsed.data.scanNow) {
-          scanner.startScan({ force: false });
+          scanner.startScan({ force: false, userId: admin.id });
         }
-        return updated;
+        return settingsService.getSettings(admin.id);
       } catch (err) {
         if (err instanceof SettingsError) {
           return reply.code(err.statusCode).send({ error: err.message });
@@ -112,6 +125,9 @@ export async function registerSettingsRoutes(
   app.put(
     "/api/system/post-processing",
     async (request, reply): Promise<SystemSettingsResponse> => {
+      const admin = requireAdmin(request, reply);
+      if (!admin) return reply as never;
+
       const parsed = updatePostProcessingBodySchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "Invalid post-processing settings." });
@@ -120,7 +136,7 @@ export async function registerSettingsRoutes(
       try {
         settingsService.updatePostProcessing(parsed.data);
         inboxWatcher?.syncWithSettings();
-        const updated = settingsService.getSettings();
+        const updated = settingsService.getSettings(admin.id);
         activityLog?.info("system", "Post-processing settings updated", {
           downloadsDir: updated.postProcessing.downloadsDir,
           fileAction: updated.postProcessing.fileAction,
@@ -140,22 +156,33 @@ export async function registerSettingsRoutes(
   app.put(
     "/api/system/playlist-sync",
     async (request, reply): Promise<SystemSettingsResponse> => {
+      const user = getRequestUser(request);
       const parsed = updatePlaylistSyncBodySchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "Invalid playlist sync settings." });
       }
 
+      // Non-admin users may only sync playlists inside their own music directory
+      if (user.role !== "admin" && parsed.data.playlistsDir !== undefined) {
+        const userMusicDir = settingsService.getUserMusicDir(user.id);
+        if (!isPathInsideOrEqual(parsed.data.playlistsDir, userMusicDir)) {
+          return reply.code(403).send({
+            error: "Playlists sync folder must stay inside your personal music library directory.",
+          });
+        }
+      }
+
       try {
-        const updated = settingsService.updatePlaylistSync(parsed.data);
+        const updated = settingsService.updatePlaylistSync(parsed.data, user.id);
         activityLog?.info(
           "system",
           `Playlist .m3u8 sync ${updated.playlistSync.enabled ? "enabled" : "disabled"}`,
-          { playlistsDir: updated.playlistSync.playlistsDir },
+          { userId: user.id, playlistsDir: updated.playlistSync.playlistsDir },
         );
         if (updated.playlistSync.enabled && playlistSync) {
-          await playlistSync.syncAllPlaylists();
+          await playlistSync.syncAllPlaylists(false, user.id);
         }
-        return settingsService.getSettings();
+        return settingsService.getSettings(user.id);
       } catch (err) {
         if (err instanceof SettingsError) {
           return reply.code(err.statusCode).send({ error: err.message });
@@ -167,26 +194,29 @@ export async function registerSettingsRoutes(
 
   app.post(
     "/api/system/playlist-sync/run",
-    async (_request, reply): Promise<PlaylistSyncRunResult> => {
+    async (request, reply): Promise<PlaylistSyncRunResult> => {
+      const user = getRequestUser(request);
       if (!playlistSync) {
         return reply.code(503).send({ error: "Playlist sync service is unavailable." });
       }
-      return playlistSync.syncAllPlaylists(true);
+      return playlistSync.syncAllPlaylists(true, user.id);
     },
   );
 
   app.put(
     "/api/system/library-organization",
     async (request, reply): Promise<SystemSettingsResponse> => {
+      const user = getRequestUser(request);
       const parsed = updateLibraryOrganizationBodySchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.code(400).send({ error: "Invalid library organization settings." });
       }
 
-      settingsService.updateLibraryOrganization(parsed.data);
+      settingsService.updateLibraryOrganization(parsed.data, user.id);
       inboxWatcher?.syncWithSettings();
-      const updated = settingsService.getSettings();
+      const updated = settingsService.getSettings(user.id);
       activityLog?.info("organizer", "Library organization settings updated", {
+        userId: user.id,
         ...updated.libraryOrganization,
       });
       return updated;
@@ -195,17 +225,19 @@ export async function registerSettingsRoutes(
 
   app.get(
     "/api/system/library-organization/preview",
-    async (_request, reply): Promise<OrganizePreviewResponse> => {
+    async (request, reply): Promise<OrganizePreviewResponse> => {
+      const user = getRequestUser(request);
       if (!libraryOrganizer) {
         return reply.code(503).send({ error: "Library organizer is unavailable." });
       }
-      return libraryOrganizer.preview();
+      return libraryOrganizer.preview({ userId: user.id });
     },
   );
 
   app.post(
     "/api/system/library-organization/apply",
     async (request, reply): Promise<OrganizeApplyResponse> => {
+      const user = getRequestUser(request);
       if (!libraryOrganizer) {
         return reply.code(503).send({ error: "Library organizer is unavailable." });
       }
@@ -213,7 +245,7 @@ export async function registerSettingsRoutes(
       if (!parsed.success) {
         return reply.code(400).send({ error: "Invalid organize apply options." });
       }
-      return libraryOrganizer.apply({ trackIds: parsed.data?.trackIds });
+      return libraryOrganizer.apply({ userId: user.id, trackIds: parsed.data?.trackIds });
     },
   );
 }

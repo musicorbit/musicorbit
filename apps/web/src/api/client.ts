@@ -15,6 +15,8 @@ import type {
   AuthStatusResponse,
   BrowseDirectoriesResponse,
   BulkImportFolderResponse,
+  ChangePasswordRequest,
+  CreateUserRequest,
   DownloadsListResponse,
   EditableTrackTags,
   EnqueueDownloadRequest,
@@ -50,7 +52,9 @@ import type {
   TrackMetadataResponse,
   TrackMetadataSuggestion,
   TrackSummary,
+  UpdateUserRequest,
   UploadFileResponse,
+  UserSummary,
 } from "@musicorbit/shared";
 
 /**
@@ -964,4 +968,57 @@ export async function finalizeUploadBatch(
 
 export async function cancelUploadBatch(batchId: string): Promise<void> {
   await fetch(`/api/uploads/${encodeURIComponent(batchId)}`, { method: "DELETE" }).catch(() => {});
+}
+
+export async function changePassword(payload: ChangePasswordRequest): Promise<void> {
+  const res = await fetch("/api/auth/change-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not change password (HTTP ${res.status})`);
+  }
+}
+
+export function fetchUsers(): Promise<UserSummary[]> {
+  return getJson<UserSummary[]>("/api/users");
+}
+
+export async function createUser(payload: CreateUserRequest): Promise<UserSummary> {
+  const res = await fetch("/api/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not create user (HTTP ${res.status})`);
+  }
+  return (await res.json()) as UserSummary;
+}
+
+export async function updateUser(
+  userId: number,
+  payload: UpdateUserRequest,
+): Promise<UserSummary> {
+  const res = await fetch(`/api/users/${userId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not update user (HTTP ${res.status})`);
+  }
+  return (await res.json()) as UserSummary;
+}
+
+export async function deleteUser(userId: number): Promise<void> {
+  const res = await fetch(`/api/users/${userId}`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not delete user (HTTP ${res.status})`);
+  }
 }

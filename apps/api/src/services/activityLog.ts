@@ -19,6 +19,7 @@ export interface ListLogsOptions {
   category?: ActivityLogCategory;
   search?: string;
   limit?: number;
+  userId?: number;
 }
 
 interface RawLogRow {
@@ -113,6 +114,10 @@ export class ActivityLogService {
       const like = `%${options.search.trim().toLowerCase()}%`;
       params.push(like, like);
     }
+    if (options?.userId !== undefined) {
+      clauses.push("json_extract(details_json, '$.userId') = ?");
+      params.push(options.userId);
+    }
 
     const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const limit = Math.max(1, Math.min(500, options?.limit ?? 200));
@@ -164,8 +169,8 @@ export class ActivityLogService {
     };
   }
 
-  exportPlainText(limit = 1000): string {
-    const { entries } = this.list({ limit });
+  exportPlainText(limit = 1000, userId?: number): string {
+    const { entries } = this.list({ limit, userId });
     // Chronological order for downloaded .log files
     const lines = [...entries].reverse().map((e) => {
       const detailStr = e.details ? ` | ${JSON.stringify(e.details)}` : "";

@@ -84,32 +84,36 @@ export class PlaylistSyncService {
       .all(playlistId) as M3u8TrackInput[];
   }
 
-  private chooseUniqueFilename(name: string, playlistId: number): string {
+  private chooseUniqueFilename(name: string, playlistId: number, userId: number): string {
     const preferred = sanitizePlaylistFilename(name, playlistId);
     const conflict = this.dbContext.sqlite
-      .prepare("SELECT id FROM playlists WHERE synced_filename = ? AND id != ?")
-      .get(preferred, playlistId) as { id: number } | undefined;
+      .prepare("SELECT id FROM playlists WHERE user_id = ? AND synced_filename = ? AND id != ?")
+      .get(userId, preferred, playlistId) as { id: number } | undefined;
     if (!conflict) return preferred;
     const stem = preferred.replace(/\.m3u8$/i, "");
     return `${stem}_${playlistId}.m3u8`;
   }
 
   /**
-   * Writes or updates a single playlist's .m3u8 file if playlist sync is enabled.
+   * Writes or updates a single playlist's .m3u8 file if playlist sync is enabled for its owner.
    * Handles renames cleanly by removing the previous .m3u8 filename.
    */
   async syncPlaylist(playlistId: number): Promise<string | null> {
-    const syncCfg = this.settingsService.getPlaylistSyncSettings();
-    if (!syncCfg.enabled) return null;
-
     const row = this.dbContext.sqlite
-      .prepare("SELECT id, name, synced_filename AS syncedFilename FROM playlists WHERE id = ?")
-      .get(playlistId) as { id: number; name: string; syncedFilename: string | null } | undefined;
+      .prepare(
+        "SELECT id, user_id AS userId, name, synced_filename AS syncedFilename FROM playlists WHERE id = ?",
+      )
+      .get(playlistId) as
+      | { id: number; userId: number; name: string; syncedFilename: string | null }
+      | undefined;
 
     if (!row) return null;
 
+    const syncCfg = this.settingsService.getPlaylistSyncSettings(row.userId);
+    if (!syncCfg.enabled) return null;
+
     await fsp.mkdir(syncCfg.playlistsDir, { recursive: true });
-    const fileName = this.chooseUniqueFilename(row.name, row.id);
+    const fileName = this.chooseUniqueFilename(row.name, row.id, row.userId);
     const destPath = path.join(syncCfg.playlistsDir, fileName);
 
     // If playlist was renamed, remove the previous synced file cleanly
@@ -131,7 +135,7 @@ export class PlaylistSyncService {
     this.activityLog?.info(
       "playlist",
       `Synced playlist "${row.name}" to ${fileName} (${tracks.length} ${tracks.length === 1 ? "track" : "tracks"})`,
-      { playlistId, filePath: destPath, trackCount: tracks.length },
+      { playlistId, userId: row.userId, filePath: destPath, trackCount: tracks.length },
     );
 
     return destPath;
@@ -140,9 +144,13 @@ export class PlaylistSyncService {
   /**
    * Removes a deleted playlist's synced .m3u8 file from disk if present.
    */
-  async deleteSyncedPlaylist(syncedFilename: string | null, playlistName?: string): Promise<void> {
+  async deleteSyncedPlaylist(
+    syncedFilename: string | null,
+    playlistName?: string,
+    userId = 1,
+  ): Promise<void> {
     if (!syncedFilename) return;
-    const syncCfg = this.settingsService.getPlaylistSyncSettings();
+    const syncCfg = this.settingsService.getPlaylistSyncSettings(userId);
     if (!syncCfg.enabled) return;
 
     const target = path.join(syncCfg.playlistsDir, path.basename(syncedFilename));
@@ -151,29 +159,31 @@ export class PlaylistSyncService {
       this.activityLog?.info(
         "playlist",
         `Removed synced playlist file ${path.basename(syncedFilename)}${playlistName ? ` ("${playlistName}")` : ""}`,
-        { filePath: target },
+        { filePath: target, userId },
       );
     }
   }
 
   /**
-   * Syncs every playlist in SQLite to playlistsDir (used when enabling sync, clicking Sync Now,
-   * or after post-processing backfills/upgrades multiple playlists).
+   * Syncs every playlist belonging to userId in SQLite to that user's playlistsDir
+   * (used when enabling sync, clicking Sync Now, or after post-processing).
    */
-  async syncAllPlaylists(force = false): Promise<PlaylistSyncRunResult> {
-    const syncCfg = this.settingsService.getPlaylistSyncSettings();
+  async syncAllPlaylists(force = false, userId = 1): Promise<PlaylistSyncRunResult> {
+    const syncCfg = this.settingsService.getPlaylistSyncSettings(userId);
     if (!syncCfg.enabled && !force) {
       return { syncedCount: 0, playlistsDir: syncCfg.playlistsDir, files: [] };
     }
 
     await fsp.mkdir(syncCfg.playlistsDir, { recursive: true });
     const rows = this.dbContext.sqlite
-      .prepare("SELECT id, name, synced_filename AS syncedFilename FROM playlists ORDER BY id ASC")
-      .all() as Array<{ id: number; name: string; syncedFilename: string | null }>;
+      .prepare(
+        "SELECT id, name, synced_filename AS syncedFilename FROM playlists WHERE user_id = ? ORDER BY id ASC",
+      )
+      .all(userId) as Array<{ id: number; name: string; syncedFilename: string | null }>;
 
     const files: string[] = [];
     for (const row of rows) {
-      const fileName = this.chooseUniqueFilename(row.name, row.id);
+      const fileName = this.chooseUniqueFilename(row.name, row.id, userId);
       const destPath = path.join(syncCfg.playlistsDir, fileName);
 
       if (row.syncedFilename && row.syncedFilename !== fileName) {
@@ -196,7 +206,7 @@ export class PlaylistSyncService {
     this.activityLog?.success(
       "playlist",
       `Synced ${files.length} ${files.length === 1 ? "playlist" : "playlists"} to ${syncCfg.playlistsDir}`,
-      { playlistsDir: syncCfg.playlistsDir, files },
+      { userId, playlistsDir: syncCfg.playlistsDir, files },
     );
 
     return {
