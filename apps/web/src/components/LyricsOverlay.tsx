@@ -323,16 +323,22 @@ export function LyricsOverlay({
                       onSeek(Math.max(0, line.timeSeconds - timingOffset));
                       setUserScrolling(false);
                     }}
-                    className={`block w-full rounded-xl px-4 py-2 text-left transition-all duration-300 ${
+                    className={`block w-full rounded-xl border-l-4 px-4 py-2.5 text-left text-2xl leading-snug font-bold tracking-tight transition-colors duration-300 sm:text-3xl ${
                       isActive
-                        ? "border-l-4 border-amber-400 bg-amber-500/10 text-2xl font-bold tracking-tight text-zinc-50 sm:text-3xl md:text-4xl"
+                        ? "border-amber-400 bg-amber-500/10 text-zinc-50"
                         : isPast
-                          ? "border-l-4 border-transparent text-xl font-semibold text-zinc-500/70 hover:bg-zinc-900/40 hover:text-zinc-300 sm:text-2xl md:text-3xl"
-                          : "border-l-4 border-transparent text-xl font-semibold text-zinc-400 hover:bg-zinc-900/40 hover:text-zinc-100 sm:text-2xl md:text-3xl"
+                          ? "border-transparent text-zinc-500/50 hover:bg-zinc-900/40 hover:text-zinc-300"
+                          : "border-transparent text-zinc-400/75 hover:bg-zinc-900/40 hover:text-zinc-100"
                     }`}
                   >
                     {line.text ? (
-                      line.text
+                      <span
+                        className={`block origin-left pr-4 transition-transform duration-300 ${
+                          isActive ? "scale-[1.02]" : "scale-100"
+                        }`}
+                      >
+                        {line.text}
+                      </span>
                     ) : (
                       <span className="text-base tracking-widest text-amber-400/60">♪ ♪ ♪</span>
                     )}
