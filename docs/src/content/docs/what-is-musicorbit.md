@@ -11,6 +11,7 @@ Your audio files stay right where you put them on disk, cleanly tagged and organ
 
 - **Incremental Library Scanner:** Indexes local `.flac`, `.mp3`, `.m4a`, `.aac`, `.ogg`, `.opus`, and `.wav` collections into SQLite (WAL mode) with SHA-256 deduplicated cover art caching.
 - **Lossless Browser Player:** Streams tracks over HTTP `206 Partial Content` byte-ranges with instant scrubbing, persistent playback bar, queue management, shuffle/repeat, OS Media Session controls, and automatic **ALAC → lossless FLAC** transcoding for browser compatibility.
+- **Mobile-Friendly & Installable PWA:** Responsive mobile header, slide-over navigation drawer, compact thumb-friendly mini-player, touch-visible track actions, History API swipe-back / reloadable URLs, and full Progressive Web App support for iOS, Android, and desktop.
 - **Synced Sing-Along Lyrics:** Full-screen karaoke view powered by standard `.lrc` sidecar files fetched automatically from **LRCLIB** (or embedded track lyrics).
 - **Real Metadata Written to Disk:** Edit tags and embedded cover art directly in your audio files via `node-taglib-sharp`, with a multi-provider **Current → Suggested** diff picker across **Deezer**, **MusicBrainz**, and **LRCLIB**.
 - **Multi-User Auth & Isolated Libraries:** Enabled by default (`AUTH_ENABLED=true`) with per-user private music directories, salted `scrypt` password hashing, `HttpOnly` sessions, brute-force rate limiting, and host CLI password recovery.
@@ -30,7 +31,7 @@ Your audio files stay right where you put them on disk, cleanly tagged and organ
 
 ## Built for self-hosting
 
-- **Single container:** One lightweight Node.js Docker image serves both the Fastify v5 REST API and the React 19 web interface on port `4410`.
+- **Single container:** Pre-built multi-architecture (`linux/amd64` + `linux/arm64`) Docker image on `ghcr.io/musicorbit/musicorbit` serving the Fastify v5 API, React 19 PWA, and bundled `ffmpeg` on port `4410`.
 - **Zero external database required:** Everything lives in a single SQLite database (`DATA_DIR/musicorbit.db`) plus cached cover art and artist portraits.
 - **Open source:** Licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
 

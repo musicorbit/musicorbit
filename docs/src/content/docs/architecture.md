@@ -9,11 +9,12 @@ MusicOrbit is structured as a clean TypeScript monorepo with a single-container 
 
 ```text
 musicorbit/
+├── .github/workflows/ # Automated multi-arch (amd64 + arm64) GHCR Docker builds
 ├── packages/shared/   # Shared TypeScript API contracts & domain types
 ├── apps/api/          # Fastify v5 REST API, SQLite/Drizzle DB, scanner, tagger, importer, CLI
-├── apps/web/          # React 19 + Vite + Tailwind CSS v4 single-page app
+├── apps/web/          # React 19 + Vite + Tailwind CSS v4 mobile-friendly PWA
 ├── docs/              # Astro + Starlight landing page & documentation (musicorbit.app)
-├── Dockerfile         # Multi-stage lean production container (Node 22 slim)
+├── Dockerfile         # Multi-stage lean production container (Node 22 slim + ffmpeg)
 └── docker-compose.yml # MusicOrbit + optional slskd profile
 ```
 
@@ -25,7 +26,7 @@ musicorbit/
 | **Database** | SQLite (`better-sqlite3`, WAL mode) + Drizzle ORM | Zero-config relational storage for tracks, albums, artists, playlists, users, sessions, and logs |
 | **Audio Metadata** | `music-metadata` + `node-taglib-sharp` | Fast tag scanning & native on-disk tag + embedded cover art writing |
 | **Transcoding** | `ffmpeg` (macOS `/usr/bin/afconvert` fallback) | Transparent lossless ALAC/AIFF/WMA → cached FLAC streaming |
-| **Frontend UI** | React 19 + Vite + Tailwind CSS v4 + Lucide | Single-page responsive dark UI with persistent audio player and sing-along lyrics |
+| **Frontend UI** | React 19 + Vite + Tailwind CSS v4 + Lucide | Mobile-ready installable PWA with History API routing, persistent audio player, and sing-along lyrics |
 | **Documentation** | Astro 5 + Starlight | Cosmic landing page and searchable static docs site deployed on Cloudflare Pages |
 
 ## Workspace scripts

@@ -15,9 +15,9 @@ When you open MusicOrbit for the first time on a fresh database, you are automat
 
 MusicOrbit creates your admin user, signs you in with an `HttpOnly` session cookie, and points your Admin library to `MUSIC_DIR`.
 
-## 2. Interactive Onboarding Tour
+## 2. Interactive Onboarding Tour (Desktop)
 
-Right after your first sign-in, MusicOrbit launches a **role-aware guided spotlight tour** that walks you through:
+Right after your first sign-in on desktop (`>= 1024px`), MusicOrbit launches a **role-aware guided spotlight tour** that walks you through:
 
 - Browsing **Albums**, **Artists**, **Tracks**, and **Playlists**
 - Uploading audio files directly from your browser
@@ -25,11 +25,11 @@ Right after your first sign-in, MusicOrbit launches a **role-aware guided spotli
 - Checking **Activity Logs** for scans, uploads, and imports
 - Managing your account password — and, for Admins, creating isolated users and configuring **System** settings
 
-Your tour completion state is saved per user in SQLite. You can replay the walkthrough anytime by clicking the **`?`** button in the bottom-left account card.
+Your tour completion state is saved per user in SQLite. You can replay the walkthrough anytime on desktop by clicking the **`?`** button in the bottom-left account card. *(The tour is automatically skipped on mobile/tablet screens without marking it done, so you'll still see it the first time you open MusicOrbit on desktop.)*
 
 ## 3. Scan your existing music
 
-If you mounted an existing folder at `MUSIC_DIR`, click **Scan Library** in the sidebar (or wait for the background watcher) to index your tracks, extract embedded cover art, and fetch artist portraits.
+If you mounted an existing folder at `MUSIC_DIR`, click **Scan** in the top header (or open **System & Scanner**) to index your tracks, extract embedded cover art, and fetch artist portraits.
 
 :::tip[Local-only development]
 Running MusicOrbit on a completely private localhost-only machine for development? You can set `AUTH_ENABLED=false` in `.env` to bypass login. For any LAN or internet-facing server, always keep `AUTH_ENABLED=true`.

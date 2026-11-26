@@ -7,7 +7,7 @@ A self-hosted, open-source music library, browser player, metadata manager, and 
 ## Features
 
 - **Incremental Library Scanner:** Indexes `.flac`, `.mp3`, `.m4a`, `.aac`, `.ogg`, `.opus`, and `.wav` files into SQLite (WAL mode) with SHA-256 deduplicated cover art caching.
-- **Built-in Browser Player:** HTTP `206 Partial Content` byte-range audio streaming with persistent player bar, scrubbable seek bar, volume, shuffle/repeat, slide-over queue drawer, and OS Media Session controls.
+- **Built-in Browser Player & Installable PWA:** HTTP `206 Partial Content` byte-range audio streaming, automatic **ALAC → lossless FLAC** transcoding, persistent desktop & mobile mini-player, slide-over queue, synced sing-along `.lrc` lyrics (LRCLIB), mobile swipe-back routing, OS Media Session controls, and standalone PWA support on iOS, Android, and desktop.
 - **Rich Metadata Management:**
   - Full on-demand track metadata editor writing real tags back to disk via `node-taglib-sharp` (title, artist, album artist, album, track/disc numbers, year, genre, composer, BPM, comment, lyrics, and embedded cover art).
   - Multi-provider **Fetch Metadata** lookup (**Deezer**, **MusicBrainz**, and **LRCLIB** for lyrics) with a per-field **Current → Suggested** diff so you can accept all fields, fill empty fields only, or cherry-pick individual tags and cover art.
@@ -16,7 +16,7 @@ A self-hosted, open-source music library, browser player, metadata manager, and 
 - **Post-Processing Pipeline & Review Queue:** Watches `DOWNLOADS_DIR`, matches incoming albums and single tracks, writes clean tags & cover art, handles duplicates, organizes files into `MUSIC_DIR/Artist/Album (Year)/...`, and routes uncertain matches into an interactive **Review Queue**.
 - **Optional External Transfer Integration (`slskd`):** Connect an optional self-hosted `slskd` instance via its REST API to search, queue, and track external peer-to-peer transfers. MusicOrbit is designed to work completely standalone as a local music library and player without `slskd`.
 - **Multi-User Auth & Isolated Libraries:** Enabled by default (`AUTH_ENABLED=true`) with first-run admin setup, per-user isolated music folders, per-user Soulseek permissions (off by default), salted `scrypt` password hashing, `HttpOnly` session cookies, brute-force rate limiting, and host CLI password recovery.
-- **Single-Container Docker Release:** Multi-stage Docker image serving both the Fastify API and the compiled React SPA on one port (`4410`).
+- **Single-Container Multi-Arch Docker Release:** Pre-built `linux/amd64` + `linux/arm64` image (`ghcr.io/musicorbit/musicorbit`) serving the Fastify API, React PWA, and bundled `ffmpeg` on port `4410`.
 
 ## Quick Start with Docker
 
