@@ -41,9 +41,9 @@ const features = [
     icon: "playlist",
   },
   {
-    title: "Optional Soulseek hub",
-    detail: "Connect slskd when you want it; 100% standalone without it.",
-    icon: "globe",
+    title: "Browser upload & import",
+    detail: "Drag-and-drop tracks or folders straight from any device.",
+    icon: "upload",
   },
 ] as const;
 
@@ -62,8 +62,8 @@ const iconPaths: Record<string, string> = {
     '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   playlist:
     '<path d="M21 15V6"/><path d="M18.5 18a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"/><path d="M12 12H3"/><path d="M16 6H3"/><path d="M12 18H3"/>',
-  globe:
-    '<circle cx="12" cy="12" r="9"/><path d="M2 12h20"/><path d="M12 3a14 14 0 0 1 0 18"/><path d="M12 3a14 14 0 0 0 0 18"/>',
+  upload:
+    '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
 };
 ---
 

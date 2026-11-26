@@ -43,7 +43,7 @@ const SLIDE_DEFINITIONS = [
   {
     slug: "07-users-admin",
     title: "Multi-User & Isolation",
-    caption: "Per-user private music folders, role controls, and opt-in Soulseek permissions",
+    caption: "Per-user private music folders, role controls, and account management",
   },
   {
     slug: "08-activity-logs",
