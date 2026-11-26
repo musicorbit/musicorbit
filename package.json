@@ -18,7 +18,8 @@
     "dev:web": "npm run build -w @musicorbit/shared && npm run dev -w @musicorbit/web",
     "build": "npm run build -w @musicorbit/shared && npm run build -w @musicorbit/api && npm run build -w @musicorbit/web",
     "typecheck": "npm run build -w @musicorbit/shared && npm run typecheck -w @musicorbit/api && npm run typecheck -w @musicorbit/web",
-    "test": "npm run build -w @musicorbit/shared && npm run test -w @musicorbit/api"
+    "test": "npm run build -w @musicorbit/shared && npm run test -w @musicorbit/api",
+    "reset-password": "npm run reset-password -w @musicorbit/api --"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

@@ -9,6 +9,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/**/*.test.ts",
+    "reset-password": "sh -c 'if command -v tsx >/dev/null 2>&1 && [ -f src/cli/resetPassword.ts ]; then exec tsx src/cli/resetPassword.ts \"$@\"; else exec node dist/cli/resetPassword.js \"$@\"; fi' --",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {

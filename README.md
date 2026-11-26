@@ -13,7 +13,7 @@ A self-hosted, open-source music library, browser player, metadata manager, and 
 - **Playlists & `.csv` / `.m3u8` Interoperability:** Create, reorder, customize covers, and play playlists in the browser, or import/export standard `#EXTM3U` (`.m3u8`) and `.csv` playlists (compatible with Navidrome, Symfonium, and Exportify).
 - **Post-Processing Pipeline & Review Queue:** Watches `DOWNLOADS_DIR`, matches incoming albums and single tracks, writes clean tags & cover art, handles duplicates, organizes files into `MUSIC_DIR/Artist/Album (Year)/...`, and routes uncertain matches into an interactive **Review Queue**.
 - **Optional External Transfer Integration (`slskd`):** Connect an optional self-hosted `slskd` instance via its REST API to search, queue, and track external peer-to-peer transfers. MusicOrbit is designed to work completely standalone as a local music library and player without `slskd`.
-- **Optional Authentication:** Built-in first-run admin setup wizard and session-cookie login (`scrypt` password hashing + `HttpOnly` cookies) when `AUTH_ENABLED=true`.
+- **Multi-User Auth & Isolated Libraries:** Enabled by default (`AUTH_ENABLED=true`) with first-run admin setup, per-user isolated music folders, per-user Soulseek permissions (off by default), salted `scrypt` password hashing, `HttpOnly` session cookies, brute-force rate limiting, and host CLI password recovery.
 - **Single-Container Docker Release:** Multi-stage Docker image serving both the Fastify API and the compiled React SPA on one port (`3001`).
 
 ## Quick Start with Docker
@@ -63,6 +63,21 @@ Open **http://localhost:5173** in your browser.
 | `npm run typecheck` | Type-check `@musicorbit/shared`, `@musicorbit/api`, and `@musicorbit/web` |
 | `npm test` | Run the API automated test suite |
 | `npm run build` | Build production bundles for all workspaces |
+| `npm run reset-password -- <username>` | Interactively reset any user or admin password on the host (hidden prompt, revokes active sessions) |
+
+### Resetting a Lost Admin Password
+
+Regular users can have their passwords reset by any Admin in the **Users** screen. If you lose access to the Admin account, run the host-only recovery CLI from your server or Docker container:
+
+```bash
+# Local / bare-metal install
+npm run reset-password -- admin
+
+# Docker container
+docker exec -it musicorbit npm run reset-password -- admin
+```
+
+Passwords are never accepted as command-line arguments (so they cannot leak into shell history); the CLI prompts with hidden input, hashes with `scrypt`, and immediately revokes all existing sessions for that account.
 
 ## Configuration (`.env`)
 
@@ -75,7 +90,7 @@ Open **http://localhost:5173** in your browser.
 | `DOWNLOADS_DIR` | `./downloads` | Incoming folder scanned by the import pipeline (`/downloads` in Docker) |
 | `AUTO_IMPORT_THRESHOLD` | `85` | Minimum MusicBrainz match score (`0–100`) for automatic import |
 | `FETCH_ARTIST_IMAGES` | `true` | Set to `false` to disable external artist portrait lookups (offline mode) |
-| `AUTH_ENABLED` | `false` | Set to `true` (`true` by default in Docker) to require login & first-run admin setup |
+| `AUTH_ENABLED` | `true` | Enabled by default (first-run admin setup & login). Set to `false` only for local single-user dev |
 | `SLSKD_URL` | *(empty)* | Optional URL of your `slskd` instance (e.g. `http://slskd:5030`) |
 | `SLSKD_API_KEY` | *(empty)* | Optional API key configured under `web.authentication.api_keys` in `slskd.yml` |
 | `WEB_DIST_DIR` | *(empty)* | Path to built Vite `dist/` directory for single-port production serving |
