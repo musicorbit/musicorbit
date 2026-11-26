@@ -122,8 +122,8 @@ Passwords are never accepted as command-line arguments (so they cannot leak into
 | `AUTO_IMPORT_THRESHOLD` | `85` | Minimum MusicBrainz match score (`0–100`) for automatic import |
 | `FETCH_ARTIST_IMAGES` | `true` | Set to `false` to disable external artist portrait lookups (offline mode) |
 | `AUTH_ENABLED` | `true` | Enabled by default (first-run admin setup & login). Set to `false` only for local single-user dev |
-| `SLSKD_URL` | *(empty)* | Optional URL of your `slskd` instance (e.g. `http://slskd:5030`) |
-| `SLSKD_API_KEY` | *(empty)* | Optional API key configured under `web.authentication.api_keys` in `slskd.yml` |
+| `SLSKD_URL` | *(empty)* | Optional fallback URL of your `slskd` instance (recommended: configure right in the UI under **System & Scanner**) |
+| `SLSKD_API_KEY` | *(empty)* | Optional fallback `slskd` API key (recommended: configure right in the UI under **System & Scanner**) |
 | `WEB_DIST_DIR` | *(empty)* | Path to built Vite `dist/` directory for single-port production serving |
 
 ## Project Structure

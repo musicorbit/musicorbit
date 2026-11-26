@@ -88,6 +88,8 @@ export async function buildServer(
     defaultMusicDir: config.musicDir,
     defaultDownloadsDir: config.downloadsDir,
     defaultAutoImportThreshold: config.autoImportThreshold,
+    defaultSlskdUrl: config.slskdUrl,
+    defaultSlskdApiKey: config.slskdApiKey,
   });
   const getMusicDir = () => settingsService.getMusicDir();
   const getUserMusicDir = (userId: number) => settingsService.getUserMusicDir(userId);
@@ -108,9 +110,11 @@ export async function buildServer(
     logger: app.log,
     fetchImpl: options?.fetchImpl,
   });
+  const initialSlskd = settingsService.getSlskdConfig();
   const slskdClient = new SlskdClient({
-    baseUrl: config.slskdUrl,
-    apiKey: config.slskdApiKey,
+    baseUrl: initialSlskd.url,
+    apiKey: initialSlskd.apiKey,
+    source: initialSlskd.source,
     fetchImpl: options?.fetchImpl,
   });
   const musicBrainz = new MusicBrainzClient({
@@ -210,6 +214,7 @@ export async function buildServer(
     inboxWatcher,
     libraryOrganizer,
     playlistSync,
+    slskdClient,
     activityLog,
   });
   await registerLogRoutes(app, { activityLog });

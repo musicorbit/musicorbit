@@ -2,12 +2,14 @@ import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type {
+  AcquisitionStatusResponse,
   BrowseDirectoriesResponse,
   OrganizeApplyResponse,
   OrganizePreviewResponse,
   PlaylistSyncRunResult,
   SystemSettingsResponse,
 } from "@musicorbit/shared";
+import type { SlskdClient } from "../services/acquisition/slskd.js";
 import type { ActivityLogService } from "../services/activityLog.js";
 import { getRequestUser, requireAdmin } from "../services/authHelpers.js";
 import type { InboxWatcher } from "../services/inboxWatcher.js";
@@ -27,6 +29,7 @@ export interface SettingsRouteDeps {
   inboxWatcher?: InboxWatcher;
   libraryOrganizer?: LibraryOrganizer;
   playlistSync?: PlaylistSyncService;
+  slskdClient?: SlskdClient;
   activityLog?: ActivityLogService;
 }
 
@@ -70,12 +73,30 @@ const applyOrganizeBodySchema = z
   })
   .optional();
 
+const updateSlskdBodySchema = z.object({
+  url: z.string().max(1000).nullable().optional(),
+  apiKey: z.string().max(500).nullable().optional(),
+  clearApiKey: z.boolean().optional(),
+});
+
+const testSlskdBodySchema = z.object({
+  url: z.string().trim().min(1).max(1000),
+  apiKey: z.string().max(500).nullable().optional(),
+});
+
 export async function registerSettingsRoutes(
   app: FastifyInstance,
   deps: SettingsRouteDeps,
 ): Promise<void> {
-  const { settingsService, scanner, inboxWatcher, libraryOrganizer, playlistSync, activityLog } =
-    deps;
+  const {
+    settingsService,
+    scanner,
+    inboxWatcher,
+    libraryOrganizer,
+    playlistSync,
+    slskdClient,
+    activityLog,
+  } = deps;
 
   app.get("/api/system/settings", async (request): Promise<SystemSettingsResponse> => {
     const user = getRequestUser(request);
@@ -246,6 +267,88 @@ export async function registerSettingsRoutes(
         return reply.code(400).send({ error: "Invalid organize apply options." });
       }
       return libraryOrganizer.apply({ userId: user.id, trackIds: parsed.data?.trackIds });
+    },
+  );
+
+  // Admin-only: save or disconnect slskd (Soulseek) integration in SQLite (no .env edit or restart needed)
+  app.put(
+    "/api/system/slskd",
+    async (request, reply): Promise<AcquisitionStatusResponse> => {
+      const admin = requireAdmin(request, reply);
+      if (!admin) return reply as never;
+      if (!slskdClient) {
+        return reply.code(503).send({ error: "slskd client is unavailable." });
+      }
+
+      const parsed = updateSlskdBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "Invalid slskd configuration." });
+      }
+
+      try {
+        const saved = settingsService.updateSlskdConfig(parsed.data);
+        slskdClient.configure({
+          baseUrl: saved.url,
+          apiKey: saved.apiKey,
+          source: saved.source,
+        });
+        activityLog?.info(
+          "system",
+          saved.url
+            ? `slskd integration updated (${saved.url})`
+            : "slskd integration disconnected",
+          {
+            userId: admin.id,
+            configured: Boolean(saved.url),
+            hasApiKey: saved.hasApiKey,
+          },
+        );
+        return await slskdClient.getStatus();
+      } catch (err) {
+        if (err instanceof SettingsError) {
+          return reply.code(err.statusCode).send({ error: err.message });
+        }
+        throw err;
+      }
+    },
+  );
+
+  // Admin-only: test a candidate slskd URL / API key before saving
+  app.post(
+    "/api/system/slskd/test",
+    async (request, reply): Promise<AcquisitionStatusResponse> => {
+      if (!requireAdmin(request, reply)) return reply as never;
+      if (!slskdClient) {
+        return reply.code(503).send({ error: "slskd client is unavailable." });
+      }
+
+      const parsed = testSlskdBodySchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "Please enter a valid slskd server URL." });
+      }
+
+      let normalizedUrl: string;
+      try {
+        const u = new URL(parsed.data.url.trim());
+        if (u.protocol !== "http:" && u.protocol !== "https:") {
+          return reply.code(400).send({ error: "slskd URL must start with http:// or https://" });
+        }
+        normalizedUrl = u.toString().replace(/\/+$/, "");
+      } catch {
+        return reply
+          .code(400)
+          .send({ error: "Invalid slskd URL. Expected e.g. http://localhost:5030" });
+      }
+
+      const candidateKey =
+        typeof parsed.data.apiKey === "string" && parsed.data.apiKey.trim().length > 0
+          ? parsed.data.apiKey.trim()
+          : settingsService.getSlskdConfig().apiKey;
+
+      return slskdClient.testConnection({
+        baseUrl: normalizedUrl,
+        apiKey: candidateKey,
+      });
     },
   );
 }

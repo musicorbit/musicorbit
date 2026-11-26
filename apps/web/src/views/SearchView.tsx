@@ -12,6 +12,7 @@ import {
   Radio,
   RefreshCw,
   Search,
+  Settings,
   Square,
   Trash2,
   WifiOff,
@@ -38,11 +39,18 @@ import { formatBytes, formatDuration, formatSpeed } from "../utils/format";
 type FormatFilter = "all" | "lossless" | "lossy";
 
 interface SearchViewProps {
+  isAdmin?: boolean;
+  onOpenSettings?: () => void;
   initialQuery?: string;
   initialQueryNonce?: number;
 }
 
-export function SearchView({ initialQuery, initialQueryNonce }: SearchViewProps = {}) {
+export function SearchView({
+  isAdmin = true,
+  onOpenSettings,
+  initialQuery,
+  initialQueryNonce,
+}: SearchViewProps = {}) {
   const [status, setStatus] = useState<AcquisitionStatusResponse | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
   const [tab, setTab] = useState<"search" | "downloads">("search");
@@ -300,36 +308,59 @@ export function SearchView({ initialQuery, initialQueryNonce }: SearchViewProps 
 
       {/* Onboarding card when slskd is not configured */}
       {!statusLoading && status && !status.configured && (
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6">
-          <div className="flex items-start gap-4">
+        <div className="rounded-2xl border border-amber-500/25 bg-zinc-900/60 p-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/25">
               <Radio className="h-5 w-5" />
             </div>
             <div className="min-w-0 flex-1 space-y-3">
               <div>
                 <h3 className="text-base font-semibold text-zinc-100">
-                  Connect an optional slskd instance
+                  slskd needs to be set up first
                 </h3>
                 <p className="mt-1 text-sm text-zinc-400">
-                  MusicOrbit drives Soulseek searches and downloads through{" "}
-                  <strong className="text-zinc-200">slskd</strong>&apos;s REST API so the Soulseek
-                  protocol and file sharing keep running cleanly in the background.
+                  {isAdmin ? (
+                    <>
+                      Soulseek search and downloads run through an optional{" "}
+                      <strong className="text-zinc-200">slskd</strong> instance. Connect your
+                      slskd server URL and API key in{" "}
+                      <strong className="text-zinc-200">System &amp; Scanner</strong> to enable
+                      searching right here — no <code className="text-zinc-300">.env</code> edits
+                      or restart needed.
+                    </>
+                  ) : (
+                    <>
+                      Your server administrator hasn&apos;t connected a{" "}
+                      <strong className="text-zinc-200">slskd</strong> instance yet. Ask an Admin
+                      to set up slskd in{" "}
+                      <strong className="text-zinc-200">System &amp; Scanner</strong> before using
+                      Soulseek Search.
+                    </>
+                  )}
                 </p>
               </div>
 
-              <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 font-mono text-xs text-zinc-300">
-                <p className="text-zinc-500"># Add these two lines to your .env file and restart the API:</p>
-                <p className="mt-1.5">SLSKD_URL=http://your-slskd-host:5030</p>
-                <p>SLSKD_API_KEY=your_slskd_api_key</p>
-              </div>
+              {isAdmin && onOpenSettings && (
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={onOpenSettings}
+                    className="inline-flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-amber-400"
+                  >
+                    <Settings className="h-4 w-4" />
+                    Set up slskd in System Settings
+                  </button>
+                </div>
+              )}
 
               <p className="text-xs text-zinc-500">
-                In slskd, you can define an API key under{" "}
+                In slskd, configure an API key under{" "}
                 <code className="rounded bg-zinc-900 px-1.5 py-0.5 text-zinc-300">
                   web.authentication.api_keys
                 </code>{" "}
                 in <code className="rounded bg-zinc-900 px-1.5 py-0.5 text-zinc-300">slskd.yml</code>.
-                MusicOrbit works fine without slskd if you only want a local music library and player.
+                MusicOrbit works completely standalone without slskd if you only want a local music
+                library and player.
               </p>
             </div>
           </div>
@@ -338,14 +369,27 @@ export function SearchView({ initialQuery, initialQueryNonce }: SearchViewProps 
 
       {/* Connection error card when configured but unreachable */}
       {!statusLoading && status?.configured && !status.connected && (
-        <div className="flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-400" />
-          <div>
-            <p className="font-medium">Could not reach slskd ({status.url})</p>
-            <p className="mt-1 text-red-300/80">
-              {status.error ?? "Verify SLSKD_URL, SLSKD_API_KEY, and network connectivity."}
-            </p>
+        <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-400" />
+            <div>
+              <p className="font-medium">Could not reach slskd ({status.url})</p>
+              <p className="mt-1 text-red-300/80">
+                {status.error ??
+                  "Verify your slskd server URL, API key in System & Scanner, and network connectivity."}
+              </p>
+            </div>
           </div>
+          {isAdmin && onOpenSettings && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-red-400/30 bg-zinc-950/60 px-3 py-1.5 text-xs font-medium text-red-100 transition hover:bg-zinc-900"
+            >
+              <Settings className="h-3.5 w-3.5" />
+              Edit slskd settings
+            </button>
+          )}
         </div>
       )}
 
@@ -356,8 +400,11 @@ export function SearchView({ initialQuery, initialQueryNonce }: SearchViewProps 
         </div>
       )}
 
-      {/* Sub-tabs: Search & Downloads */}
-      <div className="flex items-center gap-2 border-b border-zinc-800 pb-3">
+      {/* Only render search/downloads tabs once slskd is configured */}
+      {(statusLoading || status?.configured) && (
+        <>
+          {/* Sub-tabs: Search & Downloads */}
+          <div className="flex items-center gap-2 border-b border-zinc-800 pb-3">
         <button
           type="button"
           onClick={() => setTab("search")}
@@ -742,6 +789,8 @@ export function SearchView({ initialQuery, initialQueryNonce }: SearchViewProps 
             </div>
           )}
         </div>
+      )}
+        </>
       )}
     </div>
   );

@@ -233,23 +233,36 @@ function classifyTransferState(state: string): {
 export interface SlskdClientDeps {
   baseUrl: string | null;
   apiKey: string | null;
+  source?: "ui" | "env" | "none";
   fetchImpl?: typeof fetch;
 }
 
 /**
  * Clean REST client for slskd (/api/v0).
- * Designed to be 100% optional: if SLSKD_URL is omitted, MusicOrbit runs normally
+ * Designed to be 100% optional: if unconfigured, MusicOrbit runs normally
  * as a local library/player and surfaces a clear "not configured" status.
  */
 export class SlskdClient {
-  private readonly baseUrl: string | null;
-  private readonly apiKey: string | null;
+  private baseUrl: string | null;
+  private apiKey: string | null;
+  private source: "ui" | "env" | "none";
   private readonly fetchImpl: typeof fetch;
 
   constructor(deps: SlskdClientDeps) {
     this.baseUrl = deps.baseUrl ? deps.baseUrl.replace(/\/+$/, "") : null;
     this.apiKey = deps.apiKey;
+    this.source = deps.source ?? (this.baseUrl ? "env" : "none");
     this.fetchImpl = deps.fetchImpl ?? fetch;
+  }
+
+  configure(next: {
+    baseUrl: string | null;
+    apiKey: string | null;
+    source?: "ui" | "env" | "none";
+  }): void {
+    this.baseUrl = next.baseUrl ? next.baseUrl.replace(/\/+$/, "") : null;
+    this.apiKey = this.baseUrl ? (next.apiKey?.trim() || null) : null;
+    this.source = next.source ?? (this.baseUrl ? "ui" : "none");
   }
 
   get isConfigured(): boolean {
@@ -259,7 +272,7 @@ export class SlskdClient {
   private requireBaseUrl(): string {
     if (!this.baseUrl) {
       throw new SlskdError(
-        "slskd is not configured. Set SLSKD_URL and SLSKD_API_KEY in .env to enable Soulseek search.",
+        "slskd is not configured. Configure it in System & Scanner → slskd (Soulseek) to enable Soulseek search.",
         503,
       );
     }
@@ -324,6 +337,8 @@ export class SlskdClient {
         url: null,
         version: null,
         error: null,
+        hasApiKey: false,
+        source: "none",
       };
     }
 
@@ -341,6 +356,8 @@ export class SlskdClient {
         url: this.baseUrl,
         version,
         error: null,
+        hasApiKey: Boolean(this.apiKey),
+        source: this.source,
       };
     } catch (err) {
       return {
@@ -351,8 +368,23 @@ export class SlskdClient {
         url: this.baseUrl,
         version: null,
         error: err instanceof Error ? err.message : "Could not connect to slskd",
+        hasApiKey: Boolean(this.apiKey),
+        source: this.source,
       };
     }
+  }
+
+  async testConnection(candidate: {
+    baseUrl: string;
+    apiKey: string | null;
+  }): Promise<AcquisitionStatusResponse> {
+    const probe = new SlskdClient({
+      baseUrl: candidate.baseUrl,
+      apiKey: candidate.apiKey,
+      source: "ui",
+      fetchImpl: this.fetchImpl,
+    });
+    return probe.getStatus();
   }
 
   async startSearch(query: string): Promise<SoulseekSearchSummary> {

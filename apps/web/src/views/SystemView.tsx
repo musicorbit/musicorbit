@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Database,
   Eye,
+  EyeOff,
   FolderInput,
   FolderOpen,
   FolderTree,
@@ -45,9 +46,11 @@ import {
   runPlaylistSyncNow,
   scanInbox,
   startBatchLyricsFetch,
+  testSlskdConnection,
   updateLibraryOrganizationSettings,
   updatePlaylistSyncSettings,
   updatePostProcessingSettings,
+  updateSlskdSettings,
 } from "../api/client";
 import { BulkImportFolderModal } from "../components/BulkImportFolderModal";
 import { DirectoryPickerModal } from "../components/DirectoryPickerModal";
@@ -64,6 +67,7 @@ interface SystemViewProps {
   onRefresh: () => void;
   onMusicDirChanged: () => void;
   onOpenSoulseek?: () => void;
+  onSlskdStatusChanged?: (next: AcquisitionStatusResponse) => void;
   onOpenReviewQueue?: () => void;
   onOpenUpload?: () => void;
 }
@@ -147,12 +151,93 @@ export function SystemView({
   onRefresh,
   onMusicDirChanged,
   onOpenSoulseek,
+  onSlskdStatusChanged,
   onOpenReviewQueue,
   onOpenUpload,
 }: SystemViewProps) {
   const [pickerMode, setPickerMode] = useState<"music" | "downloads" | "playlists" | null>(null);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [sysSettings, setSysSettings] = useState<SystemSettingsResponse | null>(null);
+  const [slskdUrlInput, setSlskdUrlInput] = useState(slskdStatus?.url ?? "");
+  const [slskdApiKeyInput, setSlskdApiKeyInput] = useState("");
+  const [showSlskdKey, setShowSlskdKey] = useState(false);
+  const [slskdSaving, setSlskdSaving] = useState(false);
+  const [slskdTesting, setSlskdTesting] = useState(false);
+  const [slskdNotice, setSlskdNotice] = useState<string | null>(null);
+  const [slskdError, setSlskdError] = useState<string | null>(null);
+  const [slskdTestResult, setSlskdTestResult] = useState<AcquisitionStatusResponse | null>(null);
+
+  useEffect(() => {
+    setSlskdUrlInput(slskdStatus?.url ?? "");
+  }, [slskdStatus?.url]);
+
+  const handleSaveSlskd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSlskdSaving(true);
+    setSlskdNotice(null);
+    setSlskdError(null);
+    setSlskdTestResult(null);
+    try {
+      const next = await updateSlskdSettings({
+        url: slskdUrlInput.trim(),
+        apiKey: slskdApiKeyInput.trim() || undefined,
+      });
+      setSlskdApiKeyInput("");
+      onSlskdStatusChanged?.(next);
+      setSlskdNotice(
+        next.configured
+          ? next.connected
+            ? `Saved and connected to slskd${next.version ? ` v${next.version}` : ""}.`
+            : "Saved slskd settings (server currently unreachable)."
+          : "slskd integration disconnected.",
+      );
+    } catch (err) {
+      setSlskdError(err instanceof Error ? err.message : "Failed to save slskd settings");
+    } finally {
+      setSlskdSaving(false);
+    }
+  };
+
+  const handleTestSlskd = async () => {
+    const trimmed = slskdUrlInput.trim();
+    if (!trimmed) {
+      setSlskdError("Enter a slskd server URL first (e.g. http://localhost:5030).");
+      return;
+    }
+    setSlskdTesting(true);
+    setSlskdError(null);
+    setSlskdNotice(null);
+    setSlskdTestResult(null);
+    try {
+      const result = await testSlskdConnection({
+        url: trimmed,
+        apiKey: slskdApiKeyInput.trim() || undefined,
+      });
+      setSlskdTestResult(result);
+    } catch (err) {
+      setSlskdError(err instanceof Error ? err.message : "Connection test failed");
+    } finally {
+      setSlskdTesting(false);
+    }
+  };
+
+  const handleDisconnectSlskd = async () => {
+    setSlskdSaving(true);
+    setSlskdError(null);
+    setSlskdNotice(null);
+    setSlskdTestResult(null);
+    try {
+      const next = await updateSlskdSettings({ url: "", clearApiKey: true });
+      setSlskdUrlInput("");
+      setSlskdApiKeyInput("");
+      onSlskdStatusChanged?.(next);
+      setSlskdNotice("slskd disconnected. Soulseek search has been hidden.");
+    } catch (err) {
+      setSlskdError(err instanceof Error ? err.message : "Failed to disconnect slskd");
+    } finally {
+      setSlskdSaving(false);
+    }
+  };
   const [fileAction, setFileAction] = useState<ImportFileAction>("move");
   const [duplicatePolicy, setDuplicatePolicy] = useState<DuplicatePolicy>("upgrade");
   const [autoWatchEnabled, setAutoWatchEnabled] = useState(false);
@@ -1525,7 +1610,7 @@ export function SystemView({
                 <p className="mt-0.5 text-xs text-zinc-400">
                   {slskdStatus?.configured
                     ? "Soulseek search and missing-track download actions are enabled across Albums, Playlists, and the sidebar."
-                    : "Soulseek search and download actions are automatically hidden while slskd is not configured."}
+                    : "Not connected yet — configure your slskd server URL and API key below to enable Soulseek search and missing-track downloads."}
                 </p>
               </div>
 
@@ -1559,11 +1644,18 @@ export function SystemView({
               </div>
             </div>
 
-            {slskdStatus?.configured ? (
+            {slskdStatus?.configured && (
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-800/90 bg-zinc-950/60 px-4 py-3 text-xs">
-                <span className="font-mono text-zinc-400">{slskdStatus.url}</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-zinc-300">{slskdStatus.url}</span>
+                  {slskdStatus.source && slskdStatus.source !== "none" && (
+                    <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
+                      {slskdStatus.source === "ui" ? "Saved in UI" : "From .env"}
+                    </span>
+                  )}
+                </div>
                 {slskdStatus.connected ? (
-                  <span className="text-zinc-500">
+                  <span className="text-emerald-300">
                     {slskdStatus.loggedIn
                       ? "Logged into Soulseek network"
                       : "slskd API reachable"}
@@ -1574,13 +1666,148 @@ export function SystemView({
                   </span>
                 )}
               </div>
-            ) : (
-              <p className="rounded-xl border border-zinc-800/90 bg-zinc-950/60 px-4 py-3 text-xs text-zinc-400">
-                To enable, set <code className="text-zinc-200">SLSKD_URL</code> and{" "}
-                <code className="text-zinc-200">SLSKD_API_KEY</code> in your{" "}
-                <code className="text-zinc-200">.env</code> file and restart MusicOrbit.
-              </p>
             )}
+
+            <form onSubmit={(e) => void handleSaveSlskd(e)} className="space-y-3 pt-1">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label
+                    htmlFor="slskd-url"
+                    className="mb-1.5 block text-xs font-medium text-zinc-300"
+                  >
+                    slskd Server URL
+                  </label>
+                  <input
+                    id="slskd-url"
+                    type="url"
+                    value={slskdUrlInput}
+                    onChange={(e) => setSlskdUrlInput(e.target.value)}
+                    placeholder="http://localhost:5030 or http://slskd:5030"
+                    className="w-full rounded-lg border border-zinc-800 bg-zinc-950/80 px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/60 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="slskd-api-key"
+                    className="mb-1.5 block text-xs font-medium text-zinc-300"
+                  >
+                    API Key
+                    {slskdStatus?.hasApiKey && (
+                      <span className="ml-1.5 text-[11px] font-normal text-emerald-400">
+                        (saved)
+                      </span>
+                    )}
+                  </label>
+                  <div className="relative">
+                    <input
+                      id="slskd-api-key"
+                      type={showSlskdKey ? "text" : "password"}
+                      value={slskdApiKeyInput}
+                      onChange={(e) => setSlskdApiKeyInput(e.target.value)}
+                      autoComplete="off"
+                      placeholder={
+                        slskdStatus?.hasApiKey
+                          ? "•••••••• (leave blank to keep current key)"
+                          : "Configured in slskd.yml under web.authentication.api_keys"
+                      }
+                      className="w-full rounded-lg border border-zinc-800 bg-zinc-950/80 py-2 pr-9 pl-3 text-xs text-zinc-100 placeholder:text-zinc-600 focus:border-amber-500/60 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSlskdKey((v) => !v)}
+                      aria-label={showSlskdKey ? "Hide API key" : "Show API key"}
+                      className="absolute top-1/2 right-2 -translate-y-1/2 rounded p-1 text-zinc-500 hover:text-zinc-200"
+                    >
+                      {showSlskdKey ? (
+                        <EyeOff className="h-3.5 w-3.5" />
+                      ) : (
+                        <Eye className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {slskdTestResult && (
+                <div
+                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${
+                    slskdTestResult.connected
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200"
+                      : "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                  }`}
+                >
+                  {slskdTestResult.connected ? (
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                  ) : (
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+                  )}
+                  <span>
+                    {slskdTestResult.connected
+                      ? `Connection succeeded${slskdTestResult.version ? ` (slskd v${slskdTestResult.version})` : ""}${slskdTestResult.loggedIn ? " · Logged into Soulseek" : ""}. Click Save to enable.`
+                      : (slskdTestResult.error ?? "Could not reach slskd at that URL.")}
+                  </span>
+                </div>
+              )}
+
+              {slskdError && (
+                <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-red-400" />
+                  <span>{slskdError}</span>
+                </div>
+              )}
+
+              {slskdNotice && (
+                <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                  <span>{slskdNotice}</span>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                <button
+                  type="submit"
+                  disabled={slskdSaving || slskdTesting}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3.5 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400 disabled:opacity-50"
+                >
+                  {slskdSaving ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Check className="h-3.5 w-3.5" />
+                  )}
+                  Save slskd Settings
+                </button>
+
+                <button
+                  type="button"
+                  disabled={slskdTesting || slskdSaving || !slskdUrlInput.trim()}
+                  onClick={() => void handleTestSlskd()}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3.5 py-2 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-45"
+                >
+                  {slskdTesting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
+                  ) : (
+                    <Radio className="h-3.5 w-3.5 text-amber-400" />
+                  )}
+                  Test Connection
+                </button>
+
+                {slskdStatus?.configured && (
+                  <button
+                    type="button"
+                    disabled={slskdSaving || slskdTesting}
+                    onClick={() => void handleDisconnectSlskd()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-medium text-zinc-400 transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-45"
+                  >
+                    Disconnect
+                  </button>
+                )}
+              </div>
+              <p className="text-[11px] text-zinc-500">
+                Saved directly in MusicOrbit&apos;s SQLite database — takes effect immediately with
+                no <code className="text-zinc-400">.env</code> edits or container restart required.
+              </p>
+            </form>
             </section>
           )}
         </>

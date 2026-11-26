@@ -203,6 +203,39 @@ export function fetchAcquisitionStatus(): Promise<AcquisitionStatusResponse> {
   return getJson<AcquisitionStatusResponse>("/api/acquisition/status");
 }
 
+export async function updateSlskdSettings(input: {
+  url?: string | null;
+  apiKey?: string | null;
+  clearApiKey?: boolean;
+}): Promise<AcquisitionStatusResponse> {
+  const res = await fetch("/api/system/slskd", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Failed to save slskd settings (HTTP ${res.status})`);
+  }
+  return (await res.json()) as AcquisitionStatusResponse;
+}
+
+export async function testSlskdConnection(input: {
+  url: string;
+  apiKey?: string | null;
+}): Promise<AcquisitionStatusResponse> {
+  const res = await fetch("/api/system/slskd/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Connection test failed (HTTP ${res.status})`);
+  }
+  return (await res.json()) as AcquisitionStatusResponse;
+}
+
 export async function startSoulseekSearch(query: string): Promise<SoulseekSearchSummary> {
   const res = await fetch("/api/acquisition/search", {
     method: "POST",

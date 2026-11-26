@@ -5,16 +5,25 @@ description: Optional integration with a self-hosted slskd instance, per-user pe
 
 MusicOrbit is designed to work **100% standalone** as a local music library, tagger, and player. If you run a self-hosted **[slskd](https://github.com/slskd/slskd)** instance, you can optionally connect it to MusicOrbit for integrated search and transfer tracking.
 
-## Connecting `slskd`
+## Connecting `slskd` (Recommended: In the UI)
 
-Set two environment variables in `.env` or `docker-compose.yml`:
+You don't need to edit `.env` or restart your container to connect `slskd`:
+
+1. Sign in as an **Admin** and open **System & Scanner**.
+2. Scroll to **Optional Integration: slskd (Soulseek)**.
+3. Enter your **slskd Server URL** (e.g., `http://localhost:5030` or `http://slskd:5030`) and **API Key** (matching a key configured under `web.authentication.api_keys` in your `slskd.yml`).
+4. Click **Test Connection** to verify connectivity, then click **Save slskd Settings**.
+
+Settings are saved directly in MusicOrbit's SQLite database and take effect immediately — the **Soulseek Search** view and per-user toggles appear right away (and clicking **Disconnect** hides them again cleanly).
+
+### Optional: Configure via `.env` instead
+
+If you prefer declarative Docker Compose / `.env` configuration, MusicOrbit also supports optional fallback variables (any settings saved in the UI take precedence):
 
 ```bash
 SLSKD_URL=http://slskd:5030
 SLSKD_API_KEY=your_slskd_api_key
 ```
-
-`SLSKD_API_KEY` must match a key configured under `web.authentication.api_keys` in your `slskd.yml`.
 
 ### Using the bundled Docker Compose profile
 

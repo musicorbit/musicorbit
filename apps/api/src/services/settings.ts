@@ -34,6 +34,8 @@ const KEYS = {
   includeTrackNumber: "org_include_track_number",
   multiDiscStyle: "org_multi_disc_style",
   autoOrganizeLibrary: "org_auto_organize_library",
+  slskdUrl: "slskd_url",
+  slskdApiKey: "slskd_api_key",
 } as const;
 
 export class SettingsError extends Error {
@@ -91,6 +93,21 @@ export interface SettingsServiceDeps {
   defaultMusicDir: string;
   defaultDownloadsDir: string;
   defaultAutoImportThreshold?: number;
+  defaultSlskdUrl?: string | null;
+  defaultSlskdApiKey?: string | null;
+}
+
+export interface SlskdConfigState {
+  url: string | null;
+  apiKey: string | null;
+  hasApiKey: boolean;
+  source: "ui" | "env" | "none";
+}
+
+export interface SlskdConfigUpdateInput {
+  url?: string | null;
+  apiKey?: string | null;
+  clearApiKey?: boolean;
 }
 
 export interface PostProcessingUpdateInput {
@@ -127,6 +144,8 @@ export class SettingsService {
   private readonly defaultMusicDir: string;
   private readonly defaultDownloadsDir: string;
   private readonly defaultAutoImportThreshold: number;
+  private readonly defaultSlskdUrl: string | null;
+  private readonly defaultSlskdApiKey: string | null;
   private readonly rawValues = new Map<string, string>();
   private getWatcherStatusFn: () => InboxWatcherStatus;
 
@@ -135,6 +154,8 @@ export class SettingsService {
     this.defaultMusicDir = path.resolve(deps.defaultMusicDir);
     this.defaultDownloadsDir = path.resolve(deps.defaultDownloadsDir);
     this.defaultAutoImportThreshold = deps.defaultAutoImportThreshold ?? 85;
+    this.defaultSlskdUrl = deps.defaultSlskdUrl ? deps.defaultSlskdUrl.replace(/\/+$/, "") : null;
+    this.defaultSlskdApiKey = deps.defaultSlskdApiKey?.trim() || null;
     this.getWatcherStatusFn = () => ({
       enabled: this.getPostProcessingSettings().autoWatchEnabled,
       running: false,
@@ -191,6 +212,71 @@ export class SettingsService {
   getMusicDir(): string {
     const overridden = this.rawValues.get(KEYS.musicDir);
     return overridden ? path.resolve(overridden) : this.defaultMusicDir;
+  }
+
+  private normalizeSlskdUrl(raw: string | null | undefined): string | null {
+    const trimmed = raw?.trim() ?? "";
+    if (!trimmed) return null;
+    let parsed: URL;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      throw new SettingsError("Invalid slskd URL. Expected e.g. http://localhost:5030", 400);
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new SettingsError("slskd URL must start with http:// or https://", 400);
+    }
+    return parsed.toString().replace(/\/+$/, "");
+  }
+
+  getSlskdConfig(): SlskdConfigState {
+    const hasUiUrl = this.rawValues.has(KEYS.slskdUrl);
+    const hasUiKey = this.rawValues.has(KEYS.slskdApiKey);
+
+    if (hasUiUrl || hasUiKey) {
+      const uiUrl = this.rawValues.get(KEYS.slskdUrl)?.trim() || null;
+      const uiKey = this.rawValues.get(KEYS.slskdApiKey)?.trim() || null;
+      return {
+        url: uiUrl,
+        apiKey: uiUrl ? uiKey : null,
+        hasApiKey: Boolean(uiUrl && uiKey),
+        source: uiUrl ? "ui" : "none",
+      };
+    }
+
+    if (this.defaultSlskdUrl) {
+      return {
+        url: this.defaultSlskdUrl,
+        apiKey: this.defaultSlskdApiKey,
+        hasApiKey: Boolean(this.defaultSlskdApiKey),
+        source: "env",
+      };
+    }
+
+    return {
+      url: null,
+      apiKey: null,
+      hasApiKey: false,
+      source: "none",
+    };
+  }
+
+  updateSlskdConfig(input: SlskdConfigUpdateInput): SlskdConfigState {
+    const current = this.getSlskdConfig();
+    const nextUrl =
+      input.url !== undefined ? this.normalizeSlskdUrl(input.url) : current.url;
+
+    let nextKey = current.apiKey;
+    if (!nextUrl || input.clearApiKey) {
+      nextKey = null;
+    } else if (typeof input.apiKey === "string" && input.apiKey.trim().length > 0) {
+      nextKey = input.apiKey.trim();
+    }
+
+    // Store empty string explicitly so UI clearing overrides any .env fallback
+    this.saveSetting(KEYS.slskdUrl, nextUrl ?? "");
+    this.saveSetting(KEYS.slskdApiKey, nextKey ?? "");
+    return this.getSlskdConfig();
   }
 
   getPrimaryAdminId(): number {

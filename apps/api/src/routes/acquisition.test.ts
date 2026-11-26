@@ -344,4 +344,131 @@ describe("slskd Acquisition Service & Routes", () => {
     assert.equal(clearRes.statusCode, 204);
     assert.ok(capturedRequests.every((r) => r.apiKey === "test-secret-key"));
   });
+
+  it("supports configuring, testing, persisting, and disconnecting slskd from the UI without .env", async () => {
+    const uiDir = fs.mkdtempSync(path.join(os.tmpdir(), "musicorbit-slskd-ui-"));
+    const musicDir = path.join(uiDir, "music");
+    const dataDir = path.join(uiDir, "data");
+    fs.mkdirSync(musicDir, { recursive: true });
+    fs.mkdirSync(dataDir, { recursive: true });
+
+    const seenKeys: Array<string | null> = [];
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      const headers = new Headers(init?.headers);
+      seenKeys.push(headers.get("X-API-Key"));
+      if (url.endsWith("/api/v0/application")) {
+        if (headers.get("X-API-Key") !== "ui-secret-99") {
+          return new Response("Unauthorized", { status: 401 });
+        }
+        return new Response(
+          JSON.stringify({ version: { full: "0.22.9" }, server: { isConnected: true, isLoggedIn: true } }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response("Not Found", { status: 404 });
+    };
+
+    const makeServer = () =>
+      buildServer(
+        {
+          port: 0,
+          host: "127.0.0.1",
+          logLevel: "silent",
+          musicDir,
+          dataDir,
+          downloadsDir: path.join(uiDir, "downloads"),
+          autoImportThreshold: 85,
+          dbPath: path.join(dataDir, "musicorbit.db"),
+          coversDir: path.join(dataDir, "covers"),
+          artistImagesDir: path.join(dataDir, "artist-images"),
+          fetchArtistImages: false,
+          authEnabled: false,
+          webDistDir: null,
+          slskdUrl: null,
+          slskdApiKey: null,
+          version: "0.1.0",
+        },
+        { fetchImpl: mockFetch },
+      );
+
+    let handle = await makeServer();
+    try {
+      // 1. Test candidate credentials before saving (should not mutate live config)
+      const testRes = await handle.app.inject({
+        method: "POST",
+        url: "/api/system/slskd/test",
+        payload: { url: "http://slskd.ui:5030/", apiKey: "ui-secret-99" },
+      });
+      assert.equal(testRes.statusCode, 200);
+      const tested = testRes.json<AcquisitionStatusResponse>();
+      assert.equal(tested.connected, true);
+      assert.equal(tested.version, "0.22.9");
+      assert.equal(tested.url, "http://slskd.ui:5030");
+      assert.equal(JSON.stringify(tested).includes("ui-secret-99"), false);
+
+      // Still unconfigured before saving
+      const beforeStatus = (
+        await handle.app.inject({ method: "GET", url: "/api/acquisition/status" })
+      ).json<AcquisitionStatusResponse>();
+      assert.equal(beforeStatus.configured, false);
+
+      // 2. Reject invalid protocol
+      const badRes = await handle.app.inject({
+        method: "PUT",
+        url: "/api/system/slskd",
+        payload: { url: "ftp://slskd.ui:5030" },
+      });
+      assert.equal(badRes.statusCode, 400);
+
+      // 3. Save in UI (SQLite) — takes effect immediately
+      const saveRes = await handle.app.inject({
+        method: "PUT",
+        url: "/api/system/slskd",
+        payload: { url: "http://slskd.ui:5030", apiKey: "ui-secret-99" },
+      });
+      assert.equal(saveRes.statusCode, 200);
+      const saved = saveRes.json<AcquisitionStatusResponse>();
+      assert.equal(saved.configured, true);
+      assert.equal(saved.connected, true);
+      assert.equal(saved.hasApiKey, true);
+      assert.equal(saved.source, "ui");
+      assert.equal(JSON.stringify(saved).includes("ui-secret-99"), false);
+
+      // 4. Updating URL with omitted API key preserves the saved key
+      const urlUpdateRes = await handle.app.inject({
+        method: "PUT",
+        url: "/api/system/slskd",
+        payload: { url: "http://slskd.ui:5030/" },
+      });
+      assert.equal(urlUpdateRes.statusCode, 200);
+      assert.equal(urlUpdateRes.json<AcquisitionStatusResponse>().connected, true);
+
+      // 5. Persists across restart with no .env variables
+      await handle.app.close();
+      handle = await makeServer();
+      const afterRestart = (
+        await handle.app.inject({ method: "GET", url: "/api/acquisition/status" })
+      ).json<AcquisitionStatusResponse>();
+      assert.equal(afterRestart.configured, true);
+      assert.equal(afterRestart.connected, true);
+      assert.equal(afterRestart.source, "ui");
+      assert.equal(afterRestart.hasApiKey, true);
+
+      // 6. Disconnect clears config
+      const discRes = await handle.app.inject({
+        method: "PUT",
+        url: "/api/system/slskd",
+        payload: { url: "", clearApiKey: true },
+      });
+      assert.equal(discRes.statusCode, 200);
+      const disc = discRes.json<AcquisitionStatusResponse>();
+      assert.equal(disc.configured, false);
+      assert.equal(disc.hasApiKey, false);
+      assert.ok(seenKeys.includes("ui-secret-99"));
+    } finally {
+      await handle.app.close();
+      fs.rmSync(uiDir, { recursive: true, force: true });
+    }
+  });
 });

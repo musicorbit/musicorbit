@@ -338,9 +338,9 @@ function MusicOrbitShell() {
 
   const isAdmin = !authStatus?.authEnabled || authStatus.user?.role === "admin";
   const slskdConfigured = Boolean(slskdStatus?.configured);
-  const canUseSoulseek =
-    slskdConfigured &&
-    (!authStatus?.authEnabled || isAdmin || Boolean(authStatus?.user?.canUseSoulseek));
+  const hasSoulseekPermission =
+    !authStatus?.authEnabled || isAdmin || Boolean(authStatus?.user?.canUseSoulseek);
+  const canUseSoulseek = slskdConfigured && hasSoulseekPermission;
 
   const handleOpenSoulseekSearch = useCallback(
     (initialQuery?: string) => {
@@ -395,12 +395,12 @@ function MusicOrbitShell() {
 
   // Bounce away from routes that are unavailable for the current user's role/permissions
   useEffect(() => {
-    if (slskdStatus && !canUseSoulseek && route.view === "search") {
+    if (!hasSoulseekPermission && route.view === "search") {
       navigate({ view: "albums" }, { replace: true });
     } else if (!isAdmin && route.view === "users") {
       navigate({ view: "albums" }, { replace: true });
     }
-  }, [slskdStatus, canUseSoulseek, isAdmin, route.view, navigate]);
+  }, [hasSoulseekPermission, isAdmin, route.view, navigate]);
 
   useEffect(() => {
     if (!mobileNavOpen) return;
@@ -451,7 +451,7 @@ function MusicOrbitShell() {
     { id: "artists", label: "Artists", icon: Users, count: health?.counts.artists },
     { id: "tracks", label: "Tracks", icon: Music, count: health?.counts.tracks },
     { id: "playlists", label: "Playlists", icon: ListMusic, count: playlists.length },
-    ...(canUseSoulseek
+    ...(hasSoulseekPermission
       ? [{ id: "search" as const, label: "Soulseek Search", icon: Search, count: undefined }]
       : []),
     {
@@ -894,8 +894,10 @@ function MusicOrbitShell() {
             />
           )}
 
-          {route.view === "search" && canUseSoulseek && (
+          {route.view === "search" && hasSoulseekPermission && (
             <SearchView
+              isAdmin={isAdmin}
+              onOpenSettings={() => navigate({ view: "system" })}
               initialQuery={soulseekLaunch?.query}
               initialQueryNonce={soulseekLaunch?.nonce}
             />
@@ -921,6 +923,7 @@ function MusicOrbitShell() {
               onRefresh={() => void loadLibrary(searchQuery)}
               onMusicDirChanged={() => void loadLibrary(searchQuery)}
               onOpenSoulseek={() => handleOpenSoulseekSearch()}
+              onSlskdStatusChanged={(next) => setSlskdStatus(next)}
               onOpenReviewQueue={() => navigate({ view: "review" })}
               onOpenUpload={() => setUploadOpen(true)}
             />

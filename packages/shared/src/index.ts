@@ -158,6 +158,8 @@ export interface AcquisitionStatusResponse {
   url: string | null;
   version: string | null;
   error: string | null;
+  hasApiKey?: boolean;
+  source?: "ui" | "env" | "none";
 }
 
 export interface SoulseekSearchSummary {
