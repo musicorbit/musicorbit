@@ -1,11 +1,25 @@
 ---
 title: Reverse Proxy & HTTPS
-description: Put MusicOrbit behind Caddy, Nginx, or Traefik with TLS and large audio upload support.
+description: Expose MusicOrbit over HTTPS using Cloudflare Tunnel, Caddy, Nginx, or Traefik with PWA and large upload support.
 ---
 
-When exposing MusicOrbit beyond `localhost`, place it behind a reverse proxy with HTTPS so login credentials, session cookies, and audio uploads travel over TLS.
+When exposing MusicOrbit beyond `localhost`, put it behind HTTPS so login credentials, `HttpOnly` session cookies, and audio uploads travel over TLS — and so mobile/desktop **PWA installation** works seamlessly.
 
-## Caddy (Simplest — Automatic HTTPS)
+## Cloudflare Tunnel (`cloudflared`) — No Open Ports
+
+If you already use **Cloudflare Zero Trust Tunnels**, you do not need Nginx, Caddy, or router port-forwarding:
+
+1. In the Cloudflare Zero Trust dashboard, open **Networks → Tunnels** and select your tunnel.
+2. Add a **Public Hostname** (for example, `music.example.com`):
+   - **Type:** `HTTP`
+   - **URL:** `musicorbit:4410` (if `cloudflared` shares the same Docker network) or `localhost:4410` (if running on the host).
+3. Save the hostname — Cloudflare automatically provisions HTTPS certificates and proxies HTTP `206 Partial Content` audio streaming and PWA assets out of the box.
+
+:::tip[Cloudflare Free Plan Upload Limit]
+Cloudflare's free plan caps individual HTTP requests at **100 MB**. Because MusicOrbit uploads tracks **file-by-file**, entire multi-track FLAC albums upload smoothly as long as no *single* audio file exceeds 100 MB. For very large single files (e.g., 20-minute 24-bit/192 kHz tracks), place them directly into `/music` or use **Bulk Import**. Avoid adding custom "Cache Everything" rules on `/api/*` so auth cookies and audio streams stay dynamic.
+:::
+
+## Caddy (Automatic HTTPS)
 
 ```txt title="Caddyfile"
 music.example.com {
@@ -17,14 +31,14 @@ Caddy automatically provisions and renews Let's Encrypt certificates and streams
 
 ## Nginx
 
-Ensure `client_max_body_size` is large enough for lossless FLAC album uploads and disable request buffering for smooth upload streaming:
+Ensure `client_max_body_size` is large enough for lossless FLAC uploads and disable request buffering for smooth upload streaming:
 
 ```nginx
 server {
     listen 443 ssl http2;
     server_name music.example.com;
 
-    # Allow large lossless audio / folder uploads
+    # Allow large lossless audio uploads
     client_max_body_size 512M;
 
     location / {
@@ -53,7 +67,7 @@ labels:
   - "traefik.http.services.musicorbit.loadbalancer.server.port=4410"
 ```
 
-## Tips
+## Security reminders
 
 - Keep `AUTH_ENABLED=true` whenever MusicOrbit is reachable over a LAN or the public internet.
-- If using Cloudflare Tunnel (`cloudflared`), point the tunnel service to `http://musicorbit:4410` (or `http://localhost:4410`). Note that Cloudflare's free plan enforces a 100 MB per-request upload limit, so upload multi-track albums as individual files (which MusicOrbit already uploads file-by-file!).
+- If you ever lose access to your Admin account on a remote server, you can recover it safely from the host shell via `docker exec -it musicorbit npm run reset-password -- admin` (see [Password Recovery & Backups](/password-recovery/)).
