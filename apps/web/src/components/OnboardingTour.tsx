@@ -252,7 +252,7 @@ export function OnboardingTour({
   const popoverStyle = useMemo<React.CSSProperties>(() => {
     const cardWidth = Math.min(POPOVER_WIDTH, viewport.width - VIEWPORT_MARGIN * 2);
 
-    if (!targetRect || currentStep.placement === "center" || viewport.width < 640) {
+    if (!targetRect || currentStep.placement === "center" || viewport.width < 1024) {
       return {
         width: cardWidth,
         top: "50%",

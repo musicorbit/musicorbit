@@ -90,7 +90,7 @@ export function PlayerBar({ onSelectAlbum, onSelectArtist }: PlayerBarProps) {
           aria-modal="true"
           aria-label="Play Queue"
           tabIndex={-1}
-          className="fixed right-4 bottom-24 z-40 flex max-h-[65vh] w-96 max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/95 shadow-2xl backdrop-blur-xl focus:outline-none"
+          className="fixed inset-x-3 bottom-26 z-40 flex max-h-[65vh] flex-col overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/95 shadow-2xl backdrop-blur-xl focus:outline-none md:inset-x-auto md:right-4 md:bottom-24 md:w-96 md:max-w-[calc(100vw-2rem)]"
         >
           <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
             <div>
@@ -158,7 +158,7 @@ export function PlayerBar({ onSelectAlbum, onSelectArtist }: PlayerBarProps) {
                     type="button"
                     onClick={() => removeFromQueue(idx)}
                     aria-label="Remove from queue"
-                    className="rounded p-1 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-red-400"
+                    className="rounded p-1.5 text-zinc-500 opacity-100 transition hover:bg-zinc-800 hover:text-red-400 lg:p-1 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -170,8 +170,145 @@ export function PlayerBar({ onSelectAlbum, onSelectArtist }: PlayerBarProps) {
       )}
 
       {/* Fixed Bottom Player Bar */}
-      <footer className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-800/90 bg-zinc-950/95 px-4 py-3 backdrop-blur-xl">
-        <div className="mx-auto grid max-w-7xl grid-cols-1 items-center gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1fr)]">
+      <footer className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-800/90 bg-zinc-950/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl">
+        {/* Compact Mobile Mini-Player (< md) */}
+        <div className="flex flex-col gap-1.5 px-3 pt-2 pb-2.5 md:hidden">
+          <div className="flex items-center gap-2">
+            <span className="w-9 text-right font-mono text-[10px] text-zinc-400">
+              {formatDuration(currentTime)}
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={maxTime || 1}
+              step={0.1}
+              value={Math.min(currentTime, maxTime || 1)}
+              onChange={(e) => seek(Number(e.target.value))}
+              aria-label="Seek position"
+              className="h-1.5 flex-1 cursor-pointer accent-amber-400"
+            />
+            <span className="w-9 font-mono text-[10px] text-zinc-400">
+              {formatDuration(maxTime)}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => onSelectAlbum(currentTrack.albumId)}
+              className="shrink-0 overflow-hidden rounded-lg"
+              title={`Open album: ${currentTrack.albumTitle}`}
+            >
+              <AlbumCover
+                albumId={currentTrack.albumId}
+                alt={currentTrack.albumTitle}
+                className="h-10 w-10 rounded-lg"
+                iconClassName="h-4 w-4"
+              />
+            </button>
+
+            <div className="min-w-0 flex-1">
+              <button
+                type="button"
+                onClick={() => onSelectAlbum(currentTrack.albumId)}
+                className="block max-w-full truncate text-left text-xs font-semibold text-zinc-100"
+              >
+                {currentTrack.title}
+              </button>
+              <button
+                type="button"
+                onClick={() => onSelectArtist(currentTrack.artistId)}
+                className="block max-w-full truncate text-left text-[11px] text-zinc-400"
+              >
+                {currentTrack.artistName}
+              </button>
+              {playbackError && (
+                <p className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-red-400">
+                  <AlertCircle className="h-3 w-3 shrink-0" />
+                  {playbackError}
+                </p>
+              )}
+            </div>
+
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                onClick={prev}
+                disabled={!canGoPrev}
+                aria-label="Previous track"
+                className="rounded-lg p-1.5 text-zinc-300 transition hover:text-zinc-50 disabled:text-zinc-600 disabled:opacity-40"
+              >
+                <SkipBack className="h-4 w-4 fill-current" />
+              </button>
+
+              <button
+                type="button"
+                onClick={togglePlay}
+                aria-label={isPlaying ? "Pause" : "Play"}
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-500 text-zinc-950 transition hover:bg-amber-400"
+              >
+                {isPlaying ? (
+                  <Pause className="h-4 w-4 fill-current" />
+                ) : (
+                  <Play className="ml-0.5 h-4 w-4 fill-current" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={next}
+                disabled={!canGoNext}
+                aria-label="Next track"
+                className="rounded-lg p-1.5 text-zinc-300 transition hover:text-zinc-50 disabled:text-zinc-600 disabled:opacity-40"
+              >
+                <SkipForward className="h-4 w-4 fill-current" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setLyricsOpen((open) => {
+                    const nextOpen = !open;
+                    if (nextOpen) setQueueOpen(false);
+                    return nextOpen;
+                  });
+                }}
+                aria-label="Toggle lyrics"
+                aria-pressed={lyricsOpen}
+                className={`rounded-lg p-1.5 transition ${
+                  lyricsOpen ? "bg-amber-500/15 text-amber-400" : "text-zinc-400 hover:text-zinc-100"
+                }`}
+              >
+                <Mic2 className="h-4 w-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setQueueOpen((open) => {
+                    const nextOpen = !open;
+                    if (nextOpen) setLyricsOpen(false);
+                    return nextOpen;
+                  });
+                }}
+                aria-label="Toggle queue"
+                className={`relative rounded-lg p-1.5 transition ${
+                  queueOpen ? "bg-amber-500/15 text-amber-400" : "text-zinc-400 hover:text-zinc-100"
+                }`}
+              >
+                <ListMusic className="h-4 w-4" />
+                {queue.length > 1 && (
+                  <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-zinc-800 px-1 text-[9px] font-medium text-zinc-200 ring-1 ring-zinc-700">
+                    {queue.length}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Desktop 3-Column Player Bar (md+) */}
+        <div className="mx-auto hidden max-w-7xl grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1fr)] items-center gap-3 px-4 py-3 md:grid">
           {/* Track info */}
           <div className="flex min-w-0 items-center gap-3">
             <button

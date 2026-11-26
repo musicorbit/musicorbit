@@ -144,11 +144,11 @@ export function TracksView({
                 {formatCodec(track.codec)}
               </span>
 
-              <span className="w-12 text-right font-mono text-xs text-zinc-400">
+              <span className="hidden w-12 text-right font-mono text-xs text-zinc-400 sm:inline">
                 {formatDuration(track.durationSeconds)}
               </span>
 
-              <div className="flex items-center gap-0.5">
+              <div className="flex shrink-0 items-center gap-0.5">
                 <button
                   type="button"
                   onClick={(e) => {
@@ -157,7 +157,7 @@ export function TracksView({
                   }}
                   title="Edit metadata"
                   aria-label={`Edit metadata for ${track.title}`}
-                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                  className="rounded-lg p-1.5 text-zinc-400 opacity-100 transition hover:bg-zinc-800 hover:text-amber-300 lg:text-zinc-500 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100"
                 >
                   <Pencil className="h-3.5 w-3.5" />
                 </button>
@@ -169,7 +169,7 @@ export function TracksView({
                   }}
                   title="Add to playlist"
                   aria-label={`Add ${track.title} to playlist`}
-                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                  className="rounded-lg p-1.5 text-zinc-400 opacity-100 transition hover:bg-zinc-800 hover:text-amber-300 lg:text-zinc-500 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100"
                 >
                   <ListMusic className="h-4 w-4" />
                 </button>
@@ -181,7 +181,7 @@ export function TracksView({
                   }}
                   title="Add to queue"
                   aria-label={`Add ${track.title} to queue`}
-                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-zinc-100"
+                  className="rounded-lg p-1.5 text-zinc-400 opacity-100 transition hover:bg-zinc-800 hover:text-zinc-100 lg:text-zinc-500 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100"
                 >
                   <ListPlus className="h-4 w-4" />
                 </button>
@@ -193,7 +193,7 @@ export function TracksView({
                   }}
                   title="Delete song permanently"
                   aria-label={`Delete ${track.title}`}
-                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-red-500/15 hover:text-red-400"
+                  className="rounded-lg p-1.5 text-zinc-400 opacity-100 transition hover:bg-red-500/15 hover:text-red-400 lg:text-zinc-500 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>

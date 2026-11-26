@@ -124,15 +124,21 @@ export function AlbumDetailView({
           refresh: options?.refresh,
         });
         setTracklist(res);
-        const existing = albumTracklistUiCache.get(albumId);
-        albumTracklistUiCache.set(albumId, {
-          showFullTracklist: existing?.showFullTracklist ?? true,
-          data: res,
-        });
+        const hasTracks = res.tracks.length > 0;
+        if (!hasTracks) {
+          albumTracklistUiCache.set(albumId, { showFullTracklist: false, data: res });
+        } else {
+          const existing = albumTracklistUiCache.get(albumId);
+          albumTracklistUiCache.set(albumId, {
+            showFullTracklist: existing?.showFullTracklist ?? true,
+            data: res,
+          });
+        }
       } catch (err) {
         setTracklistError(
           err instanceof Error ? err.message : "Could not fetch full album tracklist",
         );
+        albumTracklistUiCache.set(albumId, { showFullTracklist: false, data: null });
       } finally {
         if (!options?.silent) {
           setTracklistLoading(false);
@@ -155,17 +161,22 @@ export function AlbumDetailView({
     }
   }, [albumId, loadDetail, loadFullTracklist]);
 
+  const isFullTracklistShown =
+    showFullTracklist && !tracklistError && Boolean(tracklist && tracklist.tracks.length > 0);
+
   const handleToggleFullTracklist = () => {
-    if (showFullTracklist) {
+    if (isFullTracklistShown) {
       setShowFullTracklist(false);
       albumTracklistUiCache.set(albumId, { showFullTracklist: false, data: tracklist });
       return;
     }
     setShowFullTracklist(true);
-    albumTracklistUiCache.set(albumId, { showFullTracklist: true, data: tracklist });
-    if (!tracklist && !tracklistLoading) {
-      void loadFullTracklist();
-    } else if (tracklist) {
+    if (!tracklist || tracklistError || tracklist.tracks.length === 0) {
+      if (!tracklistLoading) {
+        void loadFullTracklist({ refresh: Boolean(tracklistError) });
+      }
+    } else {
+      albumTracklistUiCache.set(albumId, { showFullTracklist: true, data: tracklist });
       // Quietly refresh ownership against the fast SQLite cache in case new tracks were scanned
       void loadFullTracklist({ silent: true });
     }
@@ -289,9 +300,10 @@ export function AlbumDetailView({
             <button
               type="button"
               onClick={handleToggleFullTracklist}
-              aria-pressed={showFullTracklist}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-2.5 text-sm font-medium transition ${
-                showFullTracklist
+              disabled={tracklistLoading}
+              aria-pressed={isFullTracklistShown}
+              className={`inline-flex items-center gap-1.5 rounded-full border px-4 py-2.5 text-sm font-medium transition disabled:opacity-70 ${
+                isFullTracklistShown
                   ? "border-amber-500/50 bg-amber-500/15 text-amber-300 hover:bg-amber-500/20"
                   : "border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
               }`}
@@ -301,7 +313,11 @@ export function AlbumDetailView({
               ) : (
                 <ListChecks className="h-4 w-4 text-amber-400" />
               )}
-              {showFullTracklist ? "Showing Full Tracklist" : "Full Tracklist"}
+              {tracklistLoading
+                ? "Loading Tracklist…"
+                : isFullTracklistShown
+                  ? "Showing Full Tracklist"
+                  : "Full Tracklist"}
             </button>
 
             <button
@@ -539,11 +555,11 @@ export function AlbumDetailView({
                 {formatCodec(track.codec)}
               </span>
 
-              <span className="w-12 text-right font-mono text-xs text-zinc-400">
+              <span className="hidden w-12 text-right font-mono text-xs text-zinc-400 sm:inline">
                 {formatDuration(track.durationSeconds)}
               </span>
 
-              <div className="flex items-center gap-0.5">
+              <div className="flex shrink-0 items-center gap-0.5">
                 <button
                   type="button"
                   onClick={(e) => {
@@ -552,7 +568,7 @@ export function AlbumDetailView({
                   }}
                   title="Edit track metadata"
                   aria-label={`Edit metadata for ${track.title}`}
-                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                  className="rounded-lg p-1.5 text-zinc-400 opacity-100 transition hover:bg-zinc-800 hover:text-amber-300 lg:text-zinc-500 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100"
                 >
                   <Pencil className="h-3.5 w-3.5" />
                 </button>
@@ -564,7 +580,7 @@ export function AlbumDetailView({
                   }}
                   title="Add to playlist"
                   aria-label={`Add ${track.title} to playlist`}
-                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-amber-300"
+                  className="rounded-lg p-1.5 text-zinc-400 opacity-100 transition hover:bg-zinc-800 hover:text-amber-300 lg:text-zinc-500 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100"
                 >
                   <ListMusic className="h-4 w-4" />
                 </button>
@@ -576,7 +592,7 @@ export function AlbumDetailView({
                   }}
                   title="Add to queue"
                   aria-label={`Add ${track.title} to queue`}
-                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-zinc-800 hover:text-zinc-100"
+                  className="rounded-lg p-1.5 text-zinc-400 opacity-100 transition hover:bg-zinc-800 hover:text-zinc-100 lg:text-zinc-500 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100"
                 >
                   <ListPlus className="h-4 w-4" />
                 </button>
@@ -588,7 +604,7 @@ export function AlbumDetailView({
                   }}
                   title="Delete song permanently"
                   aria-label={`Delete ${track.title}`}
-                  className="rounded-lg p-1.5 text-zinc-500 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 hover:bg-red-500/15 hover:text-red-400"
+                  className="rounded-lg p-1.5 text-zinc-400 opacity-100 transition hover:bg-red-500/15 hover:text-red-400 lg:text-zinc-500 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>

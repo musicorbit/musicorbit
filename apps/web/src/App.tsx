@@ -7,6 +7,7 @@ import {
   KeyRound,
   ListMusic,
   LogOut,
+  Menu,
   Music,
   RefreshCw,
   ScrollText,
@@ -94,6 +95,7 @@ function MusicOrbitShell() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const autoTourTriggeredForUserRef = useRef<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [startingScan, setStartingScan] = useState(false);
@@ -236,16 +238,27 @@ function MusicOrbitShell() {
     setRoute({ view: "search" });
   }, []);
 
-  // Auto-launch the spotlight onboarding tour once on a user's first login (after initial status loads)
+  // Auto-launch the spotlight onboarding tour once on a user's first desktop login (skip on mobile/tablet where sidebar is collapsed)
   useEffect(() => {
     const user = authStatus?.user;
     if (!authChecked || !isAuthorized || !user || loading) return;
+    if (typeof window !== "undefined" && window.innerWidth < 1024) return;
     if (user.onboardingCompleted) return;
     if (autoTourTriggeredForUserRef.current === user.id) return;
     autoTourTriggeredForUserRef.current = user.id;
     setRoute({ view: "albums" });
     setTourOpen(true);
   }, [authChecked, isAuthorized, authStatus?.user, loading]);
+
+  // Dismiss active spotlight tour if viewport shrinks below desktop breakpoint
+  useEffect(() => {
+    if (!tourOpen) return;
+    const onResize = () => {
+      if (window.innerWidth < 1024) setTourOpen(false);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [tourOpen]);
 
   const handleCompleteTour = useCallback(() => {
     setTourOpen(false);
@@ -272,6 +285,15 @@ function MusicOrbitShell() {
       setRoute({ view: "albums" });
     }
   }, [slskdStatus, canUseSoulseek, isAdmin, route.view]);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileNavOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mobileNavOpen]);
 
   if (!authChecked) {
     return (
@@ -357,14 +379,29 @@ function MusicOrbitShell() {
   const showSearchBar =
     route.view === "albums" || route.view === "artists" || route.view === "tracks";
 
-  return (
-    <div className="flex min-h-screen bg-zinc-950 text-zinc-100">
-      {/* Sidebar */}
-      <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r border-zinc-800/80 bg-zinc-900/40 px-4 py-6">
+  const navigateFromSidebar = (
+    id:
+      | "albums"
+      | "artists"
+      | "tracks"
+      | "playlists"
+      | "search"
+      | "review"
+      | "system"
+      | "users"
+      | "logs",
+  ) => {
+    setRoute({ view: id });
+    setMobileNavOpen(false);
+  };
+
+  const renderSidebarBody = (inMobileDrawer: boolean) => (
+    <>
+      <div className="mb-6 flex items-center justify-between gap-2 px-2 lg:mb-8">
         <button
           type="button"
-          onClick={() => setRoute({ view: "albums" })}
-          className="mb-8 flex items-center gap-3 px-2 text-left"
+          onClick={() => navigateFromSidebar("albums")}
+          className="flex items-center gap-3 text-left"
         >
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
             <Disc3 className="h-5 w-5" />
@@ -375,58 +412,71 @@ function MusicOrbitShell() {
           </div>
         </button>
 
-        <nav className="flex flex-1 flex-col gap-1">
-          <p className="mb-1.5 px-3 text-[11px] font-medium tracking-wider text-zinc-500 uppercase">
-            Library
-          </p>
+        {inMobileDrawer && (
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(false)}
+            aria-label="Close navigation menu"
+            className="rounded-lg p-2 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        )}
+      </div>
 
-          {navItems.map(({ id, label, icon: Icon, count, highlightBadge }) => {
-            const active = isNavActive(id);
-            return (
-              <button
-                key={id}
-                type="button"
-                data-tour={`nav-${id}`}
-                onClick={() => setRoute({ view: id })}
-                className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition ${
-                  active
-                    ? "bg-zinc-800/90 text-zinc-50"
-                    : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
-                }`}
-              >
-                <span className="flex items-center gap-3">
-                  <Icon className={`h-4 w-4 ${active ? "text-amber-400" : "text-zinc-500"}`} />
-                  {label}
-                </span>
-                {count !== undefined && (
-                  <span
-                    className={
-                      highlightBadge
-                        ? "rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[11px] font-semibold text-amber-300"
-                        : "text-xs font-normal text-zinc-500"
-                    }
-                  >
-                    {count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
+      <nav className="flex flex-1 flex-col gap-1 overflow-y-auto">
+        <p className="mb-1.5 px-3 text-[11px] font-medium tracking-wider text-zinc-500 uppercase">
+          Library
+        </p>
 
-        <div className="mt-6 space-y-2.5">
-          {authStatus?.authEnabled && authStatus.user && (
-            <div
-              data-tour="user-card"
-              className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs"
+        {navItems.map(({ id, label, icon: Icon, count, highlightBadge }) => {
+          const active = isNavActive(id);
+          return (
+            <button
+              key={id}
+              type="button"
+              data-tour={inMobileDrawer ? undefined : `nav-${id}`}
+              onClick={() => navigateFromSidebar(id)}
+              className={`flex items-center justify-between rounded-lg px-3 py-2.5 text-sm font-medium transition lg:py-2 ${
+                active
+                  ? "bg-zinc-800/90 text-zinc-50"
+                  : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+              }`}
             >
-              <div className="min-w-0">
-                <p className="truncate font-medium text-zinc-100">{authStatus.user.username}</p>
-                <p className="text-[10px] text-zinc-500">
-                  {authStatus.user.role === "admin" ? "Administrator" : "Member"}
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
+              <span className="flex items-center gap-3">
+                <Icon className={`h-4 w-4 ${active ? "text-amber-400" : "text-zinc-500"}`} />
+                {label}
+              </span>
+              {count !== undefined && (
+                <span
+                  className={
+                    highlightBadge
+                      ? "rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[11px] font-semibold text-amber-300"
+                      : "text-xs font-normal text-zinc-500"
+                  }
+                >
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="mt-6 space-y-2.5">
+        {authStatus?.authEnabled && authStatus.user && (
+          <div
+            data-tour={inMobileDrawer ? undefined : "user-card"}
+            className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs"
+          >
+            <div className="min-w-0">
+              <p className="truncate font-medium text-zinc-100">{authStatus.user.username}</p>
+              <p className="text-[10px] text-zinc-500">
+                {authStatus.user.role === "admin" ? "Administrator" : "Member"}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              {!inMobileDrawer && (
                 <button
                   type="button"
                   onClick={() => {
@@ -439,56 +489,146 @@ function MusicOrbitShell() {
                 >
                   <HelpCircle className="h-3.5 w-3.5" />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setChangePasswordOpen(true)}
-                  title="Change password"
-                  aria-label="Change password"
-                  className="rounded p-1 text-zinc-400 transition hover:bg-zinc-800 hover:text-amber-300"
-                >
-                  <KeyRound className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleLogout()}
-                  title="Sign out"
-                  aria-label="Sign out"
-                  className="rounded p-1 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
-                >
-                  <LogOut className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800/80 bg-zinc-900/60 p-3 text-xs text-zinc-400">
-            <span>Open-source self-hosted music hub (AGPL-3.0).</span>
-            {!authStatus?.authEnabled && (
+              )}
               <button
                 type="button"
                 onClick={() => {
-                  setRoute({ view: "albums" });
-                  setTourOpen(true);
+                  setMobileNavOpen(false);
+                  setChangePasswordOpen(true);
                 }}
-                title="Replay quick tour"
-                aria-label="Replay quick tour"
-                className="shrink-0 rounded p-1 text-zinc-400 transition hover:bg-zinc-800 hover:text-amber-300"
+                title="Change password"
+                aria-label="Change password"
+                className="rounded p-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-amber-300 lg:p-1"
               >
-                <HelpCircle className="h-3.5 w-3.5" />
+                <KeyRound className="h-4 w-4 lg:h-3.5 lg:w-3.5" />
               </button>
-            )}
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileNavOpen(false);
+                  void handleLogout();
+                }}
+                title="Sign out"
+                aria-label="Sign out"
+                className="rounded p-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100 lg:p-1"
+              >
+                <LogOut className="h-4 w-4 lg:h-3.5 lg:w-3.5" />
+              </button>
+            </div>
           </div>
+        )}
+
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800/80 bg-zinc-900/60 p-3 text-xs text-zinc-400">
+          <span>Open-source self-hosted music hub (AGPL-3.0).</span>
+          {!authStatus?.authEnabled && !inMobileDrawer && (
+            <button
+              type="button"
+              onClick={() => {
+                setRoute({ view: "albums" });
+                setTourOpen(true);
+              }}
+              title="Replay quick tour"
+              aria-label="Replay quick tour"
+              className="shrink-0 rounded p-1 text-zinc-400 transition hover:bg-zinc-800 hover:text-amber-300"
+            >
+              <HelpCircle className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
+      </div>
+    </>
+  );
+
+  return (
+    <div className="flex min-h-screen flex-col bg-zinc-950 text-zinc-100 lg:flex-row">
+      {/* Mobile / Tablet Sticky Top Bar */}
+      <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-2 border-b border-zinc-800/80 bg-zinc-950/90 px-3 backdrop-blur-xl lg:hidden">
+        <div className="flex min-w-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(true)}
+            aria-label="Open navigation menu"
+            aria-expanded={mobileNavOpen}
+            className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900/80 text-zinc-200 transition hover:bg-zinc-800"
+          >
+            <Menu className="h-5 w-5" />
+            {needsReviewCount > 0 && (
+              <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-amber-400 ring-2 ring-zinc-950" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setRoute({ view: "albums" })}
+            className="flex min-w-0 items-center gap-2 text-left"
+          >
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
+              <Disc3 className="h-4 w-4" />
+            </div>
+            <span className="truncate text-sm font-semibold tracking-tight text-zinc-50">
+              MusicOrbit
+            </span>
+          </button>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setUploadOpen(true)}
+            aria-label="Upload music"
+            title="Upload music"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-amber-500 px-2.5 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400"
+          >
+            <Upload className="h-4 w-4" />
+            <span className="hidden xs:inline sm:inline">Upload</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleScan(false)}
+            disabled={scanStatus?.state === "running" || startingScan}
+            aria-label="Scan library"
+            title="Scan library"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-45"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${scanStatus?.state === "running" ? "animate-spin text-amber-400" : ""}`}
+            />
+          </button>
+        </div>
+      </header>
+
+      {/* Mobile Slide-Over Navigation Drawer */}
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-50 flex lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation menu">
+          <button
+            type="button"
+            aria-label="Close navigation menu"
+            onClick={() => setMobileNavOpen(false)}
+            className="fixed inset-0 bg-zinc-950/75 backdrop-blur-sm"
+          />
+          <aside className="relative z-10 flex h-full w-72 max-w-[85vw] flex-col border-r border-zinc-800 bg-zinc-950 px-4 py-5 shadow-2xl">
+            {renderSidebarBody(true)}
+          </aside>
+        </div>
+      )}
+
+      {/* Desktop Sidebar */}
+      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-zinc-800/80 bg-zinc-900/40 px-4 py-6 lg:flex">
+        {renderSidebarBody(false)}
       </aside>
 
       {/* Main Content (adds bottom padding when PlayerBar is visible so nothing gets covered) */}
-      <main className={`flex-1 px-8 py-8 ${currentTrack ? "pb-32" : "pb-12"}`}>
+      <main
+        className={`min-w-0 flex-1 px-4 py-5 sm:px-6 md:px-8 md:py-8 ${
+          currentTrack ? "pb-36 md:pb-32" : "pb-12"
+        }`}
+      >
         <div className="mx-auto max-w-6xl">
           {/* Top header for main library views */}
           {showSearchBar && (
-            <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+            <div className="mb-6 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4">
               <div>
-                <h2 className="text-2xl font-semibold tracking-tight text-zinc-50 capitalize">
+                <h2 className="text-xl font-semibold tracking-tight text-zinc-50 capitalize sm:text-2xl">
                   {route.view}
                 </h2>
                 <p className="mt-0.5 text-xs text-zinc-500">
@@ -501,8 +641,8 @@ function MusicOrbitShell() {
                 </p>
               </div>
 
-              <div className="flex items-center gap-2.5">
-                <div className="relative w-64 sm:w-72">
+              <div className="flex w-full items-center gap-2 sm:w-auto sm:gap-2.5">
+                <div className="relative min-w-0 flex-1 sm:w-72 sm:flex-none">
                   <Search className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-zinc-500" />
                   <input
                     type="search"
@@ -528,10 +668,10 @@ function MusicOrbitShell() {
                   data-tour="upload-btn"
                   onClick={() => setUploadOpen(true)}
                   title="Upload songs or an album folder from your computer"
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-amber-400"
+                  className="hidden items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-amber-400 lg:inline-flex"
                 >
                   <Upload className="h-4 w-4" />
-                  <span className="hidden sm:inline">Upload</span>
+                  <span>Upload</span>
                 </button>
 
                 <button
@@ -539,14 +679,12 @@ function MusicOrbitShell() {
                   onClick={() => void handleScan(false)}
                   disabled={scanStatus?.state === "running" || startingScan}
                   title="Scan library for new or updated audio files"
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-45"
+                  className="hidden items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-45 lg:inline-flex"
                 >
                   <RefreshCw
                     className={`h-4 w-4 ${scanStatus?.state === "running" ? "animate-spin text-amber-400" : ""}`}
                   />
-                  <span className="hidden sm:inline">
-                    {scanStatus?.state === "running" ? "Scanning…" : "Scan"}
-                  </span>
+                  <span>{scanStatus?.state === "running" ? "Scanning…" : "Scan"}</span>
                 </button>
               </div>
             </div>

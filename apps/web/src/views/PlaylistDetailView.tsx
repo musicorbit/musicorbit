@@ -468,11 +468,11 @@ export function PlaylistDetailView({
                   {formatCodec(track.codec)}
                 </span>
 
-                <span className="w-12 text-right font-mono text-xs text-zinc-400">
+                <span className="hidden w-12 text-right font-mono text-xs text-zinc-400 sm:inline">
                   {formatDuration(track.durationSeconds)}
                 </span>
 
-                <div className="flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+                <div className="flex shrink-0 items-center gap-0.5 opacity-100 transition lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100">
                   <button
                     type="button"
                     disabled={idx === 0}

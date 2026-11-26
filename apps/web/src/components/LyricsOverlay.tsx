@@ -150,7 +150,7 @@ export function LyricsOverlay({
       aria-modal="true"
       aria-label={`Lyrics for ${track.title}`}
       tabIndex={-1}
-      className="fixed inset-x-0 top-0 bottom-20 z-30 flex flex-col overflow-hidden bg-zinc-950/96 backdrop-blur-2xl focus:outline-none"
+      className="fixed inset-x-0 top-0 bottom-[90px] z-30 flex flex-col overflow-hidden bg-zinc-950/96 backdrop-blur-2xl focus:outline-none md:bottom-20"
     >
       {/* Ambient blurred album cover backdrop */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -166,7 +166,7 @@ export function LyricsOverlay({
       </div>
 
       {/* Top Header */}
-      <header className="relative z-10 flex flex-wrap items-center justify-between gap-4 border-b border-zinc-800/70 px-6 py-4">
+      <header className="relative z-10 flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/70 px-4 py-3 sm:gap-4 sm:px-6 sm:py-4">
         <div className="flex min-w-0 items-center gap-3.5">
           <AlbumCover
             albumId={track.albumId}
@@ -278,7 +278,7 @@ export function LyricsOverlay({
       <div
         onWheel={handleManualScroll}
         onTouchMove={handleManualScroll}
-        className="relative z-10 flex-1 overflow-y-auto px-6 py-10 sm:px-12"
+        className="relative z-10 flex-1 overflow-y-auto px-4 py-8 sm:px-12 sm:py-10"
       >
         <div className="mx-auto max-w-3xl">
           {loading ? (
@@ -323,7 +323,7 @@ export function LyricsOverlay({
                       onSeek(Math.max(0, line.timeSeconds - timingOffset));
                       setUserScrolling(false);
                     }}
-                    className={`block w-full rounded-xl border-l-4 px-4 py-2.5 text-left text-2xl leading-snug font-bold tracking-tight transition-colors duration-300 sm:text-3xl ${
+                    className={`block w-full rounded-xl border-l-4 px-3 py-2 text-left text-xl leading-snug font-bold tracking-tight transition-colors duration-300 sm:px-4 sm:py-2.5 sm:text-3xl ${
                       isActive
                         ? "border-amber-400 bg-amber-500/10 text-zinc-50"
                         : isPast
