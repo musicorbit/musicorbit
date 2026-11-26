@@ -75,9 +75,120 @@ type Route =
   | { view: "users" }
   | { view: "logs" };
 
+function routeToPath(route: Route): string {
+  switch (route.view) {
+    case "albums":
+      return "/";
+    case "album-detail":
+      return `/albums/${route.albumId}`;
+    case "artists":
+      return "/artists";
+    case "artist-detail":
+      return `/artists/${route.artistId}`;
+    case "tracks":
+      return "/tracks";
+    case "playlists":
+      return "/playlists";
+    case "playlist-detail":
+      return `/playlists/${route.playlistId}`;
+    case "search":
+      return "/search";
+    case "review":
+      return "/review";
+    case "system":
+      return "/system";
+    case "users":
+      return "/users";
+    case "logs":
+      return "/logs";
+  }
+}
+
+function pathToRoute(pathname: string): Route {
+  const clean = pathname.replace(/\/+$/, "") || "/";
+  const segments = clean.split("/").filter(Boolean);
+  const first = segments[0];
+  const second = segments[1];
+  const parsedId = second && /^\d+$/.test(second) ? Number(second) : null;
+
+  if (first === "albums" && parsedId !== null) return { view: "album-detail", albumId: parsedId };
+  if (first === "artists") {
+    return parsedId !== null ? { view: "artist-detail", artistId: parsedId } : { view: "artists" };
+  }
+  if (first === "tracks") return { view: "tracks" };
+  if (first === "playlists") {
+    return parsedId !== null
+      ? { view: "playlist-detail", playlistId: parsedId }
+      : { view: "playlists" };
+  }
+  if (first === "search") return { view: "search" };
+  if (first === "review") return { view: "review" };
+  if (first === "system") return { view: "system" };
+  if (first === "users") return { view: "users" };
+  if (first === "logs") return { view: "logs" };
+  return { view: "albums" };
+}
+
 function MusicOrbitShell() {
   const { currentTrack } = usePlayer();
-  const [route, setRoute] = useState<Route>({ view: "albums" });
+  const [route, setRouteState] = useState<Route>(() =>
+    typeof window !== "undefined" ? pathToRoute(window.location.pathname) : { view: "albums" },
+  );
+  const routeRef = useRef<Route>(route);
+  routeRef.current = route;
+  const historyDepthRef = useRef(0);
+
+  const navigate = useCallback((next: Route, options?: { replace?: boolean }) => {
+    const currentPath = routeToPath(routeRef.current);
+    const nextPath = routeToPath(next);
+    if (currentPath === nextPath) {
+      setRouteState(next);
+      return;
+    }
+    if (typeof window !== "undefined") {
+      if (options?.replace) {
+        window.history.replaceState({ moRoute: true, depth: historyDepthRef.current }, "", nextPath);
+      } else {
+        historyDepthRef.current += 1;
+        window.history.pushState({ moRoute: true, depth: historyDepthRef.current }, "", nextPath);
+      }
+      window.scrollTo({ top: 0 });
+    }
+    routeRef.current = next;
+    setRouteState(next);
+  }, []);
+
+  const goBackOr = useCallback(
+    (fallback: Route) => {
+      if (typeof window !== "undefined" && historyDepthRef.current > 0) {
+        window.history.back();
+        return;
+      }
+      navigate(fallback, { replace: true });
+    },
+    [navigate],
+  );
+
+  // Sync browser Back/Forward buttons and mobile swipe-back gestures with SPA routes
+  useEffect(() => {
+    const initialPath = routeToPath(routeRef.current);
+    const existingDepth =
+      typeof window.history.state?.depth === "number" ? window.history.state.depth : 0;
+    historyDepthRef.current = existingDepth;
+    window.history.replaceState({ moRoute: true, depth: existingDepth }, "", initialPath);
+
+    const onPopState = (e: PopStateEvent) => {
+      const nextDepth = typeof e.state?.depth === "number" ? e.state.depth : 0;
+      historyDepthRef.current = Math.max(0, nextDepth);
+      const nextRoute = pathToRoute(window.location.pathname);
+      routeRef.current = nextRoute;
+      setMobileNavOpen(false);
+      setRouteState(nextRoute);
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
   const [searchQuery, setSearchQuery] = useState("");
   const [authStatus, setAuthStatus] = useState<AuthStatusResponse | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -214,7 +325,7 @@ function MusicOrbitShell() {
       setChangePasswordOpen(false);
       setTourOpen(false);
       autoTourTriggeredForUserRef.current = null;
-      setRoute({ view: "albums" });
+      navigate({ view: "albums" }, { replace: true });
       const next = await fetchAuthStatus().catch(() => ({
         authEnabled: true,
         authenticated: false,
@@ -231,12 +342,15 @@ function MusicOrbitShell() {
     slskdConfigured &&
     (!authStatus?.authEnabled || isAdmin || Boolean(authStatus?.user?.canUseSoulseek));
 
-  const handleOpenSoulseekSearch = useCallback((initialQuery?: string) => {
-    if (initialQuery?.trim()) {
-      setSoulseekLaunch({ query: initialQuery.trim(), nonce: Date.now() });
-    }
-    setRoute({ view: "search" });
-  }, []);
+  const handleOpenSoulseekSearch = useCallback(
+    (initialQuery?: string) => {
+      if (initialQuery?.trim()) {
+        setSoulseekLaunch({ query: initialQuery.trim(), nonce: Date.now() });
+      }
+      navigate({ view: "search" });
+    },
+    [navigate],
+  );
 
   // Auto-launch the spotlight onboarding tour once on a user's first desktop login (skip on mobile/tablet where sidebar is collapsed)
   useEffect(() => {
@@ -246,9 +360,9 @@ function MusicOrbitShell() {
     if (user.onboardingCompleted) return;
     if (autoTourTriggeredForUserRef.current === user.id) return;
     autoTourTriggeredForUserRef.current = user.id;
-    setRoute({ view: "albums" });
+    navigate({ view: "albums" }, { replace: true });
     setTourOpen(true);
-  }, [authChecked, isAuthorized, authStatus?.user, loading]);
+  }, [authChecked, isAuthorized, authStatus?.user, loading, navigate]);
 
   // Dismiss active spotlight tour if viewport shrinks below desktop breakpoint
   useEffect(() => {
@@ -274,17 +388,19 @@ function MusicOrbitShell() {
   }, []);
 
   const handleEnsureAlbumsView = useCallback(() => {
-    setRoute((prev) => (prev.view === "albums" ? prev : { view: "albums" }));
-  }, []);
+    if (routeRef.current.view !== "albums") {
+      navigate({ view: "albums" }, { replace: true });
+    }
+  }, [navigate]);
 
   // Bounce away from routes that are unavailable for the current user's role/permissions
   useEffect(() => {
     if (slskdStatus && !canUseSoulseek && route.view === "search") {
-      setRoute({ view: "albums" });
+      navigate({ view: "albums" }, { replace: true });
     } else if (!isAdmin && route.view === "users") {
-      setRoute({ view: "albums" });
+      navigate({ view: "albums" }, { replace: true });
     }
-  }, [slskdStatus, canUseSoulseek, isAdmin, route.view]);
+  }, [slskdStatus, canUseSoulseek, isAdmin, route.view, navigate]);
 
   useEffect(() => {
     if (!mobileNavOpen) return;
@@ -308,7 +424,7 @@ function MusicOrbitShell() {
       <AuthGate
         needsSetup={authStatus.needsSetup}
         onAuthenticated={(next) => {
-          setRoute({ view: "albums" });
+          navigate({ view: "albums" }, { replace: true });
           setAuthStatus(next);
         }}
       />
@@ -391,7 +507,7 @@ function MusicOrbitShell() {
       | "users"
       | "logs",
   ) => {
-    setRoute({ view: id });
+    navigate({ view: id });
     setMobileNavOpen(false);
   };
 
@@ -480,7 +596,7 @@ function MusicOrbitShell() {
                 <button
                   type="button"
                   onClick={() => {
-                    setRoute({ view: "albums" });
+                    navigate({ view: "albums" });
                     setTourOpen(true);
                   }}
                   title="Quick tour"
@@ -524,7 +640,7 @@ function MusicOrbitShell() {
             <button
               type="button"
               onClick={() => {
-                setRoute({ view: "albums" });
+                navigate({ view: "albums" });
                 setTourOpen(true);
               }}
               title="Replay quick tour"
@@ -559,7 +675,7 @@ function MusicOrbitShell() {
 
           <button
             type="button"
-            onClick={() => setRoute({ view: "albums" })}
+            onClick={() => navigate({ view: "albums" })}
             className="flex min-w-0 items-center gap-2 text-left"
           >
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
@@ -705,17 +821,17 @@ function MusicOrbitShell() {
               albums={albums}
               loading={loading}
               searchQuery={searchQuery}
-              onSelectAlbum={(albumId) => setRoute({ view: "album-detail", albumId })}
-              onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
-              onGoToScanner={() => setRoute({ view: "system" })}
+              onSelectAlbum={(albumId) => navigate({ view: "album-detail", albumId })}
+              onSelectArtist={(artistId) => navigate({ view: "artist-detail", artistId })}
+              onGoToScanner={() => navigate({ view: "system" })}
             />
           )}
 
           {route.view === "album-detail" && (
             <AlbumDetailView
               albumId={route.albumId}
-              onBack={() => setRoute({ view: "albums" })}
-              onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
+              onBack={() => goBackOr({ view: "albums" })}
+              onSelectArtist={(artistId) => navigate({ view: "artist-detail", artistId })}
               onAlbumRetagged={() => void loadLibrary(searchQuery)}
               onPlaylistsChanged={() => void refreshPlaylists()}
               slskdConfigured={canUseSoulseek}
@@ -728,18 +844,18 @@ function MusicOrbitShell() {
               artists={artists}
               loading={loading}
               searchQuery={searchQuery}
-              onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
-              onGoToScanner={() => setRoute({ view: "system" })}
+              onSelectArtist={(artistId) => navigate({ view: "artist-detail", artistId })}
+              onGoToScanner={() => navigate({ view: "system" })}
             />
           )}
 
           {route.view === "artist-detail" && (
             <ArtistDetailView
               artistId={route.artistId}
-              onBack={() => setRoute({ view: "artists" })}
-              onSelectAlbum={(albumId) => setRoute({ view: "album-detail", albumId })}
-              onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
-              onGoToScanner={() => setRoute({ view: "system" })}
+              onBack={() => goBackOr({ view: "artists" })}
+              onSelectAlbum={(albumId) => navigate({ view: "album-detail", albumId })}
+              onSelectArtist={(artistId) => navigate({ view: "artist-detail", artistId })}
+              onGoToScanner={() => navigate({ view: "system" })}
               onArtistImageChanged={() => void loadLibrary(searchQuery)}
               onPlaylistsChanged={() => void refreshPlaylists()}
             />
@@ -750,9 +866,9 @@ function MusicOrbitShell() {
               tracks={tracks}
               loading={loading}
               searchQuery={searchQuery}
-              onSelectAlbum={(albumId) => setRoute({ view: "album-detail", albumId })}
-              onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
-              onGoToScanner={() => setRoute({ view: "system" })}
+              onSelectAlbum={(albumId) => navigate({ view: "album-detail", albumId })}
+              onSelectArtist={(artistId) => navigate({ view: "artist-detail", artistId })}
+              onGoToScanner={() => navigate({ view: "system" })}
               onTrackMetadataSaved={() => void loadLibrary(searchQuery)}
               onPlaylistsChanged={() => void refreshPlaylists()}
             />
@@ -762,7 +878,7 @@ function MusicOrbitShell() {
             <PlaylistsView
               playlists={playlists}
               loading={loading}
-              onSelectPlaylist={(playlistId) => setRoute({ view: "playlist-detail", playlistId })}
+              onSelectPlaylist={(playlistId) => navigate({ view: "playlist-detail", playlistId })}
               onPlaylistsChanged={() => void refreshPlaylists()}
             />
           )}
@@ -771,9 +887,9 @@ function MusicOrbitShell() {
             <PlaylistDetailView
               playlistId={route.playlistId}
               canUseSoulseek={canUseSoulseek}
-              onBack={() => setRoute({ view: "playlists" })}
-              onSelectAlbum={(albumId) => setRoute({ view: "album-detail", albumId })}
-              onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
+              onBack={() => goBackOr({ view: "playlists" })}
+              onSelectAlbum={(albumId) => navigate({ view: "album-detail", albumId })}
+              onSelectArtist={(artistId) => navigate({ view: "artist-detail", artistId })}
               onPlaylistsChanged={() => void refreshPlaylists()}
             />
           )}
@@ -805,7 +921,7 @@ function MusicOrbitShell() {
               onRefresh={() => void loadLibrary(searchQuery)}
               onMusicDirChanged={() => void loadLibrary(searchQuery)}
               onOpenSoulseek={() => handleOpenSoulseekSearch()}
-              onOpenReviewQueue={() => setRoute({ view: "review" })}
+              onOpenReviewQueue={() => navigate({ view: "review" })}
               onOpenUpload={() => setUploadOpen(true)}
             />
           )}
@@ -822,15 +938,15 @@ function MusicOrbitShell() {
       </main>
 
       <PlayerBar
-        onSelectAlbum={(albumId) => setRoute({ view: "album-detail", albumId })}
-        onSelectArtist={(artistId) => setRoute({ view: "artist-detail", artistId })}
+        onSelectAlbum={(albumId) => navigate({ view: "album-detail", albumId })}
+        onSelectArtist={(artistId) => navigate({ view: "artist-detail", artistId })}
       />
 
       {uploadOpen && (
         <UploadMusicModal
           onClose={() => setUploadOpen(false)}
           onUploaded={() => void loadLibrary(searchQuery)}
-          onOpenReviewQueue={() => setRoute({ view: "review" })}
+          onOpenReviewQueue={() => navigate({ view: "review" })}
         />
       )}
 
