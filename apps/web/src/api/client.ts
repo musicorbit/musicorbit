@@ -48,6 +48,7 @@ import type {
   SoulseekSearchResultsResponse,
   SoulseekSearchSummary,
   StartUploadBatchResponse,
+  SubsonicPasswordResponse,
   SystemSettingsResponse,
   TrackLyricsResponse,
   TrackMetadataResponse,
@@ -1084,4 +1085,26 @@ export async function deleteAlbum(albumId: number): Promise<DeleteLibraryItemsRe
     throw new Error(body?.error ?? `Could not delete album (HTTP ${res.status})`);
   }
   return (await res.json()) as DeleteLibraryItemsResponse;
+}
+
+export function fetchSubsonicPassword(): Promise<SubsonicPasswordResponse> {
+  return getJson<SubsonicPasswordResponse>("/api/auth/subsonic-password");
+}
+
+export async function rotateSubsonicPassword(): Promise<SubsonicPasswordResponse> {
+  const res = await fetch("/api/auth/subsonic-password/rotate", { method: "POST" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not generate Subsonic password (HTTP ${res.status})`);
+  }
+  return (await res.json()) as SubsonicPasswordResponse;
+}
+
+export async function revokeSubsonicPassword(): Promise<SubsonicPasswordResponse> {
+  const res = await fetch("/api/auth/subsonic-password", { method: "DELETE" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not revoke Subsonic password (HTTP ${res.status})`);
+  }
+  return (await res.json()) as SubsonicPasswordResponse;
 }

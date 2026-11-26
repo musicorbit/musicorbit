@@ -234,6 +234,7 @@ export function initDatabase(dbPath: string): DbContext {
       role TEXT NOT NULL DEFAULT 'user',
       music_dir TEXT,
       can_use_soulseek INTEGER NOT NULL DEFAULT 0,
+      subsonic_token TEXT,
       created_at INTEGER NOT NULL
     );
 
@@ -298,6 +299,7 @@ export function initDatabase(dbPath: string): DbContext {
   ensureColumn(sqlite, "playlists", "synced_filename", "TEXT");
   ensureColumn(sqlite, "users", "music_dir", "TEXT");
   ensureColumn(sqlite, "users", "can_use_soulseek", "INTEGER NOT NULL DEFAULT 0");
+  ensureColumn(sqlite, "users", "subsonic_token", "TEXT");
 
   // Multi-user library isolation upgrades
   migrateArtistsTableForMultiUser(sqlite);

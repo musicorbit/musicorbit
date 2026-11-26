@@ -54,6 +54,7 @@ import {
 } from "../api/client";
 import { BulkImportFolderModal } from "../components/BulkImportFolderModal";
 import { DirectoryPickerModal } from "../components/DirectoryPickerModal";
+import { SubsonicConnectCard } from "../components/SubsonicConnectCard";
 
 interface SystemViewProps {
   isAdmin?: boolean;
@@ -1597,6 +1598,9 @@ export function SystemView({
               )}
             </section>
           )}
+
+          {/* Mobile & Desktop Apps (OpenSubsonic API — visible to both Admins & Members) */}
+          <SubsonicConnectCard />
 
           {/* Optional slskd (Soulseek) Integration Card (Admin only) */}
           {isAdmin && (

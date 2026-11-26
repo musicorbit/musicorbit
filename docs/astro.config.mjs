@@ -85,8 +85,8 @@ export default defineConfig({
         {
           label: "Integrations",
           items: [
+            { label: "Mobile Apps (OpenSubsonic)", slug: "navidrome-symfonium" },
             { label: "Soulseek (slskd)", slug: "soulseek-slskd" },
-            { label: "Navidrome & Symfonium", slug: "navidrome-symfonium" },
           ],
         },
         {

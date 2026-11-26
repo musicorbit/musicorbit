@@ -34,7 +34,7 @@ export async function registerStaticWeb(
 
   app.get("/*", async (request, reply) => {
     const urlPath = (request.url.split("?")[0] ?? "/").replace(/^\/+/, "");
-    if (urlPath.startsWith("api/")) {
+    if (urlPath.startsWith("api/") || urlPath.startsWith("rest/")) {
       return reply.code(404).send({ error: "API route not found" });
     }
 

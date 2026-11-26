@@ -15,6 +15,7 @@ import { registerMetadataRoutes } from "./routes/metadata.js";
 import { registerPlaylistRoutes } from "./routes/playlists.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerStaticWeb } from "./routes/staticWeb.js";
+import { registerSubsonicRoutes } from "./routes/subsonic.js";
 import { registerUploadRoutes } from "./routes/uploads.js";
 import { registerUserRoutes } from "./routes/users.js";
 import { SlskdClient } from "./services/acquisition/slskd.js";
@@ -270,6 +271,18 @@ export async function buildServer(
     activityLog,
     onDownloadEnqueued: (userId, slskdUsername, files) =>
       importer.recordDownloadOwnership(userId, slskdUsername, files),
+  });
+  await registerSubsonicRoutes(app, {
+    dbContext,
+    authEnabled: config.authEnabled,
+    serverVersion: config.version,
+    coversDir: config.coversDir,
+    artistImagesDir: config.artistImagesDir,
+    audioTranscoder,
+    lyricsService,
+    playlistSync,
+    scanner,
+    getUserMusicDir,
   });
 
   // Serve production frontend bundle when WEB_DIST_DIR is configured (e.g. Docker)

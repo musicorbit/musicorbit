@@ -722,6 +722,12 @@ export interface AuthStatusResponse {
   user: AuthUser | null;
 }
 
+export interface SubsonicPasswordResponse {
+  configured: boolean;
+  password: string | null;
+  username: string;
+}
+
 export interface UserSummary {
   id: number;
   username: string;

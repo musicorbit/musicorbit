@@ -436,4 +436,63 @@ export async function registerAuthRoutes(
 
     return { ok: true, onboardingCompleted: completed };
   });
+
+  // Per-user Subsonic / OpenSubsonic App Password (keeps main scrypt login password one-way!)
+  app.get("/api/auth/subsonic-password", async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      return reply.code(401).send({ error: "Authentication required" });
+    }
+    if (!authEnabled) {
+      return { configured: true, password: null, username: user.username };
+    }
+    const row = sqlite
+      .prepare("SELECT subsonic_token AS token FROM users WHERE id = ?")
+      .get(user.id) as { token: string | null } | undefined;
+    const token = row?.token?.trim() || null;
+    return {
+      configured: Boolean(token),
+      password: token,
+      username: user.username,
+    };
+  });
+
+  app.post("/api/auth/subsonic-password/rotate", async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      return reply.code(401).send({ error: "Authentication required" });
+    }
+    if (!authEnabled) {
+      return { configured: true, password: null, username: user.username };
+    }
+    const nextToken = crypto.randomBytes(18).toString("base64url");
+    sqlite.prepare("UPDATE users SET subsonic_token = ? WHERE id = ?").run(nextToken, user.id);
+    activityLog?.info("system", `User "${user.username}" generated a new Subsonic app password`, {
+      userId: user.id,
+    });
+    return {
+      configured: true,
+      password: nextToken,
+      username: user.username,
+    };
+  });
+
+  app.delete("/api/auth/subsonic-password", async (request, reply) => {
+    const user = request.authUser;
+    if (!user) {
+      return reply.code(401).send({ error: "Authentication required" });
+    }
+    if (!authEnabled) {
+      return { configured: false, password: null, username: user.username };
+    }
+    sqlite.prepare("UPDATE users SET subsonic_token = NULL WHERE id = ?").run(user.id);
+    activityLog?.info("system", `User "${user.username}" revoked their Subsonic app password`, {
+      userId: user.id,
+    });
+    return {
+      configured: false,
+      password: null,
+      username: user.username,
+    };
+  });
 }

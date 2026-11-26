@@ -11,7 +11,7 @@ Your audio files stay right where you put them on disk, cleanly tagged and organ
 
 - **Incremental Library Scanner:** Indexes local `.flac`, `.mp3`, `.m4a`, `.aac`, `.ogg`, `.opus`, and `.wav` collections into SQLite (WAL mode) with SHA-256 deduplicated cover art caching.
 - **Lossless Browser Player:** Streams tracks over HTTP `206 Partial Content` byte-ranges with instant scrubbing, persistent playback bar, queue management, shuffle/repeat, OS Media Session controls, and automatic **ALAC → lossless FLAC** transcoding for browser compatibility.
-- **Mobile-Friendly & Installable PWA:** Responsive mobile header, slide-over navigation drawer, compact thumb-friendly mini-player, touch-visible track actions, History API swipe-back / reloadable URLs, and full Progressive Web App support for iOS, Android, and desktop.
+- **Mobile-Friendly PWA & OpenSubsonic API:** Install directly as a standalone mobile/desktop PWA, or connect native apps like **Symfonium**, **Amperfy**, **Arpeggi**, and **Feishin** via MusicOrbit's built-in **OpenSubsonic API** for CarPlay, Android Auto, and offline downloads.
 - **Synced Sing-Along Lyrics:** Full-screen karaoke view powered by standard `.lrc` sidecar files fetched automatically from **LRCLIB** (or embedded track lyrics).
 - **Real Metadata Written to Disk:** Edit tags and embedded cover art directly in your audio files via `node-taglib-sharp`, with a multi-provider **Current → Suggested** diff picker across **Deezer**, **MusicBrainz**, and **LRCLIB**.
 - **Multi-User Auth & Isolated Libraries:** Enabled by default (`AUTH_ENABLED=true`) with per-user private music directories, salted `scrypt` password hashing, `HttpOnly` sessions, brute-force rate limiting, and host CLI password recovery.
