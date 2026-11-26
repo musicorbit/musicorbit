@@ -27,3 +27,15 @@ MusicOrbit registers with the browser's **Media Session API**, meaning:
 ## Deleting a currently playing track
 
 If you permanently delete a track or album that is currently playing or queued, MusicOrbit immediately removes it from the queue and stops or advances playback cleanly so you never hit a dead stream.
+
+## Install as a Mobile or Desktop App (PWA)
+
+MusicOrbit ships as an installable **Progressive Web App (PWA)** with standalone fullscreen mode, adaptive home-screen icons, and a safe app-shell service worker:
+
+- **iOS (Safari):** Open your MusicOrbit URL, tap **Share → Add to Home Screen**.
+- **Android (Chrome):** Open your HTTPS MusicOrbit URL and tap **Install app** from the browser menu.
+- **Desktop (Chrome / Edge):** Click the **Install** icon in the address bar.
+
+:::tip[HTTPS for Android / Desktop Install]
+Chrome and Edge require HTTPS (or `localhost`) to register the service worker and display the native **Install app** prompt. See [Reverse Proxy & HTTPS](/reverse-proxy/) to serve MusicOrbit over TLS.
+:::
