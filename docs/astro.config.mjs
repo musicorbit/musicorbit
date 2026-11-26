@@ -103,6 +103,7 @@ export default defineConfig({
           label: "Reference",
           items: [
             { label: "Architecture & Tech Stack", slug: "architecture" },
+            { label: "Privacy Policy", slug: "privacy-policy" },
             { label: "Legal Notice & AGPL-3.0", slug: "legal-and-license" },
           ],
         },
