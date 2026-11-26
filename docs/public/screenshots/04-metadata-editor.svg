@@ -1,0 +1,166 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 696" width="1200" height="696">
+  <defs>
+    <linearGradient id="amberGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+    <linearGradient id="art1" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f59e0b"/><stop offset="100%" stop-color="#7c2d12"/></linearGradient>
+    <linearGradient id="art2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#1e1b4b"/></linearGradient>
+    <linearGradient id="art3" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#14b8a6"/><stop offset="100%" stop-color="#0f172a"/></linearGradient>
+    <linearGradient id="art4" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ec4899"/><stop offset="100%" stop-color="#4c0519"/></linearGradient>
+    <linearGradient id="art5" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#eab308"/><stop offset="100%" stop-color="#1c1917"/></linearGradient>
+  </defs>
+  <!-- App Background -->
+  <rect width="1200" height="696" fill="#09090b"/>
+  
+  <!-- Sidebar -->
+  <rect x="0" y="0" width="216" height="624" fill="#0d0d11"/>
+  <line x1="216" y1="0" x2="216" y2="624" stroke="#27272a" stroke-width="1"/>
+  <!-- Brand -->
+  <circle cx="32" cy="36" r="12" fill="#18181b" stroke="#f59e0b" stroke-width="2"/>
+  <circle cx="32" cy="36" r="4" fill="#f59e0b"/>
+  <text x="52" y="41" font-family="Inter,system-ui,sans-serif" font-size="16" font-weight="700" fill="#fafafa">MusicOrbit</text>
+  
+      <rect x="14" y="84" width="188" height="30" rx="7" fill="transparent" />
+      
+      <circle cx="30" cy="99" r="4.5" fill="#52525b" />
+      <text x="44" y="104" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="500" fill="#a1a1aa">Albums</text>
+    
+      <rect x="14" y="120" width="188" height="30" rx="7" fill="transparent" />
+      
+      <circle cx="30" cy="135" r="4.5" fill="#52525b" />
+      <text x="44" y="140" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="500" fill="#a1a1aa">Artists</text>
+    
+      <rect x="14" y="156" width="188" height="30" rx="7" fill="rgba(245,158,11,0.16)" />
+      <rect x="14" y="160" width="3" height="22" rx="1.5" fill="#f59e0b"/>
+      <circle cx="30" cy="171" r="4.5" fill="#f59e0b" />
+      <text x="44" y="176" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#fde68a">Tracks</text>
+    
+      <rect x="14" y="192" width="188" height="30" rx="7" fill="transparent" />
+      
+      <circle cx="30" cy="207" r="4.5" fill="#52525b" />
+      <text x="44" y="212" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="500" fill="#a1a1aa">Playlists</text>
+    
+      <rect x="14" y="248" width="188" height="30" rx="7" fill="transparent" />
+      
+      <circle cx="30" cy="263" r="4.5" fill="#52525b" />
+      <text x="44" y="268" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="500" fill="#a1a1aa">Upload</text>
+    
+      <rect x="14" y="284" width="188" height="30" rx="7" fill="transparent" />
+      
+      <circle cx="30" cy="299" r="4.5" fill="#52525b" />
+      <text x="44" y="304" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="500" fill="#a1a1aa">Review Queue</text>
+    
+      <rect x="14" y="320" width="188" height="30" rx="7" fill="transparent" />
+      
+      <circle cx="30" cy="335" r="4.5" fill="#52525b" />
+      <text x="44" y="340" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="500" fill="#a1a1aa">Activity Logs</text>
+    
+      <rect x="14" y="356" width="188" height="30" rx="7" fill="transparent" />
+      
+      <circle cx="30" cy="371" r="4.5" fill="#52525b" />
+      <text x="44" y="376" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="500" fill="#a1a1aa">Users</text>
+    
+      <rect x="14" y="392" width="188" height="30" rx="7" fill="transparent" />
+      
+      <circle cx="30" cy="407" r="4.5" fill="#52525b" />
+      <text x="44" y="412" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="500" fill="#a1a1aa">System</text>
+    
+  <!-- Account Card -->
+  <rect x="14" y="556" width="188" height="52" rx="10" fill="#141419" stroke="#27272a"/>
+  <text x="28" y="578" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#f4f4f5">admin</text>
+  <text x="28" y="595" font-family="Inter,system-ui,sans-serif" font-size="11" fill="#fbbf24">Admin</text>
+  <circle cx="152" cy="582" r="9" fill="#27272a"/>
+  <circle cx="178" cy="582" r="9" fill="#27272a"/>
+
+  <!-- Top Bar -->
+  <rect x="216" y="0" width="984" height="60" fill="#09090b"/>
+  <line x1="216" y1="60" x2="1200" y2="60" stroke="#27272a" stroke-width="1"/>
+  <rect x="242" y="14" width="380" height="32" rx="8" fill="#141418" stroke="#27272a"/>
+  <text x="260" y="35" font-family="Inter,system-ui,sans-serif" font-size="13" fill="#71717a">Search albums, artists, tracks...</text>
+  <rect x="1030" y="14" width="144" height="32" rx="8" fill="url(#amberGrad)"/>
+  <text x="1058" y="35" font-family="Inter,system-ui,sans-serif" font-size="12.5" font-weight="700" fill="#140f06">+ Upload Music</text>
+
+  <!-- Main Content -->
+  
+  <rect x="248" y="84" width="920" height="516" rx="14" fill="#121216" stroke="#27272a"/>
+  <text x="278" y="122" font-family="Inter,system-ui,sans-serif" font-size="19" font-weight="700" fill="#fafafa">Edit Track Metadata · Multi-Provider Diff</text>
+  <rect x="960" y="100" width="182" height="34" rx="8" fill="url(#amberGrad)"/>
+  <text x="984" y="122" font-family="Inter,system-ui,sans-serif" font-size="12.5" font-weight="700" fill="#140f06">Save Tags to Disk</text>
+
+  <rect x="278" y="152" width="124" height="28" rx="6" fill="rgba(245,158,11,0.16)" stroke="rgba(245,158,11,0.4)"/>
+  <text x="296" y="170" font-family="Inter,system-ui,sans-serif" font-size="12" font-weight="600" fill="#fde68a">MusicBrainz ✓</text>
+  <rect x="412" y="152" width="96" height="28" rx="6" fill="#18181b" stroke="#27272a"/>
+  <text x="434" y="170" font-family="Inter,system-ui,sans-serif" font-size="12" fill="#d4d4d8">Deezer ✓</text>
+  <rect x="518" y="152" width="96" height="28" rx="6" fill="#18181b" stroke="#27272a"/>
+  <text x="538" y="170" font-family="Inter,system-ui,sans-serif" font-size="12" fill="#d4d4d8">LRCLIB ✓</text>
+
+  
+      <rect x="278" y="204" width="864" height="48" rx="8" fill="#0d0d11" stroke="#27272a"/>
+      <text x="296" y="233" font-family="Inter,system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#a1a1aa">Title</text>
+      <text x="410" y="233" font-family="Inter,system-ui,sans-serif" font-size="13" fill="#71717a">01_solar_drift_final</text>
+      <text x="640" y="233" font-family="Inter,system-ui,sans-serif" font-size="13" fill="#fbbf24">→</text>
+      <text x="676" y="233" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#fde68a">Solar Drift</text>
+      <rect x="1046" y="215" width="80" height="26" rx="6" fill="rgba(245,158,11,0.16)" stroke="rgba(245,158,11,0.4)"/>
+      <text x="1065" y="232" font-family="Inter,system-ui,sans-serif" font-size="11.5" font-weight="600" fill="#fde68a">Accept</text>
+    
+      <rect x="278" y="264" width="864" height="48" rx="8" fill="#0d0d11" stroke="#27272a"/>
+      <text x="296" y="293" font-family="Inter,system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#a1a1aa">Artist</text>
+      <text x="410" y="293" font-family="Inter,system-ui,sans-serif" font-size="13" fill="#71717a">Unknown Artist</text>
+      <text x="640" y="293" font-family="Inter,system-ui,sans-serif" font-size="13" fill="#fbbf24">→</text>
+      <text x="676" y="293" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#fde68a">Ketsa</text>
+      <rect x="1046" y="275" width="80" height="26" rx="6" fill="rgba(245,158,11,0.16)" stroke="rgba(245,158,11,0.4)"/>
+      <text x="1065" y="292" font-family="Inter,system-ui,sans-serif" font-size="11.5" font-weight="600" fill="#fde68a">Accept</text>
+    
+      <rect x="278" y="324" width="864" height="48" rx="8" fill="#0d0d11" stroke="#27272a"/>
+      <text x="296" y="353" font-family="Inter,system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#a1a1aa">Album</text>
+      <text x="410" y="353" font-family="Inter,system-ui,sans-serif" font-size="13" fill="#71717a">Solar Horizons</text>
+      <text x="640" y="353" font-family="Inter,system-ui,sans-serif" font-size="13" fill="#fbbf24">→</text>
+      <text x="676" y="353" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#fde68a">Solar Horizons (Deluxe)</text>
+      <rect x="1046" y="335" width="80" height="26" rx="6" fill="rgba(245,158,11,0.16)" stroke="rgba(245,158,11,0.4)"/>
+      <text x="1065" y="352" font-family="Inter,system-ui,sans-serif" font-size="11.5" font-weight="600" fill="#fde68a">Accept</text>
+    
+      <rect x="278" y="384" width="864" height="48" rx="8" fill="#0d0d11" stroke="#27272a"/>
+      <text x="296" y="413" font-family="Inter,system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#a1a1aa">Year</text>
+      <text x="410" y="413" font-family="Inter,system-ui,sans-serif" font-size="13" fill="#71717a">(empty)</text>
+      <text x="640" y="413" font-family="Inter,system-ui,sans-serif" font-size="13" fill="#fbbf24">→</text>
+      <text x="676" y="413" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#fde68a">2024</text>
+      <rect x="1046" y="395" width="80" height="26" rx="6" fill="rgba(245,158,11,0.16)" stroke="rgba(245,158,11,0.4)"/>
+      <text x="1065" y="412" font-family="Inter,system-ui,sans-serif" font-size="11.5" font-weight="600" fill="#fde68a">Accept</text>
+    
+      <rect x="278" y="444" width="864" height="48" rx="8" fill="#0d0d11" stroke="#27272a"/>
+      <text x="296" y="473" font-family="Inter,system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#a1a1aa">Genre</text>
+      <text x="410" y="473" font-family="Inter,system-ui,sans-serif" font-size="13" fill="#71717a">(empty)</text>
+      <text x="640" y="473" font-family="Inter,system-ui,sans-serif" font-size="13" fill="#fbbf24">→</text>
+      <text x="676" y="473" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#fde68a">Electronic / Downtempo</text>
+      <rect x="1046" y="455" width="80" height="26" rx="6" fill="rgba(245,158,11,0.16)" stroke="rgba(245,158,11,0.4)"/>
+      <text x="1065" y="472" font-family="Inter,system-ui,sans-serif" font-size="11.5" font-weight="600" fill="#fde68a">Accept</text>
+    
+      <rect x="278" y="504" width="864" height="48" rx="8" fill="#0d0d11" stroke="#27272a"/>
+      <text x="296" y="533" font-family="Inter,system-ui,sans-serif" font-size="12.5" font-weight="600" fill="#a1a1aa">Lyrics</text>
+      <text x="410" y="533" font-family="Inter,system-ui,sans-serif" font-size="13" fill="#71717a">(empty)</text>
+      <text x="640" y="533" font-family="Inter,system-ui,sans-serif" font-size="13" fill="#fbbf24">→</text>
+      <text x="676" y="533" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#fde68a">Synced LRC · 42 lines</text>
+      <rect x="1046" y="515" width="80" height="26" rx="6" fill="rgba(245,158,11,0.16)" stroke="rgba(245,158,11,0.4)"/>
+      <text x="1065" y="532" font-family="Inter,system-ui,sans-serif" font-size="11.5" font-weight="600" fill="#fde68a">Accept</text>
+    
+
+
+  <!-- Persistent Player Bar -->
+  <rect x="0" y="624" width="1200" height="72" fill="#0f0f13"/>
+  <line x1="0" y1="624" x2="1200" y2="624" stroke="#27272a" stroke-width="1"/>
+  <rect x="18" y="636" width="48" height="48" rx="7" fill="url(#art1)"/>
+  <text x="78" y="656" font-family="Inter,system-ui,sans-serif" font-size="13.5" font-weight="600" fill="#fafafa">Solar Drift</text>
+  <text x="78" y="674" font-family="Inter,system-ui,sans-serif" font-size="11.5" fill="#a1a1aa">Ketsa · FLAC · 942 kbps</text>
+  <circle cx="600" cy="650" r="15" fill="#f59e0b"/>
+  <polygon points="596,644 608,650 596,656" fill="#09090b"/>
+  <rect x="420" y="674" width="360" height="4" rx="2" fill="#27272a"/>
+  <rect x="420" y="674" width="165" height="4" rx="2" fill="#f59e0b"/>
+  <text x="382" y="680" font-family="Inter,system-ui,sans-serif" font-size="11" fill="#71717a">1:48</text>
+  <text x="790" y="680" font-family="Inter,system-ui,sans-serif" font-size="11" fill="#71717a">3:54</text>
+  <rect x="1040" y="646" width="62" height="26" rx="7" fill="rgba(245,158,11,0.14)" stroke="rgba(245,158,11,0.4)"/>
+  <text x="1053" y="663" font-family="Inter,system-ui,sans-serif" font-size="11.5" font-weight="600" fill="#fde68a">Lyrics</text>
+  <rect x="1114" y="646" width="64" height="26" rx="7" fill="#18181b" stroke="#27272a"/>
+  <text x="1127" y="663" font-family="Inter,system-ui,sans-serif" font-size="11.5" fill="#d4d4d8">Queue</text>
+  
+</svg>

@@ -31,9 +31,18 @@ FROM node:22-bookworm-slim AS runner
 
 WORKDIR /app
 
+# Install ffmpeg so browser-incompatible lossless formats (ALAC/AIFF/WMA) transcode to lossless FLAC out of the box
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
+LABEL org.opencontainers.image.source="https://github.com/musicorbit/musicorbit" \
+      org.opencontainers.image.url="https://musicorbit.app" \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
+
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
-    PORT=3001 \
+    PORT=4410 \
     MUSIC_DIR=/music \
     DATA_DIR=/data \
     DOWNLOADS_DIR=/downloads \
@@ -53,9 +62,9 @@ COPY --from=builder --chown=node:node /app/apps/web/dist ./apps/web/dist
 
 USER node
 
-EXPOSE 3001
+EXPOSE 4410
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3001) + '/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 4410) + '/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 CMD ["node", "apps/api/dist/index.js"]

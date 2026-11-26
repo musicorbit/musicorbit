@@ -9,7 +9,7 @@ export default defineConfig({
     proxy: {
       // Forward /api/* requests to the Fastify backend during local dev
       "/api": {
-        target: "http://localhost:3001",
+        target: `http://localhost:${process.env.PORT ?? "4410"}`,
         changeOrigin: true,
       },
     },

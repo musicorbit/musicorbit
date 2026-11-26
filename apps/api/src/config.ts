@@ -39,7 +39,7 @@ const optionalString = z
   .transform((v) => (v && v.length > 0 ? v : null));
 
 const envSchema = z.object({
-  PORT: z.coerce.number().int().min(1).max(65535).default(3001),
+  PORT: z.coerce.number().int().min(1).max(65535).default(4410),
   HOST: z.string().min(1).default("0.0.0.0"),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])

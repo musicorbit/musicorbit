@@ -2,6 +2,8 @@
 
 A self-hosted, open-source music library, browser player, metadata manager, and optional Soulseek acquisition hub — designed to give you a clean single-screen workflow for discovering, tagging, organizing, and playing your own music collection.
 
+**[Documentation & Guides → musicorbit.app](https://musicorbit.app)**
+
 ## Features
 
 - **Incremental Library Scanner:** Indexes `.flac`, `.mp3`, `.m4a`, `.aac`, `.ogg`, `.opus`, and `.wav` files into SQLite (WAL mode) with SHA-256 deduplicated cover art caching.
@@ -14,19 +16,46 @@ A self-hosted, open-source music library, browser player, metadata manager, and 
 - **Post-Processing Pipeline & Review Queue:** Watches `DOWNLOADS_DIR`, matches incoming albums and single tracks, writes clean tags & cover art, handles duplicates, organizes files into `MUSIC_DIR/Artist/Album (Year)/...`, and routes uncertain matches into an interactive **Review Queue**.
 - **Optional External Transfer Integration (`slskd`):** Connect an optional self-hosted `slskd` instance via its REST API to search, queue, and track external peer-to-peer transfers. MusicOrbit is designed to work completely standalone as a local music library and player without `slskd`.
 - **Multi-User Auth & Isolated Libraries:** Enabled by default (`AUTH_ENABLED=true`) with first-run admin setup, per-user isolated music folders, per-user Soulseek permissions (off by default), salted `scrypt` password hashing, `HttpOnly` session cookies, brute-force rate limiting, and host CLI password recovery.
-- **Single-Container Docker Release:** Multi-stage Docker image serving both the Fastify API and the compiled React SPA on one port (`3001`).
+- **Single-Container Docker Release:** Multi-stage Docker image serving both the Fastify API and the compiled React SPA on one port (`4410`).
 
 ## Quick Start with Docker
 
-```bash
-git clone https://github.com/your-org/musicorbit.git
-cd musicorbit
-docker compose up -d --build
+No need to clone the repository — create a `docker-compose.yml` file with the pre-built multi-arch image (`linux/amd64` + `linux/arm64`):
+
+```yaml
+services:
+  musicorbit:
+    image: ghcr.io/musicorbit/musicorbit:latest
+    container_name: musicorbit
+    restart: unless-stopped
+    ports:
+      - "4410:4410"
+    environment:
+      MUSIC_DIR: /music
+      DATA_DIR: /data
+      DOWNLOADS_DIR: /downloads
+      AUTH_ENABLED: "true"
+    volumes:
+      - ./music:/music
+      - ./data:/data
+      - ./downloads:/downloads
 ```
 
-Open **http://localhost:3001** in your browser. On first launch (with `AUTH_ENABLED=true`), MusicOrbit will prompt you to create your local admin account.
+Then start MusicOrbit:
 
-To run the optional bundled `slskd` daemon alongside MusicOrbit:
+```bash
+docker compose up -d
+```
+
+Open **http://localhost:4410** in your browser. On first launch (with `AUTH_ENABLED=true`), MusicOrbit will prompt you to create your local admin account.
+
+To update to the latest release later:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+To run the optional bundled `slskd` daemon alongside MusicOrbit (using the full [`docker-compose.yml`](docker-compose.yml) in this repo):
 
 ```bash
 docker compose --profile soulseek up -d
@@ -47,7 +76,7 @@ npm install
 # 2. Copy the example environment file
 cp .env.example .env
 
-# 3. Start the Fastify API (port 3001) and Vite Web UI (port 5173)
+# 3. Start the Fastify API (port 4410) and Vite Web UI (port 5173)
 npm run dev
 ```
 
@@ -57,12 +86,14 @@ Open **http://localhost:5173** in your browser.
 
 | Command | Description |
 | --- | --- |
-| `npm run dev` | Run API (`:3001`) and Web UI (`:5173`) together in watch mode |
+| `npm run dev` | Run API (`:4410`) and Web UI (`:5173`) together in watch mode |
 | `npm run dev:api` | Run only the Fastify backend |
 | `npm run dev:web` | Run only the Vite frontend |
 | `npm run typecheck` | Type-check `@musicorbit/shared`, `@musicorbit/api`, and `@musicorbit/web` |
 | `npm test` | Run the API automated test suite |
 | `npm run build` | Build production bundles for all workspaces |
+| `npm run dev:docs` | Run the Astro + Starlight docs site (`docs/`) locally on `:4321` |
+| `npm run build:docs` | Build the static documentation site into `docs/dist/` |
 | `npm run reset-password -- <username>` | Interactively reset any user or admin password on the host (hidden prompt, revokes active sessions) |
 
 ### Resetting a Lost Admin Password
@@ -83,7 +114,7 @@ Passwords are never accepted as command-line arguments (so they cannot leak into
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PORT` | `3001` | HTTP port for the API (and web UI in production/Docker mode) |
+| `PORT` | `4410` | HTTP port for the API (and web UI in production/Docker mode) |
 | `HOST` | `0.0.0.0` | Network interface to bind |
 | `MUSIC_DIR` | `./sample-music` | Directory containing your audio library (`/music` in Docker) |
 | `DATA_DIR` | `./data` | Directory for `musicorbit.db`, cover cache, and artist images (`/data` in Docker) |
@@ -102,6 +133,7 @@ musicorbit/
 ├── packages/shared/   # Shared TypeScript types & API contracts
 ├── apps/api/          # Fastify v5 REST API, SQLite/Drizzle DB, scanner, tag writer, importer
 ├── apps/web/          # React 19 + Vite + Tailwind CSS v4 single-page app
+├── docs/              # Astro + Starlight landing page & documentation (musicorbit.app)
 ├── Dockerfile         # Multi-stage production container
 └── docker-compose.yml # MusicOrbit + optional slskd profile
 ```

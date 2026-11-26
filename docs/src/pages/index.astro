@@ -1,0 +1,1257 @@
+---
+import { getShowcaseSlides } from "../data/slides";
+
+const slides = getShowcaseSlides();
+const githubUrl = "https://github.com/musicorbit/musicorbit";
+
+const features = [
+  {
+    title: "Docker deployment",
+    detail: "One Compose file, local storage, zero subscriptions.",
+    icon: "container",
+  },
+  {
+    title: "Lossless browser player",
+    detail: "Byte-range streaming, queue, and auto ALAC → FLAC.",
+    icon: "disc",
+  },
+  {
+    title: "Synced sing-along lyrics",
+    detail: "Live timed .lrc sidecars fetched automatically via LRCLIB.",
+    icon: "mic",
+  },
+  {
+    title: "Powerful metadata",
+    detail: "Deezer, MusicBrainz, cover art, and real tags on disk.",
+    icon: "tags",
+  },
+  {
+    title: "Multi-user & isolated",
+    detail: "Private per-user libraries, scrypt auth, and CLI recovery.",
+    icon: "users",
+  },
+  {
+    title: "Library organizer",
+    detail: "Folder presets, bulk import, and interactive Review Queue.",
+    icon: "folders",
+  },
+  {
+    title: "Playlists & .m3u8 sync",
+    detail: "Spotify CSV import plus live sync for Navidrome & Symfonium.",
+    icon: "playlist",
+  },
+  {
+    title: "Optional Soulseek hub",
+    detail: "Connect slskd when you want it; 100% standalone without it.",
+    icon: "globe",
+  },
+] as const;
+
+const iconPaths: Record<string, string> = {
+  container:
+    '<rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><circle cx="7" cy="7" r="0.8" fill="currentColor"/><circle cx="7" cy="17" r="0.8" fill="currentColor"/>',
+  disc:
+    '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 6a6 6 0 0 1 6 6"/>',
+  mic:
+    '<path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/>',
+  tags:
+    '<path d="M12 2H2v10l9.29 9.29c.94.94 2.48.94 3.42 0l6.58-6.58c.94-.94.94-2.48 0-3.42L12 2Z"/><circle cx="7" cy="7" r="1.2" fill="currentColor"/>',
+  users:
+    '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  folders:
+    '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  playlist:
+    '<path d="M21 15V6"/><path d="M18.5 18a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z"/><path d="M12 12H3"/><path d="M16 6H3"/><path d="M12 18H3"/>',
+  globe:
+    '<circle cx="12" cy="12" r="9"/><path d="M2 12h20"/><path d="M12 3a14 14 0 0 1 0 18"/><path d="M12 3a14 14 0 0 0 0 18"/>',
+};
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MusicOrbit — Your listening space</title>
+    <meta
+      name="description"
+      content="A self-hosted, open-source home for your FLAC, MP3, and lossless music library. Browser player, synced sing-along lyrics, metadata editor, and multi-user isolation."
+    />
+    <meta property="og:title" content="MusicOrbit — Your listening space" />
+    <meta
+      property="og:description"
+      content="A self-hosted, open-source music library, lossless browser player, synced lyrics, and metadata hub."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://musicorbit.app/" />
+    <meta name="theme-color" content="#070812" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="mo-shell">
+      <!-- Cosmic starfield + warm nebula atmosphere -->
+      <canvas class="mo-bg" id="mo-stars" aria-hidden="true"></canvas>
+      <div class="mo-nebula mo-nb-1" aria-hidden="true"></div>
+      <div class="mo-nebula mo-nb-2" aria-hidden="true"></div>
+      <div class="mo-nebula mo-nb-3" aria-hidden="true"></div>
+
+      <!-- Top Navbar -->
+      <header class="mo-header">
+        <a href="/" class="mo-brand" aria-label="MusicOrbit Home">
+          <img src="/favicon.svg" alt="" width="30" height="30" />
+          <span>MusicOrbit</span>
+        </a>
+
+        <nav class="mo-nav" aria-label="Primary">
+          <a href="/what-is-musicorbit/" class="mo-nav-link">Docs</a>
+          <a href="/installation/" class="mo-nav-link mo-nav-hide-sm">Installation</a>
+          <a
+            href={githubUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="mo-nav-gh"
+          >
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true">
+              <path
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              ></path>
+            </svg>
+            <span>GitHub</span>
+            <span class="mo-nav-sep" aria-hidden="true"></span>
+            <span class="mo-nav-lic">AGPL-3.0</span>
+          </a>
+        </nav>
+      </header>
+
+      <!-- Main Split Showcase -->
+      <main class="mo-main">
+        <!-- Left Hero & 2x4 Feature Grid -->
+        <section class="mo-text">
+          <div class="mo-eyebrow">OPEN SOURCE · AGPL-3.0</div>
+
+          <h1 class="mo-h1">
+            MusicOrbit
+            <span class="mo-accent">Your listening space.</span>
+          </h1>
+
+          <p class="mo-subtitle">
+            A self-hosted home for your FLAC, MP3, and lossless library.<br />
+            Your files stay on your hardware—tagged, organized, and ready to stream.
+          </p>
+
+          <div class="mo-ctas">
+            <a href="/what-is-musicorbit/" class="mo-btn-glow">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+              </svg>
+              <span>Explore docs</span>
+            </a>
+
+            <a href="/installation/" class="mo-btn-primary">
+              <span>Get started</span>
+              <span aria-hidden="true">→</span>
+            </a>
+          </div>
+
+          <div class="mo-feats">
+            {
+              features.map((feat) => (
+                <div class="mo-feat">
+                  <div class="mo-feat-icon" aria-hidden="true">
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="14"
+                      height="14"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.9"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      set:html={iconPaths[feat.icon]}
+                    />
+                  </div>
+                  <div class="mo-feat-copy">
+                    <div class="mo-feat-title">{feat.title}</div>
+                    <div class="mo-feat-detail">{feat.detail}</div>
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+        </section>
+
+        <!-- Right Visual Screenshot Carousel -->
+        <section class="mo-visual" aria-label="MusicOrbit interface screenshots">
+          <div class="mo-frame-glow" aria-hidden="true"></div>
+
+          <div class="mo-frame-wrap">
+            <button
+              type="button"
+              class="mo-app-frame"
+              id="mo-open-lb"
+              aria-label="Open full-size screenshot viewer"
+            >
+              <div class="mo-frame-border" aria-hidden="true"></div>
+              <div class="mo-frame-inner">
+                {
+                  slides.map((slide, idx) => (
+                    <img
+                      src={slide.src}
+                      alt={`${slide.title} — ${slide.caption}`}
+                      width="1200"
+                      height="696"
+                      class:list={["mo-slide-img", { active: idx === 0 }]}
+                      data-slide={idx}
+                      loading={idx === 0 ? "eager" : "lazy"}
+                    />
+                  ))
+                }
+                <span class="mo-zoom-badge">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="11" cy="11" r="8" />
+                    <path d="m21 21-4.3-4.3" />
+                    <path d="M11 8v6" />
+                    <path d="M8 11h6" />
+                  </svg>
+                  Expand
+                </span>
+              </div>
+            </button>
+
+            <div class="mo-controls">
+              <div class="mo-dots" role="tablist" aria-label="Select screenshot">
+                {
+                  slides.map((slide, idx) => (
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={idx === 0 ? "true" : "false"}
+                      aria-label={slide.title}
+                      title={slide.title}
+                      class:list={["mo-dot", { active: idx === 0 }]}
+                      data-dot={idx}
+                    >
+                      <span class="mo-dot-fill"></span>
+                    </button>
+                  ))
+                }
+                <button
+                  type="button"
+                  class="mo-play-btn"
+                  id="mo-toggle-play"
+                  aria-label="Pause slideshow"
+                  title="Pause slideshow"
+                >
+                  <svg id="mo-icon-pause" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+                    <rect x="6" y="4" width="4" height="16" rx="1" />
+                    <rect x="14" y="4" width="4" height="16" rx="1" />
+                  </svg>
+                  <svg id="mo-icon-play" viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true" style="display: none;">
+                    <polygon points="6,4 20,12 6,20" />
+                  </svg>
+                </button>
+              </div>
+
+              <div class="mo-caption-row">
+                <span class="mo-slide-title" id="mo-slide-title">{slides[0]?.title}</span>
+                <span class="mo-slide-sep" aria-hidden="true">|</span>
+                <span class="mo-slide-count" id="mo-slide-count">1 / {slides.length}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- Minimal Footer -->
+      <footer class="mo-footer">
+        <span>© 2026 MusicOrbit · Self-hosted open-source music hub</span>
+      </footer>
+    </div>
+
+    <!-- Fullscreen Lightbox Dialog -->
+    <dialog class="mo-lb" id="mo-lightbox" aria-label="Screenshot lightbox">
+      <div class="mo-lb-top">
+        <div class="mo-lb-meta">
+          <span class="mo-lb-title" id="mo-lb-title">{slides[0]?.title}</span>
+          <span class="mo-lb-desc" id="mo-lb-desc">{slides[0]?.caption}</span>
+        </div>
+        <button type="button" class="mo-lb-close" id="mo-lb-close" aria-label="Close lightbox">
+          ✕
+        </button>
+      </div>
+
+      <div class="mo-lb-stage">
+        <button type="button" class="mo-lb-arrow mo-lb-prev" id="mo-lb-prev" aria-label="Previous screenshot">
+          ‹
+        </button>
+        <img
+          id="mo-lb-img"
+          src={slides[0]?.src}
+          alt={slides[0]?.title}
+          width="1200"
+          height="696"
+        />
+        <button type="button" class="mo-lb-arrow mo-lb-next" id="mo-lb-next" aria-label="Next screenshot">
+          ›
+        </button>
+      </div>
+
+      <div class="mo-lb-rail">
+        {
+          slides.map((slide, idx) => (
+            <button
+              type="button"
+              class:list={["mo-lb-thumb", { active: idx === 0 }]}
+              data-lb-thumb={idx}
+              aria-label={`View ${slide.title}`}
+            >
+              <img src={slide.src} alt="" width="120" height="70" loading="lazy" />
+              <span>{slide.title}</span>
+            </button>
+          ))
+        }
+      </div>
+    </dialog>
+
+    <script define:vars={{ slidesData: slides }}>
+      // 1. Subtle animated starfield canvas
+      const canvas = document.getElementById("mo-stars");
+      if (canvas instanceof HTMLCanvasElement) {
+        const ctx = canvas.getContext("2d");
+        const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        let width = 0;
+        let height = 0;
+        let stars = [];
+
+        const initStars = () => {
+          const dpr = Math.min(window.devicePixelRatio || 1, 2);
+          width = window.innerWidth;
+          height = window.innerHeight;
+          canvas.width = Math.floor(width * dpr);
+          canvas.height = Math.floor(height * dpr);
+          canvas.style.width = `${width}px`;
+          canvas.style.height = `${height}px`;
+          ctx?.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+          const count = Math.min(180, Math.max(70, Math.floor((width * height) / 9500)));
+          stars = Array.from({ length: count }, () => {
+            const warm = Math.random() < 0.32;
+            return {
+              x: Math.random() * width,
+              y: Math.random() * height,
+              r: Math.random() * 1.35 + 0.35,
+              baseAlpha: Math.random() * 0.55 + 0.2,
+              phase: Math.random() * Math.PI * 2,
+              speed: Math.random() * 0.0014 + 0.0004,
+              color: warm ? "253, 224, 155" : "226, 232, 245",
+              sparkle: Math.random() < 0.07,
+            };
+          });
+        };
+
+        const render = (now) => {
+          if (!ctx) return;
+          ctx.clearRect(0, 0, width, height);
+          for (const s of stars) {
+            const twinkle = reduceMotion
+              ? 0.8
+              : 0.45 + 0.55 * Math.sin(now * s.speed + s.phase);
+            const alpha = s.baseAlpha * twinkle;
+            ctx.fillStyle = `rgba(${s.color}, ${alpha.toFixed(3)})`;
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+            ctx.fill();
+
+            if (s.sparkle && alpha > 0.45) {
+              const arm = s.r * 4.5;
+              ctx.strokeStyle = `rgba(${s.color}, ${(alpha * 0.45).toFixed(3)})`;
+              ctx.lineWidth = 0.7;
+              ctx.beginPath();
+              ctx.moveTo(s.x - arm, s.y);
+              ctx.lineTo(s.x + arm, s.y);
+              ctx.moveTo(s.x, s.y - arm);
+              ctx.lineTo(s.x, s.y + arm);
+              ctx.stroke();
+            }
+          }
+          if (!reduceMotion) requestAnimationFrame(render);
+        };
+
+        initStars();
+        render(0);
+        window.addEventListener("resize", initStars, { passive: true });
+      }
+
+      // 2. Interactive screenshot carousel + Lightbox
+      const SLIDE_MS = 5200;
+      let current = 0;
+      let playing = true;
+      let timerId = null;
+
+      const imgs = Array.from(document.querySelectorAll(".mo-slide-img"));
+      const dots = Array.from(document.querySelectorAll(".mo-dot"));
+      const titleEl = document.getElementById("mo-slide-title");
+      const countEl = document.getElementById("mo-slide-count");
+      const playBtn = document.getElementById("mo-toggle-play");
+      const iconPause = document.getElementById("mo-icon-pause");
+      const iconPlay = document.getElementById("mo-icon-play");
+
+      const lb = document.getElementById("mo-lightbox");
+      const lbImg = document.getElementById("mo-lb-img");
+      const lbTitle = document.getElementById("mo-lb-title");
+      const lbDesc = document.getElementById("mo-lb-desc");
+      const lbThumbs = Array.from(document.querySelectorAll(".mo-lb-thumb"));
+
+      const syncLightbox = () => {
+        const slide = slidesData[current];
+        if (!slide) return;
+        if (lbImg instanceof HTMLImageElement) {
+          lbImg.src = slide.src;
+          lbImg.alt = `${slide.title} — ${slide.caption}`;
+        }
+        if (lbTitle) lbTitle.textContent = slide.title;
+        if (lbDesc) lbDesc.textContent = slide.caption;
+        lbThumbs.forEach((btn, i) => btn.classList.toggle("active", i === current));
+      };
+
+      const setSlide = (nextIdx) => {
+        current = (nextIdx + slidesData.length) % slidesData.length;
+        imgs.forEach((img, i) => img.classList.toggle("active", i === current));
+        dots.forEach((dot, i) => {
+          const isActive = i === current;
+          dot.classList.toggle("active", isActive);
+          dot.setAttribute("aria-selected", String(isActive));
+          // Restart dot fill animation cleanly
+          const fill = dot.querySelector(".mo-dot-fill");
+          if (fill instanceof HTMLElement) {
+            fill.style.animation = "none";
+            if (isActive && playing) {
+              void fill.offsetWidth;
+              fill.style.animation = `moDotFill ${SLIDE_MS}ms linear forwards`;
+            }
+          }
+        });
+        const slide = slidesData[current];
+        if (titleEl && slide) titleEl.textContent = slide.title;
+        if (countEl) countEl.textContent = `${current + 1} / ${slidesData.length}`;
+        syncLightbox();
+      };
+
+      const restartTimer = () => {
+        if (timerId) window.clearInterval(timerId);
+        timerId = null;
+        if (playing) {
+          timerId = window.setInterval(() => setSlide(current + 1), SLIDE_MS);
+        }
+      };
+
+      const setPlaying = (nextPlaying) => {
+        playing = nextPlaying;
+        if (iconPause) iconPause.style.display = playing ? "block" : "none";
+        if (iconPlay) iconPlay.style.display = playing ? "none" : "block";
+        if (playBtn) {
+          playBtn.setAttribute("aria-label", playing ? "Pause slideshow" : "Play slideshow");
+          playBtn.setAttribute("title", playing ? "Pause slideshow" : "Play slideshow");
+        }
+        setSlide(current);
+        restartTimer();
+      };
+
+      dots.forEach((dot, idx) => {
+        dot.addEventListener("click", () => {
+          setSlide(idx);
+          restartTimer();
+        });
+      });
+
+      playBtn?.addEventListener("click", () => setPlaying(!playing));
+
+      document.getElementById("mo-open-lb")?.addEventListener("click", () => {
+        if (lb instanceof HTMLDialogElement) {
+          syncLightbox();
+          lb.showModal();
+        }
+      });
+
+      document.getElementById("mo-lb-close")?.addEventListener("click", () => {
+        if (lb instanceof HTMLDialogElement) lb.close();
+      });
+
+      document.getElementById("mo-lb-prev")?.addEventListener("click", () => {
+        setSlide(current - 1);
+        restartTimer();
+      });
+
+      document.getElementById("mo-lb-next")?.addEventListener("click", () => {
+        setSlide(current + 1);
+        restartTimer();
+      });
+
+      lbThumbs.forEach((btn, idx) => {
+        btn.addEventListener("click", () => {
+          setSlide(idx);
+          restartTimer();
+        });
+      });
+
+      lb?.addEventListener("click", (ev) => {
+        if (ev.target === lb && lb instanceof HTMLDialogElement) lb.close();
+      });
+
+      window.addEventListener("keydown", (ev) => {
+        if (lb instanceof HTMLDialogElement && lb.open) {
+          if (ev.key === "ArrowLeft") {
+            setSlide(current - 1);
+            restartTimer();
+          } else if (ev.key === "ArrowRight") {
+            setSlide(current + 1);
+            restartTimer();
+          }
+        }
+      });
+
+      setSlide(0);
+      restartTimer();
+    </script>
+
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      :root {
+        --bg: #070812;
+        --text-h1: #faf7f2;
+        --text-main: #f0eadf;
+        --text-body: #9ca3b8;
+        --text-soft: #7e859c;
+        --amber: #f59e0b;
+        --amber-hi: #fde047;
+        --coral: #fb923c;
+        --glass-border: rgba(255, 255, 255, 0.08);
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--text-main);
+        font-family: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          Roboto, sans-serif;
+        font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .mo-shell {
+        position: fixed;
+        inset: 0;
+        overflow: hidden;
+        display: grid;
+        grid-template-rows: 60px 1fr 44px;
+        background: var(--bg);
+      }
+
+      .mo-bg {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      .mo-nebula {
+        position: fixed;
+        border-radius: 50%;
+        filter: blur(110px);
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      .mo-nb-1 {
+        width: 56vw;
+        height: 56vw;
+        top: -22vw;
+        left: -14vw;
+        background: radial-gradient(circle, rgba(245, 158, 11, 0.16), transparent 68%);
+      }
+
+      .mo-nb-2 {
+        width: 52vw;
+        height: 52vw;
+        right: -12vw;
+        bottom: -18vw;
+        background: radial-gradient(circle, rgba(99, 102, 241, 0.2), transparent 70%);
+      }
+
+      .mo-nb-3 {
+        width: 38vw;
+        height: 38vw;
+        top: -8vw;
+        right: 12vw;
+        background: radial-gradient(circle, rgba(234, 88, 12, 0.11), transparent 70%);
+      }
+
+      /* Header */
+      .mo-header {
+        position: relative;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 52px;
+        background: rgba(7, 8, 18, 0.72);
+        backdrop-filter: blur(18px);
+        border-bottom: 1px solid var(--glass-border);
+      }
+
+      .mo-brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        text-decoration: none;
+        color: var(--text-h1);
+        font-weight: 700;
+        font-size: 1.0625rem;
+        letter-spacing: -0.02em;
+      }
+
+      .mo-nav {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+      }
+
+      .mo-nav-link {
+        color: #b7bed0;
+        text-decoration: none;
+        font-size: 0.875rem;
+        font-weight: 500;
+        transition: color 150ms ease;
+      }
+
+      .mo-nav-link:hover {
+        color: #fde68a;
+      }
+
+      .mo-nav-gh {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.13);
+        background: rgba(255, 255, 255, 0.04);
+        color: #e9ecf5;
+        text-decoration: none;
+        font-size: 0.8125rem;
+        font-weight: 500;
+        transition: border-color 150ms ease, background 150ms ease;
+      }
+
+      .mo-nav-gh:hover {
+        border-color: rgba(245, 158, 11, 0.55);
+        background: rgba(245, 158, 11, 0.1);
+      }
+
+      .mo-nav-sep {
+        width: 1px;
+        height: 12px;
+        background: rgba(255, 255, 255, 0.16);
+      }
+
+      .mo-nav-lic {
+        color: #fbbf24;
+        font-size: 0.75rem;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* Main Split Showcase */
+      .mo-main {
+        position: relative;
+        z-index: 5;
+        display: grid;
+        grid-template-columns: 39% 1fr;
+        align-items: center;
+        column-gap: clamp(32px, 3.6vw, 68px);
+        padding: 0 52px;
+        min-height: 0;
+      }
+
+      .mo-text {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        max-width: 560px;
+      }
+
+      .mo-eyebrow {
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+        color: #fbbf24;
+        margin-bottom: 12px;
+      }
+
+      .mo-h1 {
+        margin: 0;
+        font-size: clamp(1.9rem, min(3.3vw, 5vh), 3.35rem);
+        font-weight: 800;
+        line-height: 1.07;
+        letter-spacing: -0.035em;
+        color: var(--text-h1);
+      }
+
+      .mo-accent {
+        display: block;
+        margin-top: 2px;
+        background: linear-gradient(105deg, #fde047 0%, #f59e0b 45%, #fb923c 80%, #fde68a 100%);
+        background-size: 200% auto;
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        filter: drop-shadow(0 0 24px rgba(245, 158, 11, 0.26));
+        animation: moShimmer 7s ease-in-out infinite;
+      }
+
+      @keyframes moShimmer {
+        0%,
+        100% {
+          background-position: 0% 50%;
+        }
+        50% {
+          background-position: 100% 50%;
+        }
+      }
+
+      .mo-subtitle {
+        margin: 16px 0 0;
+        font-size: clamp(0.88rem, 1vw, 0.98rem);
+        line-height: 1.62;
+        color: var(--text-body);
+      }
+
+      .mo-ctas {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 22px;
+      }
+
+      .mo-btn-glow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 18px;
+        border-radius: 10px;
+        text-decoration: none;
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: #fde68a;
+        background: rgba(245, 158, 11, 0.08);
+        border: 1px solid rgba(251, 191, 36, 0.52);
+        box-shadow: 0 0 20px rgba(245, 158, 11, 0.16);
+        transition: transform 150ms ease, background 150ms ease, box-shadow 150ms ease;
+      }
+
+      .mo-btn-glow:hover {
+        background: rgba(245, 158, 11, 0.16);
+        box-shadow: 0 0 28px rgba(245, 158, 11, 0.3);
+        transform: translateY(-1px);
+      }
+
+      .mo-btn-primary {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 20px;
+        border-radius: 10px;
+        text-decoration: none;
+        font-size: 0.875rem;
+        font-weight: 700;
+        color: #140f06;
+        background: linear-gradient(135deg, #fbbf24, #f59e0b);
+        box-shadow: 0 6px 24px rgba(245, 158, 11, 0.34);
+        transition: transform 150ms ease, filter 150ms ease, box-shadow 150ms ease;
+      }
+
+      .mo-btn-primary:hover {
+        filter: brightness(1.07);
+        box-shadow: 0 8px 30px rgba(245, 158, 11, 0.48);
+        transform: translateY(-1px);
+      }
+
+      /* Compact 2x4 Feature Grid */
+      .mo-feats {
+        margin-top: 24px;
+        padding-top: 20px;
+        border-top: 1px solid rgba(255, 255, 255, 0.09);
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px 18px;
+      }
+
+      .mo-feat {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+      }
+
+      .mo-feat-icon {
+        flex-shrink: 0;
+        width: 26px;
+        height: 26px;
+        border-radius: 7px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: #fbbf24;
+        background: rgba(245, 158, 11, 0.1);
+        border: 1px solid rgba(245, 158, 11, 0.32);
+        margin-top: 1px;
+      }
+
+      .mo-feat-title {
+        font-size: 0.8rem;
+        font-weight: 650;
+        color: #f3efe6;
+        line-height: 1.25;
+      }
+
+      .mo-feat-detail {
+        margin-top: 2px;
+        font-size: 0.725rem;
+        line-height: 1.42;
+        color: var(--text-soft);
+      }
+
+      /* Right Showcase Visual */
+      .mo-visual {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 0;
+      }
+
+      .mo-frame-glow {
+        position: absolute;
+        inset: 4% 2% 10% 2%;
+        background: radial-gradient(
+          ellipse at center,
+          rgba(245, 158, 11, 0.19) 0%,
+          rgba(99, 102, 241, 0.12) 48%,
+          transparent 75%
+        );
+        filter: blur(42px);
+        pointer-events: none;
+      }
+
+      .mo-frame-wrap {
+        position: relative;
+        width: 100%;
+        max-width: min(860px, 100%);
+      }
+
+      .mo-app-frame {
+        position: relative;
+        display: block;
+        width: 100%;
+        aspect-ratio: 1200 / 696;
+        padding: 1.5px;
+        border: 0;
+        border-radius: 13px;
+        background: rgba(255, 255, 255, 0.08);
+        cursor: zoom-in;
+        overflow: hidden;
+        box-shadow:
+          0 24px 60px rgba(0, 0, 0, 0.65),
+          0 0 0 1px rgba(255, 255, 255, 0.06);
+        transition: transform 220ms ease, box-shadow 220ms ease;
+      }
+
+      .mo-app-frame:hover {
+        transform: translateY(-2px);
+        box-shadow:
+          0 28px 70px rgba(0, 0, 0, 0.72),
+          0 0 36px rgba(245, 158, 11, 0.18);
+      }
+
+      .mo-frame-border {
+        position: absolute;
+        inset: -50%;
+        background: conic-gradient(
+          from 0deg,
+          transparent 0deg 235deg,
+          rgba(251, 191, 36, 0.72) 280deg,
+          rgba(251, 146, 60, 0.55) 315deg,
+          transparent 360deg
+        );
+        animation: moSpin 11s linear infinite;
+      }
+
+      @keyframes moSpin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .mo-frame-inner {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        border-radius: 11.5px;
+        overflow: hidden;
+        background: #09090b;
+      }
+
+      .mo-slide-img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        opacity: 0;
+        transition: opacity 420ms ease;
+      }
+
+      .mo-slide-img.active {
+        opacity: 1;
+      }
+
+      .mo-zoom-badge {
+        position: absolute;
+        right: 12px;
+        bottom: 12px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 10px;
+        border-radius: 8px;
+        background: rgba(9, 9, 14, 0.82);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        color: #f3efe6;
+        font-size: 0.72rem;
+        font-weight: 500;
+        opacity: 0;
+        transform: translateY(4px);
+        transition: opacity 180ms ease, transform 180ms ease;
+        backdrop-filter: blur(8px);
+      }
+
+      .mo-app-frame:hover .mo-zoom-badge {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      /* Carousel controls */
+      .mo-controls {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .mo-dots {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .mo-dot {
+        position: relative;
+        width: 8px;
+        height: 6px;
+        padding: 0;
+        border: 0;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.22);
+        cursor: pointer;
+        overflow: hidden;
+        transition: width 220ms ease, background 180ms ease;
+      }
+
+      .mo-dot:hover {
+        background: rgba(255, 255, 255, 0.42);
+      }
+
+      .mo-dot.active {
+        width: 30px;
+        background: rgba(245, 158, 11, 0.26);
+      }
+
+      .mo-dot-fill {
+        position: absolute;
+        inset: 0;
+        width: 0%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #f59e0b, #fde047);
+      }
+
+      @keyframes moDotFill {
+        from {
+          width: 0%;
+        }
+        to {
+          width: 100%;
+        }
+      }
+
+      .mo-play-btn {
+        margin-left: 4px;
+        width: 24px;
+        height: 24px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(255, 255, 255, 0.05);
+        color: #c7cedf;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: color 150ms ease, border-color 150ms ease;
+      }
+
+      .mo-play-btn:hover {
+        color: #fde047;
+        border-color: rgba(245, 158, 11, 0.48);
+      }
+
+      .mo-caption-row {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 0.8125rem;
+      }
+
+      .mo-slide-title {
+        color: #ebe6db;
+        font-weight: 600;
+      }
+
+      .mo-slide-sep {
+        color: rgba(255, 255, 255, 0.22);
+      }
+
+      .mo-slide-count {
+        color: var(--text-soft);
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* Footer */
+      .mo-footer {
+        position: relative;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        color: #7d859c;
+        font-size: 0.75rem;
+      }
+
+      /* Lightbox dialog */
+      .mo-lb {
+        width: min(1160px, 94vw);
+        max-height: 92vh;
+        padding: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 16px;
+        background: rgba(9, 10, 20, 0.96);
+        color: var(--text-main);
+        box-shadow: 0 32px 90px rgba(0, 0, 0, 0.8);
+      }
+
+      .mo-lb::backdrop {
+        background: rgba(3, 4, 10, 0.82);
+        backdrop-filter: blur(10px);
+      }
+
+      .mo-lb-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 12px;
+      }
+
+      .mo-lb-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .mo-lb-title {
+        font-weight: 700;
+        font-size: 0.98rem;
+        color: #faf7f2;
+      }
+
+      .mo-lb-desc {
+        font-size: 0.8rem;
+        color: var(--text-body);
+      }
+
+      .mo-lb-close {
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.05);
+        color: #e5e7eb;
+        cursor: pointer;
+        font-size: 1rem;
+      }
+
+      .mo-lb-close:hover {
+        border-color: rgba(245, 158, 11, 0.55);
+        color: #fde047;
+      }
+
+      .mo-lb-stage {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .mo-lb-stage img {
+        width: 100%;
+        max-height: 66vh;
+        object-fit: contain;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: #09090b;
+      }
+
+      .mo-lb-arrow {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 40px;
+        height: 40px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(9, 10, 20, 0.82);
+        color: #faf7f2;
+        font-size: 1.5rem;
+        line-height: 1;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .mo-lb-prev {
+        left: 12px;
+      }
+
+      .mo-lb-next {
+        right: 12px;
+      }
+
+      .mo-lb-arrow:hover {
+        border-color: #f59e0b;
+        color: #fde047;
+      }
+
+      .mo-lb-rail {
+        display: grid;
+        grid-template-columns: repeat(8, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .mo-lb-thumb {
+        padding: 4px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(255, 255, 255, 0.03);
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        text-align: left;
+      }
+
+      .mo-lb-thumb.active {
+        border-color: #f59e0b;
+        background: rgba(245, 158, 11, 0.12);
+      }
+
+      .mo-lb-thumb img {
+        width: 100%;
+        aspect-ratio: 1200 / 696;
+        object-fit: cover;
+        border-radius: 5px;
+      }
+
+      .mo-lb-thumb span {
+        font-size: 0.66rem;
+        color: #c7cedf;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      /* Responsive stack below 980px */
+      @media (max-width: 980px) {
+        .mo-shell {
+          position: relative;
+          min-height: 100vh;
+          overflow: visible;
+          grid-template-rows: 60px auto 48px;
+        }
+
+        .mo-header {
+          padding: 0 22px;
+        }
+
+        .mo-main {
+          grid-template-columns: 1fr;
+          padding: 36px 22px 44px;
+          gap: 36px;
+        }
+
+        .mo-text {
+          max-width: 680px;
+        }
+
+        .mo-lb-rail {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 640px) {
+        .mo-nav-hide-sm {
+          display: none;
+        }
+
+        .mo-feats {
+          grid-template-columns: 1fr;
+        }
+
+        .mo-lb-rail {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .mo-accent,
+        .mo-frame-border {
+          animation: none;
+        }
+      }
+    </style>
+  </body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "name": "musicorbit-docs",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Landing page and documentation for MusicOrbit (musicorbit.app)",
+  "scripts": {
+    "dev": "astro dev --port 4321",
+    "build": "astro build",
+    "preview": "astro preview --port 4321",
+    "check": "astro check"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.34.3",
+    "astro": "^5.7.10",
+    "sharp": "^0.34.1"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.4",
+    "typescript": "^5.8.2"
+  }
+}

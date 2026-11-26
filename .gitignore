@@ -3,15 +3,16 @@ node_modules/
 
 # Build outputs
 dist/
+.astro/
 *.tsbuildinfo
 
-# Local environment & runtime data
+# Local environment & runtime data (anchored to repo root)
 .env
 .env.local
-data/
-sample-music/
-libraries/
-downloads/
+/data/
+/sample-music/
+/libraries/
+/downloads/
 *.db
 *.db-shm
 *.db-wal

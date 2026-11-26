@@ -1,12 +1,14 @@
 services:
   musicorbit:
-    build: .
+    image: ghcr.io/musicorbit/musicorbit:latest
+    # Uncomment to build locally from source instead of pulling the pre-built image:
+    # build: .
     container_name: musicorbit
     restart: unless-stopped
     ports:
-      - "3001:3001"
+      - "4410:4410"
     environment:
-      PORT: "3001"
+      PORT: "4410"
       MUSIC_DIR: /music
       DATA_DIR: /data
       DOWNLOADS_DIR: /downloads

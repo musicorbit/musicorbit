@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 696" width="1200" height="696">
+  <defs>
+    <linearGradient id="amberGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+    <linearGradient id="art1" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f59e0b"/><stop offset="100%" stop-color="#7c2d12"/></linearGradient>
+    <linearGradient id="art2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#1e1b4b"/></linearGradient>
+    <linearGradient id="art3" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#14b8a6"/><stop offset="100%" stop-color="#0f172a"/></linearGradient>
+    <linearGradient id="art4" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ec4899"/><stop offset="100%" stop-color="#4c0519"/></linearGradient>
+    <linearGradient id="art5" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#eab308"/><stop offset="100%" stop-color="#1c1917"/></linearGradient>
+  </defs>
+  <!-- App Background -->
+  <rect width="1200" height="696" fill="#09090b"/>
+  
+  <rect width="1200" height="696" fill="#090810"/>
+  <radialGradient id="lyrGlow" cx="35%" cy="45%" r="55%">
+    <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.22"/>
+    <stop offset="100%" stop-color="#090810" stop-opacity="0"/>
+  </radialGradient>
+  <rect width="1200" height="696" fill="url(#lyrGlow)"/>
+  <rect x="86" y="148" width="320" height="320" rx="20" fill="url(#art1)" stroke="rgba(255,255,255,0.14)"/>
+  <circle cx="246" cy="308" r="84" fill="rgba(0,0,0,0.28)" stroke="rgba(255,255,255,0.28)"/>
+  <circle cx="246" cy="308" r="22" fill="#fde68a"/>
+  <text x="86" y="512" font-family="Inter,system-ui,sans-serif" font-size="24" font-weight="700" fill="#fafafa">Solar Drift</text>
+  <text x="86" y="540" font-family="Inter,system-ui,sans-serif" font-size="15" fill="#a1a1aa">Ketsa · Solar Horizons</text>
+  <rect x="86" y="562" width="132" height="26" rx="13" fill="rgba(245,158,11,0.16)" stroke="rgba(245,158,11,0.4)"/>
+  <text x="104" y="579" font-family="Inter,system-ui,sans-serif" font-size="11.5" font-weight="600" fill="#fde68a">SYNCED .LRC</text>
+
+  <text x="486" y="168" font-family="Inter,system-ui,sans-serif" font-size="28" font-weight="700" fill="#52525b">Golden light across the quiet skyline</text>
+  <text x="486" y="232" font-family="Inter,system-ui,sans-serif" font-size="28" font-weight="700" fill="#71717a">Drifting slowly through the midnight air</text>
+  <text x="486" y="304" font-family="Inter,system-ui,sans-serif" font-size="30" font-weight="800" fill="#fde68a">Every signal finds its orbit tonight</text>
+  <rect x="486" y="320" width="220" height="3" rx="1.5" fill="#f59e0b"/>
+  <text x="486" y="382" font-family="Inter,system-ui,sans-serif" font-size="28" font-weight="700" fill="#a1a1aa">Warm reflections echo in the dark</text>
+  <text x="486" y="446" font-family="Inter,system-ui,sans-serif" font-size="28" font-weight="700" fill="#71717a">Hold the frequency until the dawn arrives</text>
+  <text x="486" y="510" font-family="Inter,system-ui,sans-serif" font-size="28" font-weight="700" fill="#52525b">Spinning weightless on a silver wave</text>
+
+</svg>

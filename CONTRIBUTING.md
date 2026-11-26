@@ -21,7 +21,7 @@ MusicOrbit is a TypeScript npm workspaces monorepo:
    ```
 
 3. Place a few test audio files (`.flac`, `.mp3`, `.m4a`, `.opus`, etc.) into `./sample-music` (gitignored).
-4. Start both the API (`http://localhost:3001`) and Web UI (`http://localhost:5173`):
+4. Start both the API (`http://localhost:4410`) and Web UI (`http://localhost:5173`):
 
    ```bash
    npm run dev

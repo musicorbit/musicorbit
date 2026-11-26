@@ -1,0 +1,89 @@
+---
+import Default from "@astrojs/starlight/components/PageTitle.astro";
+
+const isOverview = Astro.locals.starlightRoute.id === "what-is-musicorbit";
+---
+
+{
+  isOverview && (
+    <aside class="mo-credit-card" aria-label="Inspiration and credit">
+      <div class="mo-credit-eyebrow">Inspiration &amp; Credit</div>
+      <p>
+        MusicOrbit was directly inspired by{" "}
+        <a href="https://bookorbit.app/" target="_blank" rel="noopener noreferrer">
+          <strong>BookOrbit</strong>
+        </a>{" "}
+        — the open-source self-hosted reading platform for ebooks, audiobooks, comics, and PDFs.
+        BookOrbit's clean single-screen experience, local-first multi-user philosophy, metadata
+        workflow, and cosmic documentation design sparked the vision for bringing that same care and
+        polish to self-hosted music collections.
+      </p>
+      <p class="mo-credit-note">
+        Full credit and huge thanks to the <strong>BookOrbit</strong> creators for setting the bar
+        so high. MusicOrbit is an independent open-source project and is not officially affiliated
+        with BookOrbit — if you also self-host books, definitely check out{" "}
+        <a href="https://bookorbit.app/" target="_blank" rel="noopener noreferrer">
+          bookorbit.app
+        </a>
+        !
+      </p>
+    </aside>
+  )
+}
+
+<Default />
+
+<style>
+  .mo-credit-card {
+    margin: 0.5rem 0 1.75rem;
+    padding: 1rem 1.2rem;
+    border-radius: 0.75rem;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    border-left: 3px solid var(--sl-color-accent);
+    background: linear-gradient(
+      135deg,
+      rgba(245, 158, 11, 0.1) 0%,
+      rgba(14, 16, 31, 0.75) 100%
+    );
+    font-size: 0.92rem;
+    line-height: 1.6;
+    color: var(--sl-color-gray-1);
+  }
+
+  :global([data-theme="light"]) .mo-credit-card {
+    background: linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, #fffbeb 100%);
+    color: #292524;
+  }
+
+  .mo-credit-eyebrow {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--sl-color-accent);
+    margin-bottom: 0.45rem;
+  }
+
+  .mo-credit-card p {
+    margin: 0;
+  }
+
+  .mo-credit-card p + p {
+    margin-top: 0.6rem;
+  }
+
+  .mo-credit-note {
+    font-size: 0.85rem;
+    color: var(--sl-color-gray-2);
+  }
+
+  :global([data-theme="light"]) .mo-credit-note {
+    color: #57534e;
+  }
+
+  .mo-credit-card a {
+    color: var(--sl-color-accent-high);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+</style>

@@ -1,0 +1,145 @@
+/* MusicOrbit — Deep Cosmic Dark + Warm Amber Starlight Theme */
+
+:root {
+  --sl-font: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, sans-serif;
+  --sl-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    monospace;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* Dark theme (default cosmic midnight + warm amber) */
+:root[data-theme="dark"],
+:root:not([data-theme="light"]) {
+  --sl-color-white: #faf7f2;
+  --sl-color-gray-1: #efe9de;
+  --sl-color-gray-2: #c6beae;
+  --sl-color-gray-3: #8e877c;
+  --sl-color-gray-4: #4d4843;
+  --sl-color-gray-5: #23212c;
+  --sl-color-gray-6: #12121e;
+  --sl-color-black: #070812;
+
+  --sl-color-bg: #070812;
+  --sl-color-bg-nav: #0a0b18;
+  --sl-color-bg-sidebar: #080915;
+  --sl-color-bg-inline-code: #181726;
+
+  --sl-color-accent-low: #3b2408;
+  --sl-color-accent: #f59e0b;
+  --sl-color-accent-high: #fde68a;
+
+  --sl-color-hairline-light: rgba(255, 255, 255, 0.08);
+  --sl-color-hairline: rgba(255, 255, 255, 0.08);
+  --sl-color-hairline-shade: rgba(255, 255, 255, 0.06);
+
+  --mo-surface: #0e101f;
+  --mo-border: rgba(255, 255, 255, 0.09);
+  --mo-active-bg: rgba(245, 158, 11, 0.14);
+  --mo-active-text: #fde68a;
+  --mo-active-bar: #f59e0b;
+}
+
+/* Light theme overrides */
+:root[data-theme="light"] {
+  --sl-color-accent-low: #fef3c7;
+  --sl-color-accent: #b45309;
+  --sl-color-accent-high: #78350f;
+  --mo-surface: #faf8f5;
+  --mo-border: rgba(15, 23, 42, 0.1);
+  --mo-active-bg: rgba(245, 158, 11, 0.14);
+  --mo-active-text: #92400e;
+  --mo-active-bar: #d97706;
+}
+
+/* Header & brand polish */
+header.header {
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--sl-color-hairline);
+}
+
+.site-title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  gap: 0.6rem;
+}
+
+.site-title img {
+  width: 28px;
+  height: 28px;
+}
+
+/* Sidebar active item pill matching BookOrbit's crisp look, tinted amber */
+nav.sidebar a[aria-current="page"],
+nav.sidebar a[aria-current="page"]:hover,
+nav.sidebar a[aria-current="page"]:focus {
+  background-color: var(--mo-active-bg);
+  color: var(--mo-active-text);
+  border-left: 2px solid var(--mo-active-bar);
+  border-radius: 0.375rem;
+  font-weight: 600;
+}
+
+nav.sidebar .top-level > li + li {
+  margin-top: 0.85rem;
+}
+
+/* Rounded styled tables */
+.sl-markdown-content table {
+  display: table;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--mo-border);
+  border-radius: 0.65rem;
+  overflow: hidden;
+  font-size: 0.9rem;
+}
+
+.sl-markdown-content th {
+  background: var(--mo-surface);
+  font-weight: 600;
+  text-align: left;
+  border-bottom: 1px solid var(--mo-border);
+}
+
+.sl-markdown-content th,
+.sl-markdown-content td {
+  padding: 0.65rem 0.9rem;
+  border-bottom: 1px solid var(--sl-color-hairline-shade);
+}
+
+.sl-markdown-content tr:last-child td {
+  border-bottom: none;
+}
+
+/* Inline code pills */
+.sl-markdown-content :not(pre) > code {
+  border-radius: 0.35rem;
+  padding: 0.14rem 0.42rem;
+  border: 1px solid var(--mo-border);
+  font-size: 0.86em;
+}
+
+/* Code block polish */
+.expressive-code .frame {
+  border-radius: 0.65rem;
+  overflow: hidden;
+}
+
+/* Headings */
+.sl-markdown-content h1 {
+  letter-spacing: -0.03em;
+  font-weight: 800;
+}
+
+.sl-markdown-content h2 {
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  margin-top: 2.25rem;
+}
+
+/* Callout / aside radius */
+.starlight-aside {
+  border-radius: 0.65rem;
+}
