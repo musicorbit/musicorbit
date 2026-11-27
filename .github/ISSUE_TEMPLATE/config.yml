@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://musicorbit.app
+    about: Installation guides, OpenSubsonic setup, Cloudflare Tunnel, and troubleshooting.
+  - name: Report a Security Vulnerability Privately
+    url: https://github.com/musicorbit/musicorbit/security/advisories/new
+    about: Please do not open public issues for security vulnerabilities.

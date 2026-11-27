@@ -1,0 +1,26 @@
+name: Feature Request
+description: Suggest a new feature or improvement for MusicOrbit.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to do that MusicOrbit doesn't support yet?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe how you imagine this working.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Any mockups, references, or OpenSubsonic client compatibility notes.
