@@ -848,3 +848,214 @@ export interface DeleteLibraryItemsResponse {
   filesDeleted: number;
   playlistsUpdated: number;
 }
+
+/**
+ * Listening history, Home stats dashboard, and Monthly/Yearly Recaps.
+ */
+export type StatsRange = "7d" | "30d" | "year" | "all";
+export type RecapPeriodType = "month" | "year";
+export type PlaySource = "web" | "subsonic";
+
+export interface RecordPlayRequest {
+  trackId: number;
+  clientName?: string;
+  playedAt?: number;
+}
+
+export interface RecordPlayResponse {
+  recorded: boolean;
+  deduplicated: boolean;
+}
+
+export interface CodecStat {
+  codec: string;
+  trackCount: number;
+  percentage: number;
+  lossless: boolean;
+}
+
+export interface LibraryOverviewStats {
+  trackCount: number;
+  albumCount: number;
+  artistCount: number;
+  playlistCount: number;
+  totalDurationSeconds: number;
+  totalSizeBytes: number;
+  losslessTrackCount: number;
+  losslessPercentage: number;
+  codecs: CodecStat[];
+}
+
+export interface TopArtistStat {
+  artistId: number | null;
+  artistName: string;
+  imageHash: string | null;
+  fallbackAlbumId: number | null;
+  playCount: number;
+  totalMinutes: number;
+}
+
+export interface TopAlbumStat {
+  albumId: number | null;
+  albumTitle: string;
+  artistId: number | null;
+  artistName: string;
+  coverHash: string | null;
+  playCount: number;
+  totalMinutes: number;
+}
+
+export interface TopTrackStat {
+  trackId: number | null;
+  title: string;
+  albumId: number | null;
+  albumTitle: string;
+  artistId: number | null;
+  artistName: string;
+  coverHash: string | null;
+  durationSeconds: number;
+  playCount: number;
+  totalMinutes: number;
+}
+
+export interface TopGenreStat {
+  genre: string;
+  playCount: number;
+  totalMinutes: number;
+  percentage: number;
+}
+
+export interface ClientUsageStat {
+  clientName: string;
+  source: PlaySource;
+  playCount: number;
+  totalMinutes: number;
+  percentage: number;
+  lastPlayedAt: string;
+}
+
+export interface RecentPlayItem {
+  id: number;
+  trackId: number | null;
+  title: string;
+  albumId: number | null;
+  albumTitle: string;
+  artistId: number | null;
+  artistName: string;
+  coverHash: string | null;
+  durationSeconds: number;
+  playedAt: string;
+  clientName: string;
+  source: PlaySource;
+}
+
+export interface DailyActivityPoint {
+  date: string; // YYYY-MM-DD
+  plays: number;
+  minutes: number;
+}
+
+export interface HourlyActivityPoint {
+  hour: number; // 0..23
+  plays: number;
+}
+
+export interface ListeningPersona {
+  title: string;
+  description: string;
+}
+
+export interface AvailableRecapOption {
+  period: string; // YYYY-MM or YYYY
+  label: string;
+  plays: number;
+  minutes: number;
+}
+
+export interface HomeStatsResponse {
+  range: StatsRange;
+  library: LibraryOverviewStats;
+  listening: {
+    totalPlays: number;
+    totalMinutes: number;
+    allTimePlays: number;
+    allTimeMinutes: number;
+    monthPlays: number;
+    monthMinutes: number;
+    uniqueArtists: number;
+    uniqueTracks: number;
+    uniqueAlbums: number;
+    currentStreakDays: number;
+    longestStreakDays: number;
+    peakHour: number | null;
+    persona: ListeningPersona | null;
+  };
+  recentlyPlayed: RecentPlayItem[];
+  recentlyAddedAlbums: AlbumSummary[];
+  topArtists: TopArtistStat[];
+  topAlbums: TopAlbumStat[];
+  topTracks: TopTrackStat[];
+  topGenres: TopGenreStat[];
+  clients: ClientUsageStat[];
+  dailyActivity: DailyActivityPoint[];
+  hourlyActivity: HourlyActivityPoint[];
+  availableMonths: AvailableRecapOption[];
+  availableYears: AvailableRecapOption[];
+  yearlyRecapBanner: {
+    year: number;
+    unlocked: boolean;
+    plays: number;
+    unlocksOn: string; // e.g. "December 26, 2026"
+  } | null;
+}
+
+export interface MonthlyBreakdownPoint {
+  month: number; // 1..12
+  label: string; // Jan..Dec
+  plays: number;
+  minutes: number;
+}
+
+export interface RecapResponse {
+  type: RecapPeriodType;
+  period: string; // YYYY-MM or YYYY
+  label: string; // e.g. "November 2026" or "2026"
+  isComplete: boolean;
+  isPostChristmasUnlocked: boolean;
+  unlocksOn: string | null;
+  totalPlays: number;
+  totalMinutes: number;
+  uniqueTracks: number;
+  uniqueArtists: number;
+  uniqueAlbums: number;
+  activeDays: number;
+  longestStreakDays: number;
+  peakDay: {
+    date: string;
+    plays: number;
+    minutes: number;
+  } | null;
+  peakHour: number | null;
+  persona: ListeningPersona | null;
+  topTrack: TopTrackStat | null;
+  topArtist: TopArtistStat | null;
+  topAlbum: TopAlbumStat | null;
+  topTracks: TopTrackStat[];
+  topArtists: TopArtistStat[];
+  topAlbums: TopAlbumStat[];
+  topGenres: TopGenreStat[];
+  clients: ClientUsageStat[];
+  monthlyBreakdown: MonthlyBreakdownPoint[];
+  availableMonths: AvailableRecapOption[];
+  availableYears: AvailableRecapOption[];
+}
+
+export interface SaveRecapPlaylistRequest {
+  type: RecapPeriodType;
+  period: string;
+}
+
+export interface SaveRecapPlaylistResponse {
+  playlist: PlaylistSummary;
+  tracksAdded: number;
+}

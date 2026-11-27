@@ -283,6 +283,22 @@ export function initDatabase(dbPath: string): DbContext {
       updated_at INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS play_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL DEFAULT 1,
+      track_id INTEGER REFERENCES tracks(id) ON DELETE SET NULL,
+      album_id INTEGER REFERENCES albums(id) ON DELETE SET NULL,
+      artist_id INTEGER REFERENCES artists(id) ON DELETE SET NULL,
+      track_title TEXT NOT NULL,
+      album_title TEXT NOT NULL,
+      artist_name TEXT NOT NULL,
+      genre TEXT,
+      duration_seconds REAL NOT NULL DEFAULT 0,
+      played_at INTEGER NOT NULL,
+      client_name TEXT NOT NULL DEFAULT 'MusicOrbit Web',
+      source TEXT NOT NULL DEFAULT 'web'
+    );
+
     CREATE INDEX IF NOT EXISTS idx_albums_artist_id ON albums(artist_id);
     CREATE INDEX IF NOT EXISTS idx_tracks_album_id ON tracks(album_id);
     CREATE INDEX IF NOT EXISTS idx_tracks_artist_id ON tracks(artist_id);
@@ -290,6 +306,9 @@ export function initDatabase(dbPath: string): DbContext {
     CREATE INDEX IF NOT EXISTS idx_playlist_missing_tracks_playlist_id ON playlist_missing_tracks(playlist_id, position);
     CREATE INDEX IF NOT EXISTS idx_activity_logs_created_at ON activity_logs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_download_ownership_status ON download_ownership(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_play_events_user_played ON play_events(user_id, played_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_play_events_user_track ON play_events(user_id, track_id, played_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_play_events_user_album ON play_events(user_id, album_id);
   `);
 
   // Non-destructive upgrades for existing SQLite databases created before these columns existed

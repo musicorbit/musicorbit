@@ -3,8 +3,10 @@ import {
   Activity,
   AlertTriangle,
   ArrowUpCircle,
+  CalendarHeart,
   Disc3,
   HelpCircle,
+  Home,
   KeyRound,
   ListMusic,
   LogOut,
@@ -26,6 +28,7 @@ import type {
   AuthStatusResponse,
   HealthResponse,
   PlaylistSummary,
+  RecapPeriodType,
   ScanStatusResponse,
   TrackSummary,
   UpdateCheckResponse,
@@ -55,9 +58,11 @@ import { AlbumDetailView } from "./views/AlbumDetailView";
 import { AlbumsView } from "./views/AlbumsView";
 import { ArtistDetailView } from "./views/ArtistDetailView";
 import { ArtistsView } from "./views/ArtistsView";
+import { HomeView } from "./views/HomeView";
 import { LogsView } from "./views/LogsView";
 import { PlaylistDetailView } from "./views/PlaylistDetailView";
 import { PlaylistsView } from "./views/PlaylistsView";
+import { RecapsView } from "./views/RecapsView";
 import { ReviewQueueView } from "./views/ReviewQueueView";
 import { SearchView } from "./views/SearchView";
 import { SystemView } from "./views/SystemView";
@@ -65,6 +70,7 @@ import { TracksView } from "./views/TracksView";
 import { UsersView } from "./views/UsersView";
 
 type Route =
+  | { view: "home" }
   | { view: "albums" }
   | { view: "album-detail"; albumId: number }
   | { view: "artists" }
@@ -72,6 +78,7 @@ type Route =
   | { view: "tracks" }
   | { view: "playlists" }
   | { view: "playlist-detail"; playlistId: number }
+  | { view: "recaps"; initialType?: RecapPeriodType; initialPeriod?: string }
   | { view: "search" }
   | { view: "review" }
   | { view: "system" }
@@ -80,8 +87,10 @@ type Route =
 
 function routeToPath(route: Route): string {
   switch (route.view) {
-    case "albums":
+    case "home":
       return "/";
+    case "albums":
+      return "/albums";
     case "album-detail":
       return `/albums/${route.albumId}`;
     case "artists":
@@ -94,6 +103,8 @@ function routeToPath(route: Route): string {
       return "/playlists";
     case "playlist-detail":
       return `/playlists/${route.playlistId}`;
+    case "recaps":
+      return "/recaps";
     case "search":
       return "/search";
     case "review":
@@ -114,7 +125,9 @@ function pathToRoute(pathname: string): Route {
   const second = segments[1];
   const parsedId = second && /^\d+$/.test(second) ? Number(second) : null;
 
-  if (first === "albums" && parsedId !== null) return { view: "album-detail", albumId: parsedId };
+  if (first === "albums") {
+    return parsedId !== null ? { view: "album-detail", albumId: parsedId } : { view: "albums" };
+  }
   if (first === "artists") {
     return parsedId !== null ? { view: "artist-detail", artistId: parsedId } : { view: "artists" };
   }
@@ -124,18 +137,19 @@ function pathToRoute(pathname: string): Route {
       ? { view: "playlist-detail", playlistId: parsedId }
       : { view: "playlists" };
   }
+  if (first === "recaps") return { view: "recaps" };
   if (first === "search") return { view: "search" };
   if (first === "review") return { view: "review" };
   if (first === "system") return { view: "system" };
   if (first === "users") return { view: "users" };
   if (first === "logs") return { view: "logs" };
-  return { view: "albums" };
+  return { view: "home" };
 }
 
 function MusicOrbitShell() {
   const { currentTrack } = usePlayer();
   const [route, setRouteState] = useState<Route>(() =>
-    typeof window !== "undefined" ? pathToRoute(window.location.pathname) : { view: "albums" },
+    typeof window !== "undefined" ? pathToRoute(window.location.pathname) : { view: "home" },
   );
   const routeRef = useRef<Route>(route);
   routeRef.current = route;
@@ -447,7 +461,7 @@ function MusicOrbitShell() {
       <AuthGate
         needsSetup={authStatus.needsSetup}
         onAuthenticated={(next) => {
-          navigate({ view: "albums" }, { replace: true });
+          navigate({ view: "home" }, { replace: true });
           setAuthStatus(next);
         }}
       />
@@ -456,10 +470,12 @@ function MusicOrbitShell() {
 
   const navItems: Array<{
     id:
+      | "home"
       | "albums"
       | "artists"
       | "tracks"
       | "playlists"
+      | "recaps"
       | "search"
       | "review"
       | "system"
@@ -471,10 +487,12 @@ function MusicOrbitShell() {
     highlightBadge?: boolean;
     badgeText?: string;
   }> = [
+    { id: "home", label: "Home", icon: Home, count: undefined },
     { id: "albums", label: "Albums", icon: Disc3, count: health?.counts.albums },
     { id: "artists", label: "Artists", icon: Users, count: health?.counts.artists },
     { id: "tracks", label: "Tracks", icon: Music, count: health?.counts.tracks },
     { id: "playlists", label: "Playlists", icon: ListMusic, count: playlists.length },
+    { id: "recaps", label: "Recaps", icon: CalendarHeart, count: undefined },
     ...(hasSoulseekPermission
       ? [{ id: "search" as const, label: "Soulseek Search", icon: Search, count: undefined }]
       : []),
@@ -501,10 +519,12 @@ function MusicOrbitShell() {
 
   const isNavActive = (
     id:
+      | "home"
       | "albums"
       | "artists"
       | "tracks"
       | "playlists"
+      | "recaps"
       | "search"
       | "review"
       | "system"
@@ -523,10 +543,12 @@ function MusicOrbitShell() {
 
   const navigateFromSidebar = (
     id:
+      | "home"
       | "albums"
       | "artists"
       | "tracks"
       | "playlists"
+      | "recaps"
       | "search"
       | "review"
       | "system"
@@ -542,7 +564,7 @@ function MusicOrbitShell() {
       <div className="mb-6 flex items-center justify-between gap-2 px-2 lg:mb-8">
         <button
           type="button"
-          onClick={() => navigateFromSidebar("albums")}
+          onClick={() => navigateFromSidebar("home")}
           className="flex items-center gap-3 text-left"
         >
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
@@ -717,7 +739,7 @@ function MusicOrbitShell() {
 
           <button
             type="button"
-            onClick={() => navigate({ view: "albums" })}
+            onClick={() => navigate({ view: "home" })}
             className="flex min-w-0 items-center gap-2 text-left"
           >
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
@@ -856,6 +878,31 @@ function MusicOrbitShell() {
                 <p className="mt-1 text-red-300/80">{error}</p>
               </div>
             </div>
+          )}
+
+          {route.view === "home" && (
+            <HomeView
+              username={authStatus?.user?.username}
+              onSelectAlbum={(albumId) => navigate({ view: "album-detail", albumId })}
+              onSelectArtist={(artistId) => navigate({ view: "artist-detail", artistId })}
+              onOpenAlbums={() => navigate({ view: "albums" })}
+              onOpenRecaps={(initialType, initialPeriod) =>
+                navigate({ view: "recaps", initialType, initialPeriod })
+              }
+              onOpenSystem={() => navigate({ view: "system" })}
+            />
+          )}
+
+          {route.view === "recaps" && (
+            <RecapsView
+              username={authStatus?.user?.username}
+              initialType={route.initialType}
+              initialPeriod={route.initialPeriod}
+              onSelectAlbum={(albumId) => navigate({ view: "album-detail", albumId })}
+              onSelectArtist={(artistId) => navigate({ view: "artist-detail", artistId })}
+              onSelectPlaylist={(playlistId) => navigate({ view: "playlist-detail", playlistId })}
+              onPlaylistsChanged={() => void refreshPlaylists()}
+            />
           )}
 
           {route.view === "albums" && (

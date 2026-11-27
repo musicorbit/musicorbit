@@ -23,6 +23,7 @@ import type {
   EnqueueDownloadRequest,
   FinalizeUploadBatchResponse,
   HealthResponse,
+  HomeStatsResponse,
   ImportFileAction,
   ImportItemStatus,
   ImportM3u8Response,
@@ -42,12 +43,17 @@ import type {
   PlaylistSummary,
   PlaylistSyncRunResult,
   PostProcessingSettings,
+  RecapPeriodType,
+  RecapResponse,
   RecheckMissingTracksResponse,
+  RecordPlayResponse,
   RetagAlbumResponse,
+  SaveRecapPlaylistResponse,
   ScanStatusResponse,
   SoulseekSearchResultsResponse,
   SoulseekSearchSummary,
   StartUploadBatchResponse,
+  StatsRange,
   SubsonicPasswordResponse,
   SystemSettingsResponse,
   TrackLyricsResponse,
@@ -82,6 +88,50 @@ export function fetchUpdateStatus(force = false): Promise<UpdateCheckResponse> {
   return getJson<UpdateCheckResponse>(
     force ? "/api/system/updates?force=true" : "/api/system/updates",
   );
+}
+
+export async function recordTrackPlay(
+  trackId: number,
+  clientName?: string,
+): Promise<RecordPlayResponse> {
+  const res = await fetch("/api/plays", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ trackId, clientName }),
+  });
+  if (!res.ok) {
+    throw new Error(`Could not record play (HTTP ${res.status})`);
+  }
+  return (await res.json()) as RecordPlayResponse;
+}
+
+export function fetchHomeStats(range: StatsRange = "30d"): Promise<HomeStatsResponse> {
+  return getJson<HomeStatsResponse>(`/api/stats/home?range=${encodeURIComponent(range)}`);
+}
+
+export function fetchRecap(
+  type: RecapPeriodType,
+  period?: string,
+): Promise<RecapResponse> {
+  const params = new URLSearchParams({ type });
+  if (period) params.set("period", period);
+  return getJson<RecapResponse>(`/api/stats/recap?${params.toString()}`);
+}
+
+export async function saveRecapAsPlaylist(
+  type: RecapPeriodType,
+  period: string,
+): Promise<SaveRecapPlaylistResponse> {
+  const res = await fetch("/api/stats/recap/playlist", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type, period }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not save recap playlist (HTTP ${res.status})`);
+  }
+  return (await res.json()) as SaveRecapPlaylistResponse;
 }
 
 export function fetchScanStatus(): Promise<ScanStatusResponse> {

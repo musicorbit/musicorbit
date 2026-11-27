@@ -9,6 +9,7 @@ import {
   type AudioTranscoder,
 } from "../services/audioTranscoder.js";
 import { verifyPassword } from "../services/authHelpers.js";
+import type { ListeningStatsService } from "../services/listeningStats.js";
 import { type LyricsService } from "../services/lyrics.js";
 import type { PlaylistSyncService } from "../services/playlistSync.js";
 import type { LibraryScanner } from "../services/scanner.js";
@@ -28,6 +29,7 @@ export interface SubsonicRouteDeps {
   audioTranscoder?: AudioTranscoder;
   lyricsService?: LyricsService;
   playlistSync?: PlaylistSyncService;
+  listeningStats?: ListeningStatsService;
   scanner?: LibraryScanner;
   getUserMusicDir: (userId: number) => string;
 }
@@ -746,8 +748,14 @@ export async function registerSubsonicRoutes(
 
           if (type === "alphabeticalByArtist") {
             orderBy = "lower(ar.sort_name) ASC, lower(al.title) ASC";
-          } else if (type === "newest" || type === "recent" || type === "frequent") {
+          } else if (type === "newest") {
             orderBy = "al.created_at DESC, al.id DESC";
+          } else if (type === "recent") {
+            orderBy =
+              "COALESCE((SELECT MAX(pe.played_at) FROM play_events pe WHERE pe.user_id = al.user_id AND pe.album_id = al.id), 0) DESC, al.created_at DESC, al.id DESC";
+          } else if (type === "frequent") {
+            orderBy =
+              "(SELECT COUNT(*) FROM play_events pe WHERE pe.user_id = al.user_id AND pe.album_id = al.id) DESC, al.created_at DESC, al.id DESC";
           } else if (type === "random") {
             orderBy = "RANDOM()";
           } else if (type === "byYear") {
@@ -1527,7 +1535,32 @@ export async function registerSubsonicRoutes(
           });
         }
 
-        case "scrobble":
+        case "scrobble": {
+          // OpenSubsonic scrobble: submission=false is a "now playing" ping; true/omitted is a completed play.
+          // Supports multiple id[] & time[] parameters for offline queued scrobble flushes.
+          const submissionRaw = (params.single["submission"] ?? "true").trim().toLowerCase();
+          const isSubmission = submissionRaw !== "false" && submissionRaw !== "0";
+          if (isSubmission && deps.listeningStats) {
+            const ids = params.multi["id"] ?? [];
+            const times = params.multi["time"] ?? [];
+            const clientApp = params.single["c"] ?? "OpenSubsonic App";
+            ids.forEach((rawId, idx) => {
+              const parsed = parsePrefixedId(rawId, "tr");
+              if (!parsed) return;
+              const rawTime = times[idx];
+              const parsedTime = rawTime ? Number(rawTime) : undefined;
+              deps.listeningStats?.recordPlay({
+                userId: user.id,
+                trackId: parsed.id,
+                clientName: clientApp,
+                source: "subsonic",
+                playedAt: Number.isFinite(parsedTime) ? parsedTime : undefined,
+              });
+            });
+          }
+          return ok();
+        }
+
         case "setRating":
         case "star":
         case "unstar": {

@@ -11,6 +11,7 @@ Your audio files stay right where you put them on disk, cleanly tagged and organ
 
 - **Incremental Library Scanner:** Indexes local `.flac`, `.mp3`, `.m4a`, `.aac`, `.ogg`, `.opus`, and `.wav` collections into SQLite (WAL mode) with SHA-256 deduplicated cover art caching.
 - **Lossless Browser Player:** Streams tracks over HTTP `206 Partial Content` byte-ranges with instant scrubbing, persistent playback bar, queue management, shuffle/repeat, OS Media Session controls, and automatic **ALAC → lossless FLAC** transcoding for browser compatibility.
+- **Home Stats Dashboard & Shareable Recaps:** Per-user listening time, streaks, 90-day activity heatmap, lossless codec breakdown, device/app split across Web & OpenSubsonic apps, plus Monthly and post-Christmas Yearly Recaps with one-click social PNG share cards and Top 25 playlists.
 - **Mobile-Friendly PWA & OpenSubsonic API:** Install directly as a standalone mobile/desktop PWA, or connect native apps like **Symfonium**, **Amperfy**, **Arpeggi**, and **Feishin** via MusicOrbit's built-in **OpenSubsonic API** for CarPlay, Android Auto, and offline downloads.
 - **Synced Sing-Along Lyrics:** Full-screen karaoke view powered by standard `.lrc` sidecar files fetched automatically from **LRCLIB** (or embedded track lyrics).
 - **Real Metadata Written to Disk:** Edit tags and embedded cover art directly in your audio files via `node-taglib-sharp`, with a multi-provider **Current → Suggested** diff picker across **Deezer**, **MusicBrainz**, and **LRCLIB**.

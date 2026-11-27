@@ -8,7 +8,15 @@ import {
   type ReactNode,
 } from "react";
 import type { TrackSummary } from "@musicorbit/shared";
-import { getTrackStreamUrl } from "../api/client";
+import { getTrackStreamUrl, recordTrackPlay } from "../api/client";
+
+function detectWebClientName(): string {
+  if (typeof window === "undefined") return "MusicOrbit Web";
+  const isStandalone =
+    window.matchMedia?.("(display-mode: standalone)").matches ||
+    Boolean((window.navigator as Navigator & { standalone?: boolean }).standalone);
+  return isStandalone ? "MusicOrbit PWA" : "MusicOrbit Web";
+}
 
 export type RepeatMode = "off" | "all" | "one";
 
@@ -73,21 +81,65 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const stateRef = useRef({ queue, currentIndex, repeatMode, shuffle });
   stateRef.current = { queue, currentIndex, repeatMode, shuffle };
 
-  const loadAndPlay = useCallback((track: TrackSummary) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    setPlaybackError(null);
-    setCurrentTime(0);
-    setDuration(track.durationSeconds ?? 0);
-    audio.src = getTrackStreamUrl(track.id);
-    audio.load();
-    void audio.play().catch((err: unknown) => {
-      // Autoplay or codec issues surface cleanly in the player bar
-      const msg = err instanceof Error ? err.message : "Playback could not start";
-      setPlaybackError(msg);
-      setIsPlaying(false);
+  // Track real playback time so skips don't count and repeat-one counts each listen
+  const playTrackerRef = useRef<{
+    trackId: number | null;
+    durationSeconds: number;
+    listenedSeconds: number;
+    lastTickMs: number | null;
+    recorded: boolean;
+  }>({
+    trackId: null,
+    durationSeconds: 0,
+    listenedSeconds: 0,
+    lastTickMs: null,
+    recorded: false,
+  });
+
+  const resetPlayTracker = useCallback((track: TrackSummary | null) => {
+    playTrackerRef.current = {
+      trackId: track?.id ?? null,
+      durationSeconds: track?.durationSeconds ?? 0,
+      listenedSeconds: 0,
+      lastTickMs: null,
+      recorded: false,
+    };
+  }, []);
+
+  const maybeRecordPlay = useCallback((forceComplete = false) => {
+    const tracker = playTrackerRef.current;
+    if (!tracker.trackId || tracker.recorded) return;
+    const dur = tracker.durationSeconds > 0 ? tracker.durationSeconds : 180;
+    const threshold = Math.min(30, Math.max(8, dur * 0.5));
+    const enough = forceComplete ? tracker.listenedSeconds >= 5 : tracker.listenedSeconds >= threshold;
+    if (!enough) return;
+
+    tracker.recorded = true;
+    const trackId = tracker.trackId;
+    void recordTrackPlay(trackId, detectWebClientName()).catch(() => {
+      // Non-fatal: never interrupt audio playback
     });
   }, []);
+
+  const loadAndPlay = useCallback(
+    (track: TrackSummary) => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      resetPlayTracker(track);
+      setPlaybackError(null);
+      setCurrentTime(0);
+      setDuration(track.durationSeconds ?? 0);
+      audio.src = getTrackStreamUrl(track.id);
+      audio.load();
+      void audio.play().catch((err: unknown) => {
+        // Autoplay or codec issues surface cleanly in the player bar
+        const msg = err instanceof Error ? err.message : "Playback could not start";
+        setPlaybackError(msg);
+        setIsPlaying(false);
+      });
+    },
+    [resetPlayTracker],
+  );
 
   const playQueue = useCallback(
     (tracks: TrackSummary[], startIndex = 0) => {
@@ -415,17 +467,38 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       <audio
         ref={audioRef}
         preload="metadata"
-        onPlay={() => setIsPlaying(true)}
-        onPause={() => setIsPlaying(false)}
-        onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+        onPlay={() => {
+          setIsPlaying(true);
+          playTrackerRef.current.lastTickMs = Date.now();
+        }}
+        onPause={() => {
+          setIsPlaying(false);
+          playTrackerRef.current.lastTickMs = null;
+        }}
+        onTimeUpdate={(e) => {
+          setCurrentTime(e.currentTarget.currentTime);
+          if (!e.currentTarget.paused) {
+            const nowMs = Date.now();
+            const tracker = playTrackerRef.current;
+            if (tracker.lastTickMs !== null) {
+              const deltaSec = Math.min(2, Math.max(0, (nowMs - tracker.lastTickMs) / 1000));
+              tracker.listenedSeconds += deltaSec;
+              maybeRecordPlay(false);
+            }
+            tracker.lastTickMs = nowMs;
+          }
+        }}
         onLoadedMetadata={(e) => {
           if (Number.isFinite(e.currentTarget.duration)) {
             setDuration(e.currentTarget.duration);
+            playTrackerRef.current.durationSeconds = e.currentTarget.duration;
           }
         }}
         onEnded={() => {
+          maybeRecordPlay(true);
           const { queue: q, currentIndex: idx, repeatMode: rep, shuffle: shuf } = stateRef.current;
           if (rep === "one" && audioRef.current) {
+            resetPlayTracker(q[idx] ?? null);
             audioRef.current.currentTime = 0;
             void audioRef.current.play();
           } else if (idx < q.length - 1 || rep === "all" || (shuf && q.length > 1)) {

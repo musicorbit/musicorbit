@@ -29,6 +29,7 @@ Modern Subsonic apps default to salted MD5 token auth (`t = md5(password + salt)
 - **Playlists:** Browse, create, rename, edit, and delete playlists from your phone — changes automatically mirror to `.m3u8` files on disk too.
 - **Lossless streaming & offline downloads:** HTTP `206 Partial Content` seeking, raw file downloads for offline caching, and automatic **ALAC → lossless FLAC** transcoding when streaming.
 - **Synced `.lrc` lyrics (`getLyricsBySongId`):** Symfonium and Amperfy display live timed sing-along lyrics straight from MusicOrbit's `.lrc` sidecars.
+- **Cross-device listening stats & recaps (`scrobble`):** Completed plays (including offline queued scrobbles synced later) flow straight into your MusicOrbit Home stats, **Where You Listen** app breakdown, and Monthly / Yearly Recaps — and power `Recently Played` and `Most Played` album shelves inside your mobile app.
 
 ## Running alongside Navidrome
 

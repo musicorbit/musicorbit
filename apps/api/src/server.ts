@@ -15,6 +15,7 @@ import { registerMetadataRoutes } from "./routes/metadata.js";
 import { registerPlaylistRoutes } from "./routes/playlists.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerStaticWeb } from "./routes/staticWeb.js";
+import { registerStatsRoutes } from "./routes/stats.js";
 import { registerSubsonicRoutes } from "./routes/subsonic.js";
 import { registerUploadRoutes } from "./routes/uploads.js";
 import { registerUserRoutes } from "./routes/users.js";
@@ -26,6 +27,7 @@ import { AudioTranscoder } from "./services/audioTranscoder.js";
 import { LibraryImporter } from "./services/importer.js";
 import { InboxWatcher } from "./services/inboxWatcher.js";
 import { LibraryOrganizer } from "./services/libraryOrganizer.js";
+import { ListeningStatsService } from "./services/listeningStats.js";
 import { LyricsService } from "./services/lyrics.js";
 import { MetadataLookupService } from "./services/metadataLookup.js";
 import { MusicBrainzClient } from "./services/musicbrainz.js";
@@ -141,6 +143,10 @@ export async function buildServer(
     dbContext,
     settingsService,
     activityLog,
+  });
+  const listeningStats = new ListeningStatsService({
+    dbContext,
+    playlistSync,
   });
   const libraryOrganizer = new LibraryOrganizer({
     dbContext,
@@ -280,6 +286,7 @@ export async function buildServer(
     onDownloadEnqueued: (userId, slskdUsername, files) =>
       importer.recordDownloadOwnership(userId, slskdUsername, files),
   });
+  await registerStatsRoutes(app, { listeningStats });
   await registerSubsonicRoutes(app, {
     dbContext,
     authEnabled: config.authEnabled,
@@ -289,6 +296,7 @@ export async function buildServer(
     audioTranscoder,
     lyricsService,
     playlistSync,
+    listeningStats,
     scanner,
     getUserMusicDir,
   });
