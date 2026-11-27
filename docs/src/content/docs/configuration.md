@@ -17,6 +17,7 @@ MusicOrbit reads configuration from environment variables (or a `.env` file in t
 | `DOWNLOADS_DIR` | `./downloads` | Incoming folder watched by the Import Pipeline (`/downloads` in Docker). |
 | `AUTO_IMPORT_THRESHOLD` | `85` | Minimum MusicBrainz match score (`0–100`) required to auto-import without manual review. |
 | `FETCH_ARTIST_IMAGES` | `true` | Fetch and cache artist portraits lazily. Set to `false` for strict offline / privacy mode. |
+| `CHECK_UPDATES` | `true` | Periodically check GitHub Releases (cached 12h, Admin-only notification, zero telemetry). Set to `false` to disable. |
 | `AUTH_ENABLED` | `true` | Enables first-run Admin setup, multi-user login, and session cookies. Set to `false` **only** on a private localhost-only dev machine. |
 | `SLSKD_URL` | *(empty)* | Optional fallback URL of your `slskd` daemon (recommended: configure right in the UI under **System & Scanner**). |
 | `SLSKD_API_KEY` | *(empty)* | Optional fallback `slskd` API key (recommended: configure right in the UI under **System & Scanner**). |

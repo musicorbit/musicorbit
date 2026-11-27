@@ -54,6 +54,7 @@ import type {
   TrackMetadataResponse,
   TrackMetadataSuggestion,
   TrackSummary,
+  UpdateCheckResponse,
   UpdateUserRequest,
   UploadFileResponse,
   UserSummary,
@@ -75,6 +76,12 @@ async function getJson<T>(url: string): Promise<T> {
 
 export function fetchHealth(): Promise<HealthResponse> {
   return getJson<HealthResponse>("/api/health");
+}
+
+export function fetchUpdateStatus(force = false): Promise<UpdateCheckResponse> {
+  return getJson<UpdateCheckResponse>(
+    force ? "/api/system/updates?force=true" : "/api/system/updates",
+  );
 }
 
 export function fetchScanStatus(): Promise<ScanStatusResponse> {

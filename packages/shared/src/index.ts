@@ -28,6 +28,18 @@ export interface HealthResponse {
   counts: LibraryCounts;
 }
 
+export interface UpdateCheckResponse {
+  enabled: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  releaseUrl: string | null;
+  releaseName: string | null;
+  publishedAt: string | null;
+  checkedAt: string | null;
+  error: string | null;
+}
+
 /**
  * Library scan job progress & history.
  */

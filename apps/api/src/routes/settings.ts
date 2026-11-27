@@ -8,6 +8,7 @@ import type {
   OrganizePreviewResponse,
   PlaylistSyncRunResult,
   SystemSettingsResponse,
+  UpdateCheckResponse,
 } from "@musicorbit/shared";
 import type { SlskdClient } from "../services/acquisition/slskd.js";
 import type { ActivityLogService } from "../services/activityLog.js";
@@ -17,6 +18,7 @@ import type { LibraryOrganizer } from "../services/libraryOrganizer.js";
 import type { PlaylistSyncService } from "../services/playlistSync.js";
 import type { LibraryScanner } from "../services/scanner.js";
 import { SettingsError, type SettingsService } from "../services/settings.js";
+import type { UpdateChecker } from "../services/updateChecker.js";
 
 function isPathInsideOrEqual(target: string, root: string): boolean {
   const rel = path.relative(path.resolve(root), path.resolve(target));
@@ -30,6 +32,7 @@ export interface SettingsRouteDeps {
   libraryOrganizer?: LibraryOrganizer;
   playlistSync?: PlaylistSyncService;
   slskdClient?: SlskdClient;
+  updateChecker?: UpdateChecker;
   activityLog?: ActivityLogService;
 }
 
@@ -95,8 +98,29 @@ export async function registerSettingsRoutes(
     libraryOrganizer,
     playlistSync,
     slskdClient,
+    updateChecker,
     activityLog,
   } = deps;
+
+  app.get("/api/system/updates", async (request, reply): Promise<UpdateCheckResponse> => {
+    if (!requireAdmin(request, reply)) return reply as never;
+    const query = request.query as { force?: string } | undefined;
+    const force = query?.force === "true" || query?.force === "1";
+    if (!updateChecker) {
+      return {
+        enabled: false,
+        currentVersion: "0.1.0",
+        latestVersion: null,
+        updateAvailable: false,
+        releaseUrl: null,
+        releaseName: null,
+        publishedAt: null,
+        checkedAt: null,
+        error: null,
+      };
+    }
+    return updateChecker.check({ force });
+  });
 
   app.get("/api/system/settings", async (request): Promise<SystemSettingsResponse> => {
     const user = getRequestUser(request);

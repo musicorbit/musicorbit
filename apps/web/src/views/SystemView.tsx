@@ -2,9 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
+  ArrowUpCircle,
   Check,
   CheckCircle2,
+  Copy,
   Database,
+  ExternalLink,
   Eye,
   EyeOff,
   FolderInput,
@@ -36,12 +39,14 @@ import type {
   PlaylistSyncRunResult,
   ScanStatusResponse,
   SystemSettingsResponse,
+  UpdateCheckResponse,
 } from "@musicorbit/shared";
 import {
   applyLibraryOrganization,
   cancelBatchLyricsFetch,
   fetchLyricsStatus,
   fetchSystemSettings,
+  fetchUpdateStatus,
   previewLibraryOrganization,
   runPlaylistSyncNow,
   scanInbox,
@@ -62,6 +67,7 @@ interface SystemViewProps {
   health: HealthResponse | null;
   scanStatus: ScanStatusResponse | null;
   slskdStatus?: AcquisitionStatusResponse | null;
+  updateInfo?: UpdateCheckResponse | null;
   loading: boolean;
   startingScan: boolean;
   onScan: (force: boolean) => void;
@@ -69,6 +75,7 @@ interface SystemViewProps {
   onMusicDirChanged: () => void;
   onOpenSoulseek?: () => void;
   onSlskdStatusChanged?: (next: AcquisitionStatusResponse) => void;
+  onUpdateInfoChanged?: (next: UpdateCheckResponse) => void;
   onOpenReviewQueue?: () => void;
   onOpenUpload?: () => void;
 }
@@ -146,6 +153,7 @@ export function SystemView({
   health,
   scanStatus,
   slskdStatus,
+  updateInfo = null,
   loading,
   startingScan,
   onScan,
@@ -153,12 +161,15 @@ export function SystemView({
   onMusicDirChanged,
   onOpenSoulseek,
   onSlskdStatusChanged,
+  onUpdateInfoChanged,
   onOpenReviewQueue,
   onOpenUpload,
 }: SystemViewProps) {
   const [pickerMode, setPickerMode] = useState<"music" | "downloads" | "playlists" | null>(null);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [sysSettings, setSysSettings] = useState<SystemSettingsResponse | null>(null);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [copiedUpdateCmd, setCopiedUpdateCmd] = useState(false);
   const [slskdUrlInput, setSlskdUrlInput] = useState(slskdStatus?.url ?? "");
   const [slskdApiKeyInput, setSlskdApiKeyInput] = useState("");
   const [showSlskdKey, setShowSlskdKey] = useState(false);
@@ -171,6 +182,28 @@ export function SystemView({
   useEffect(() => {
     setSlskdUrlInput(slskdStatus?.url ?? "");
   }, [slskdStatus?.url]);
+
+  const handleCheckUpdates = async () => {
+    setCheckingUpdates(true);
+    try {
+      const next = await fetchUpdateStatus(true);
+      onUpdateInfoChanged?.(next);
+    } catch {
+      // Non-fatal
+    } finally {
+      setCheckingUpdates(false);
+    }
+  };
+
+  const handleCopyUpdateCmd = async () => {
+    try {
+      await navigator.clipboard.writeText("docker compose pull && docker compose up -d");
+      setCopiedUpdateCmd(true);
+      window.setTimeout(() => setCopiedUpdateCmd(false), 1800);
+    } catch {
+      // Clipboard unavailable
+    }
+  };
 
   const handleSaveSlskd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -540,10 +573,39 @@ export function SystemView({
                 </span>
                 <CheckCircle2 className="h-4 w-4 text-emerald-400" />
               </div>
-              <p className="mt-3 text-xl font-semibold text-zinc-50">
-                {health.status === "ok" ? "Online" : "Degraded"}
-              </p>
-              <p className="mt-1 text-xs text-zinc-500">Uptime: {health.uptimeSeconds}s</p>
+              <div className="mt-3 flex items-baseline justify-between gap-2">
+                <p className="text-xl font-semibold text-zinc-50">
+                  {health.status === "ok" ? "Online" : "Degraded"}
+                </p>
+                <span className="font-mono text-xs text-zinc-400">v{health.version}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-2 text-xs text-zinc-500">
+                <span>Uptime: {health.uptimeSeconds}s</span>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    disabled={checkingUpdates || updateInfo?.enabled === false}
+                    onClick={() => void handleCheckUpdates()}
+                    title={
+                      updateInfo?.enabled === false
+                        ? "Update checks disabled via CHECK_UPDATES=false"
+                        : "Check GitHub Releases for a newer version"
+                    }
+                    className="inline-flex items-center gap-1 text-[11px] font-medium text-zinc-400 transition hover:text-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${checkingUpdates ? "animate-spin" : ""}`} />
+                    {updateInfo?.enabled === false
+                      ? "Checks off"
+                      : updateInfo?.updateAvailable && updateInfo.latestVersion
+                        ? `v${updateInfo.latestVersion} available`
+                        : updateInfo?.error
+                          ? "Retry check"
+                          : updateInfo?.checkedAt
+                            ? "Up to date"
+                            : "Check updates"}
+                  </button>
+                )}
+              </div>
             </div>
 
             {isAdmin && (
@@ -597,6 +659,56 @@ export function SystemView({
               </p>
             </div>
           </div>
+
+          {isAdmin && updateInfo?.updateAvailable && updateInfo.latestVersion && (
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-500/35 bg-amber-500/10 p-4 text-sm text-amber-100">
+              <div className="flex items-start gap-3">
+                <ArrowUpCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
+                <div>
+                  <p className="font-medium text-zinc-50">
+                    MusicOrbit v{updateInfo.latestVersion} is available
+                  </p>
+                  <p className="mt-0.5 text-xs text-amber-200/80">
+                    You are currently running{" "}
+                    <code className="rounded bg-zinc-900/80 px-1.5 py-0.5 text-[11px]">
+                      v{updateInfo.currentVersion}
+                    </code>
+                    . Updates are never installed automatically — pull the new image when you are
+                    ready:
+                  </p>
+                  <div className="mt-2 inline-flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950/80 px-2.5 py-1.5">
+                    <code className="font-mono text-xs text-amber-300">
+                      docker compose pull &amp;&amp; docker compose up -d
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopyUpdateCmd()}
+                      aria-label="Copy Docker update command"
+                      className="rounded p-1 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
+                    >
+                      {copiedUpdateCmd ? (
+                        <Check className="h-3.5 w-3.5 text-emerald-400" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {updateInfo.releaseUrl && (
+                <a
+                  href={updateInfo.releaseUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400"
+                >
+                  Release Notes
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              )}
+            </div>
+          )}
 
           {!health.musicDir.exists && (
             <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">

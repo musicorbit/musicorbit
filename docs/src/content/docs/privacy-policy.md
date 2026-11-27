@@ -26,6 +26,7 @@ MusicOrbit only contacts external services to fetch metadata, artwork, or lyrics
 | **Deezer API** | Fetching artist portraits, album art, single-track metadata, or full tracklists | Set `FETCH_ARTIST_IMAGES=false` to stop automatic portrait lookups; other lookups only run when you click them |
 | **MusicBrainz API** | Matching albums during import, **Fix Tags**, or track metadata lookups | Only runs during import or when triggered in the UI |
 | **LRCLIB API** | Fetching synced `.lrc` lyrics | Only runs when opening Lyrics, running Batch Fetch, or when **Auto-Fetch Lyrics** is enabled in System Settings |
+| **GitHub Releases API** | Checking `api.github.com/repos/musicorbit/musicorbit/releases/latest` (cached 12 hours, anonymous, no instance ID) to notify Admins when a newer release is available | Set `CHECK_UPDATES=false` in `.env` or `docker-compose.yml` |
 | **Self-hosted `slskd`** | Only if an Admin explicitly configures a `slskd` URL in **System & Scanner** | Disabled by default; click **Disconnect** anytime |
 
 Requests to those services come directly from your server (not through any MusicOrbit-operated proxy) and are subject to each provider's own privacy policy.

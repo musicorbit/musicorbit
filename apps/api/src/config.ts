@@ -49,6 +49,7 @@ const envSchema = z.object({
   DOWNLOADS_DIR: z.string().min(1).default("./downloads"),
   AUTO_IMPORT_THRESHOLD: z.coerce.number().int().min(0).max(100).default(85),
   FETCH_ARTIST_IMAGES: booleanDefaultTrue,
+  CHECK_UPDATES: booleanDefaultTrue,
   AUTH_ENABLED: booleanDefaultTrue,
   WEB_DIST_DIR: optionalString,
   SLSKD_URL: optionalUrl,
@@ -65,6 +66,19 @@ function resolveFromRoot(p: string): string {
   return path.isAbsolute(p) ? p : path.resolve(REPO_ROOT, p);
 }
 
+function readPackageVersion(): string {
+  try {
+    const raw = fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8");
+    const pkg = JSON.parse(raw) as { version?: unknown };
+    if (typeof pkg.version === "string" && pkg.version.trim().length > 0) {
+      return pkg.version.trim();
+    }
+  } catch {
+    // Fall back to default version below
+  }
+  return "0.1.0";
+}
+
 export const config = {
   port: parsed.data.PORT,
   host: parsed.data.HOST,
@@ -77,11 +91,14 @@ export const config = {
   coversDir: path.join(resolveFromRoot(parsed.data.DATA_DIR), "covers"),
   artistImagesDir: path.join(resolveFromRoot(parsed.data.DATA_DIR), "artist-images"),
   fetchArtistImages: parsed.data.FETCH_ARTIST_IMAGES,
+  checkUpdates: parsed.data.CHECK_UPDATES,
   authEnabled: parsed.data.AUTH_ENABLED,
   webDistDir: parsed.data.WEB_DIST_DIR ? resolveFromRoot(parsed.data.WEB_DIST_DIR) : null,
   slskdUrl: parsed.data.SLSKD_URL,
   slskdApiKey: parsed.data.SLSKD_API_KEY,
-  version: "0.1.0",
+  version: readPackageVersion(),
 } as const;
 
-export type AppConfig = typeof config;
+export type AppConfig = Omit<typeof config, "checkUpdates"> & {
+  checkUpdates?: boolean;
+};

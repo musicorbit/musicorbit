@@ -33,6 +33,7 @@ import { PlaylistBatchSearchService } from "./services/playlistBatchSearch.js";
 import { PlaylistSyncService } from "./services/playlistSync.js";
 import { LibraryScanner } from "./services/scanner.js";
 import { SettingsService } from "./services/settings.js";
+import { UpdateChecker } from "./services/updateChecker.js";
 
 export interface ServerHandle {
   app: FastifyInstance;
@@ -208,6 +209,12 @@ export async function buildServer(
   });
   await registerUserRoutes(app, { dbContext, settingsService, activityLog });
 
+  const updateChecker = new UpdateChecker({
+    currentVersion: config.version,
+    enabled: config.checkUpdates ?? true,
+    fetchImpl: options?.fetchImpl,
+  });
+
   await registerHealthRoutes(app, { config, dbContext, getMusicDir, getUserMusicDir });
   await registerSettingsRoutes(app, {
     settingsService,
@@ -216,6 +223,7 @@ export async function buildServer(
     libraryOrganizer,
     playlistSync,
     slskdClient,
+    updateChecker,
     activityLog,
   });
   await registerLogRoutes(app, { activityLog });

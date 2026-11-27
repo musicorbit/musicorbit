@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
+  ArrowUpCircle,
   Disc3,
   HelpCircle,
   KeyRound,
@@ -27,6 +28,7 @@ import type {
   PlaylistSummary,
   ScanStatusResponse,
   TrackSummary,
+  UpdateCheckResponse,
 } from "@musicorbit/shared";
 import {
   fetchAcquisitionStatus,
@@ -38,6 +40,7 @@ import {
   fetchPlaylists,
   fetchScanStatus,
   fetchTracks,
+  fetchUpdateStatus,
   logoutUser,
   setOnboardingCompleted,
   triggerScan,
@@ -200,6 +203,7 @@ function MusicOrbitShell() {
   const [playlists, setPlaylists] = useState<PlaylistSummary[]>([]);
   const [needsReviewCount, setNeedsReviewCount] = useState(0);
   const [slskdStatus, setSlskdStatus] = useState<AcquisitionStatusResponse | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResponse | null>(null);
   const [soulseekLaunch, setSoulseekLaunch] = useState<{ query: string; nonce: number } | null>(
     null,
   );
@@ -342,6 +346,25 @@ function MusicOrbitShell() {
     !authStatus?.authEnabled || isAdmin || Boolean(authStatus?.user?.canUseSoulseek);
   const canUseSoulseek = slskdConfigured && hasSoulseekPermission;
 
+  // Non-blocking Admin check for newer GitHub Releases (cached 12h server-side)
+  useEffect(() => {
+    if (!authChecked || !isAuthorized || !isAdmin) {
+      setUpdateInfo(null);
+      return;
+    }
+    let cancelled = false;
+    void fetchUpdateStatus()
+      .then((info) => {
+        if (!cancelled) setUpdateInfo(info);
+      })
+      .catch(() => {
+        // Silent failure if offline or disabled
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authChecked, isAuthorized, isAdmin]);
+
   const handleOpenSoulseekSearch = useCallback(
     (initialQuery?: string) => {
       if (initialQuery?.trim()) {
@@ -446,6 +469,7 @@ function MusicOrbitShell() {
     icon: typeof Disc3;
     count: number | undefined;
     highlightBadge?: boolean;
+    badgeText?: string;
   }> = [
     { id: "albums", label: "Albums", icon: Disc3, count: health?.counts.albums },
     { id: "artists", label: "Artists", icon: Users, count: health?.counts.artists },
@@ -466,6 +490,8 @@ function MusicOrbitShell() {
       label: isAdmin ? "System & Scanner" : "Library Settings",
       icon: Activity,
       count: undefined,
+      highlightBadge: Boolean(isAdmin && updateInfo?.updateAvailable),
+      badgeText: isAdmin && updateInfo?.updateAvailable ? "Update" : undefined,
     },
     ...(authStatus?.authEnabled && isAdmin
       ? [{ id: "users" as const, label: "Users", icon: ShieldCheck, count: undefined }]
@@ -545,7 +571,7 @@ function MusicOrbitShell() {
           Library
         </p>
 
-        {navItems.map(({ id, label, icon: Icon, count, highlightBadge }) => {
+        {navItems.map(({ id, label, icon: Icon, count, highlightBadge, badgeText }) => {
           const active = isNavActive(id);
           return (
             <button
@@ -563,7 +589,7 @@ function MusicOrbitShell() {
                 <Icon className={`h-4 w-4 ${active ? "text-amber-400" : "text-zinc-500"}`} />
                 {label}
               </span>
-              {count !== undefined && (
+              {(count !== undefined || badgeText) && (
                 <span
                   className={
                     highlightBadge
@@ -571,7 +597,7 @@ function MusicOrbitShell() {
                       : "text-xs font-normal text-zinc-500"
                   }
                 >
-                  {count}
+                  {badgeText ?? count}
                 </span>
               )}
             </button>
@@ -580,6 +606,22 @@ function MusicOrbitShell() {
       </nav>
 
       <div className="mt-6 space-y-2.5">
+        {isAdmin && updateInfo?.updateAvailable && updateInfo.latestVersion && (
+          <button
+            type="button"
+            onClick={() => navigateFromSidebar("system")}
+            className="flex w-full items-center justify-between gap-2 rounded-lg border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-left text-xs text-amber-200 transition hover:border-amber-400/60 hover:bg-amber-500/15"
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <ArrowUpCircle className="h-4 w-4 shrink-0 text-amber-400" />
+              <span className="truncate font-medium">
+                v{updateInfo.latestVersion} available
+              </span>
+            </span>
+            <span className="shrink-0 text-[10px] font-semibold text-amber-300">Details</span>
+          </button>
+        )}
+
         {authStatus?.authEnabled && authStatus.user && (
           <div
             data-tour={inMobileDrawer ? undefined : "user-card"}
@@ -917,6 +959,7 @@ function MusicOrbitShell() {
               health={health}
               scanStatus={scanStatus}
               slskdStatus={slskdStatus}
+              updateInfo={updateInfo}
               loading={loading}
               startingScan={startingScan}
               onScan={(force) => void handleScan(force)}
@@ -924,6 +967,7 @@ function MusicOrbitShell() {
               onMusicDirChanged={() => void loadLibrary(searchQuery)}
               onOpenSoulseek={() => handleOpenSoulseekSearch()}
               onSlskdStatusChanged={(next) => setSlskdStatus(next)}
+              onUpdateInfoChanged={(next) => setUpdateInfo(next)}
               onOpenReviewQueue={() => navigate({ view: "review" })}
               onOpenUpload={() => setUploadOpen(true)}
             />
