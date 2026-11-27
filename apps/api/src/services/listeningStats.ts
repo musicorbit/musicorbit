@@ -15,6 +15,7 @@ import type {
   RecentPlayItem,
   RecordPlayResponse,
   SaveRecapPlaylistResponse,
+  SpotifyHistoryImportResponse,
   StatsRange,
   TopAlbumStat,
   TopArtistStat,
@@ -67,7 +68,44 @@ const KNOWN_CLIENT_NAMES: Record<string, string> = {
   dsub: "DSub",
   "musicorbit web": "MusicOrbit Web",
   "musicorbit pwa": "MusicOrbit PWA",
+  "spotify (imported)": "Spotify (Imported)",
 };
+
+function normalizePlaySource(raw: string): PlaySource {
+  if (raw === "subsonic") return "subsonic";
+  if (raw === "import") return "import";
+  return "web";
+}
+
+function normalizeMatchText(raw: string): string {
+  return raw
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s*[\(\[]\s*(?:feat\.?|ft\.?|featuring|with|remaster(?:ed)?[^)\]]*|deluxe[^)\]]*|bonus[^)\]]*)\s*[\)\]]/gi, "")
+    .replace(/\s*-\s*(?:\d{4}\s*)?(?:remaster(?:ed)?|deluxe|radio edit|single version|album version).*$/i, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function parseSpotifyTimestamp(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  // Extended Streaming History: "2026-10-14T21:43:12Z"
+  if (trimmed.includes("T")) {
+    const ms = Date.parse(trimmed);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  // Account Data: "2026-10-14 21:43" or "2026-10-14 21:43:00" (UTC)
+  const match = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})(?::(\d{2}))?$/.exec(trimmed);
+  if (match) {
+    const iso = `${match[1]}T${match[2]}:${match[3] ?? "00"}Z`;
+    const ms = Date.parse(iso);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  const fallback = Date.parse(trimmed);
+  return Number.isFinite(fallback) ? fallback : null;
+}
 
 interface PlayRow {
   id: number;
@@ -98,7 +136,9 @@ export function normalizeClientName(raw: string | null | undefined, source: Play
     .trim()
     .slice(0, 64);
   if (!cleaned) {
-    return source === "subsonic" ? "OpenSubsonic App" : "MusicOrbit Web";
+    if (source === "subsonic") return "OpenSubsonic App";
+    if (source === "import") return "Spotify (Imported)";
+    return "MusicOrbit Web";
   }
   const lower = cleaned.toLowerCase();
   if (KNOWN_CLIENT_NAMES[lower]) {
@@ -633,7 +673,7 @@ export class ListeningStatsService {
       }
 
       // Client usage aggregation
-      const cSource: PlaySource = r.source === "subsonic" ? "subsonic" : "web";
+      const cSource = normalizePlaySource(r.source);
       const cName = normalizeClientName(r.client_name, cSource);
       const cKey = cName.toLowerCase();
       const cEntry = clientMap.get(cKey) ?? {
@@ -801,7 +841,7 @@ export class ListeningStatsService {
     }
 
     const recentlyPlayed: RecentPlayItem[] = allRows.slice(0, 12).map((r) => {
-      const src: PlaySource = r.source === "subsonic" ? "subsonic" : "web";
+      const src = normalizePlaySource(r.source);
       return {
         id: r.id,
         trackId: r.track_id,
@@ -1134,5 +1174,320 @@ export class ListeningStatsService {
       },
       tracksAdded: validTrackIds.length,
     };
+  }
+
+  /**
+   * Imports official Spotify JSON listening history into the user's private play_events table.
+   * Supports both:
+   * - Account Data ("StreamingHistory_music_*.json": endTime, artistName, trackName, msPlayed)
+   * - Extended Streaming History ("Streaming_History_Audio_*.json": ts, master_metadata_*, ms_played, skipped)
+   */
+  importSpotifyHistory(
+    userId: number,
+    entries: unknown[],
+    options?: { minSeconds?: number },
+  ): SpotifyHistoryImportResponse {
+    const { sqlite } = this.dbContext;
+    const minMs = Math.max(5, Math.min(300, options?.minSeconds ?? 30)) * 1000;
+
+    // Build fast in-memory library lookup maps for this user
+    const trackRows = sqlite
+      .prepare(
+        `
+        SELECT
+          t.id AS track_id,
+          t.title AS track_title,
+          t.album_id,
+          t.artist_id,
+          t.duration_seconds,
+          al.title AS album_title,
+          al.genre AS album_genre,
+          ar.name AS artist_name
+        FROM tracks t
+        JOIN albums al ON al.id = t.album_id
+        JOIN artists ar ON ar.id = t.artist_id
+        WHERE t.user_id = ?
+      `,
+      )
+      .all(userId) as Array<{
+      track_id: number;
+      track_title: string;
+      album_id: number;
+      artist_id: number;
+      duration_seconds: number | null;
+      album_title: string;
+      album_genre: string | null;
+      artist_name: string;
+    }>;
+
+    const trackByArtistTitle = new Map<
+      string,
+      {
+        trackId: number;
+        albumId: number;
+        artistId: number;
+        albumTitle: string;
+        genre: string | null;
+        durationSeconds: number | null;
+      }
+    >();
+    const albumByArtistAlbum = new Map<
+      string,
+      { albumId: number; artistId: number; albumTitle: string; genre: string | null }
+    >();
+    const artistByNormName = new Map<string, number>();
+
+    for (const tr of trackRows) {
+      const nArtist = normalizeMatchText(tr.artist_name);
+      const nTitle = normalizeMatchText(tr.track_title);
+      const nAlbum = normalizeMatchText(tr.album_title);
+      if (nArtist) {
+        if (!artistByNormName.has(nArtist)) artistByNormName.set(nArtist, tr.artist_id);
+        if (nTitle) {
+          const tKey = `${nArtist}::${nTitle}`;
+          if (!trackByArtistTitle.has(tKey)) {
+            trackByArtistTitle.set(tKey, {
+              trackId: tr.track_id,
+              albumId: tr.album_id,
+              artistId: tr.artist_id,
+              albumTitle: tr.album_title,
+              genre: tr.album_genre?.trim() || null,
+              durationSeconds: tr.duration_seconds,
+            });
+          }
+        }
+        if (nAlbum) {
+          const alKey = `${nArtist}::${nAlbum}`;
+          if (!albumByArtistAlbum.has(alKey)) {
+            albumByArtistAlbum.set(alKey, {
+              albumId: tr.album_id,
+              artistId: tr.artist_id,
+              albumTitle: tr.album_title,
+              genre: tr.album_genre?.trim() || null,
+            });
+          }
+        }
+      }
+    }
+
+    // Load existing plays for fast ±65s deduplication (handles re-uploads + Account vs Extended overlap)
+    const existingRows = sqlite
+      .prepare("SELECT artist_name, track_title, played_at FROM play_events WHERE user_id = ?")
+      .all(userId) as Array<{ artist_name: string; track_title: string; played_at: number }>;
+
+    const seenTimestampsBySong = new Map<string, number[]>();
+    const addSeen = (songKey: string, tsMs: number) => {
+      const arr = seenTimestampsBySong.get(songKey);
+      if (arr) arr.push(tsMs);
+      else seenTimestampsBySong.set(songKey, [tsMs]);
+    };
+    const isDuplicate = (songKey: string, tsMs: number): boolean => {
+      const arr = seenTimestampsBySong.get(songKey);
+      if (!arr) return false;
+      for (let i = 0; i < arr.length; i++) {
+        if (Math.abs(arr[i]! - tsMs) <= 65_000) return true;
+      }
+      return false;
+    };
+
+    for (const ex of existingRows) {
+      const key = `${normalizeMatchText(ex.artist_name)}::${normalizeMatchText(ex.track_title)}`;
+      addSeen(key, ex.played_at);
+    }
+
+    let sawExtended = false;
+    let sawAccount = false;
+    let importedCount = 0;
+    let matchedLocalTracks = 0;
+    let skippedShortOrNonMusic = 0;
+    let deduplicatedCount = 0;
+    let earliestMs: number | null = null;
+    let latestMs: number | null = null;
+
+    const toInsert: Array<{
+      trackId: number | null;
+      albumId: number | null;
+      artistId: number | null;
+      trackTitle: string;
+      albumTitle: string;
+      artistName: string;
+      genre: string | null;
+      durationSeconds: number;
+      playedAt: number;
+    }> = [];
+
+    for (const rawItem of entries) {
+      if (!rawItem || typeof rawItem !== "object") {
+        skippedShortOrNonMusic++;
+        continue;
+      }
+      const item = rawItem as Record<string, unknown>;
+
+      let artistName: string | null = null;
+      let trackTitle: string | null = null;
+      let albumTitle: string | null = null;
+      let msPlayed = 0;
+      let playedAt: number | null = null;
+      let skippedFlag = false;
+
+      if (
+        "master_metadata_track_name" in item ||
+        "ts" in item ||
+        "ms_played" in item
+      ) {
+        // Extended Streaming History format
+        sawExtended = true;
+        artistName =
+          typeof item.master_metadata_album_artist_name === "string"
+            ? item.master_metadata_album_artist_name.trim()
+            : null;
+        trackTitle =
+          typeof item.master_metadata_track_name === "string"
+            ? item.master_metadata_track_name.trim()
+            : null;
+        albumTitle =
+          typeof item.master_metadata_album_name === "string"
+            ? item.master_metadata_album_name.trim()
+            : null;
+        msPlayed = typeof item.ms_played === "number" ? item.ms_played : 0;
+        playedAt = typeof item.ts === "string" ? parseSpotifyTimestamp(item.ts) : null;
+        skippedFlag = item.skipped === true;
+      } else if ("trackName" in item || "artistName" in item || "endTime" in item) {
+        // Account Data (Last 12 Months) format
+        sawAccount = true;
+        artistName = typeof item.artistName === "string" ? item.artistName.trim() : null;
+        trackTitle = typeof item.trackName === "string" ? item.trackName.trim() : null;
+        msPlayed = typeof item.msPlayed === "number" ? item.msPlayed : 0;
+        playedAt = typeof item.endTime === "string" ? parseSpotifyTimestamp(item.endTime) : null;
+      } else {
+        skippedShortOrNonMusic++;
+        continue;
+      }
+
+      // Skip podcasts/audiobooks (null track/artist), invalid timestamps, or short skips
+      if (
+        !artistName ||
+        !trackTitle ||
+        !playedAt ||
+        !Number.isFinite(msPlayed) ||
+        msPlayed < minMs ||
+        (skippedFlag && msPlayed < 90_000)
+      ) {
+        skippedShortOrNonMusic++;
+        continue;
+      }
+
+      const nArtist = normalizeMatchText(artistName);
+      const nTitle = normalizeMatchText(trackTitle);
+      const songKey = `${nArtist}::${nTitle}`;
+
+      if (isDuplicate(songKey, playedAt)) {
+        deduplicatedCount++;
+        continue;
+      }
+      addSeen(songKey, playedAt);
+
+      // Link to user's local library when possible
+      const matchedTrack = trackByArtistTitle.get(songKey);
+      let trackId: number | null = null;
+      let albumId: number | null = null;
+      let artistId: number | null = null;
+      let genre: string | null = null;
+      let resolvedAlbumTitle = albumTitle || "";
+
+      if (matchedTrack) {
+        trackId = matchedTrack.trackId;
+        albumId = matchedTrack.albumId;
+        artistId = matchedTrack.artistId;
+        genre = matchedTrack.genre;
+        if (!resolvedAlbumTitle) resolvedAlbumTitle = matchedTrack.albumTitle;
+        matchedLocalTracks++;
+      } else {
+        const matchedAlbum = albumTitle
+          ? albumByArtistAlbum.get(`${nArtist}::${normalizeMatchText(albumTitle)}`)
+          : undefined;
+        if (matchedAlbum) {
+          albumId = matchedAlbum.albumId;
+          artistId = matchedAlbum.artistId;
+          genre = matchedAlbum.genre;
+        } else {
+          artistId = artistByNormName.get(nArtist) ?? null;
+        }
+      }
+
+      const durationSeconds = Math.round(msPlayed / 1000);
+      toInsert.push({
+        trackId,
+        albumId,
+        artistId,
+        trackTitle: trackTitle.slice(0, 300),
+        albumTitle: (resolvedAlbumTitle || "Unknown Album").slice(0, 300),
+        artistName: artistName.slice(0, 300),
+        genre,
+        durationSeconds,
+        playedAt,
+      });
+
+      if (earliestMs === null || playedAt < earliestMs) earliestMs = playedAt;
+      if (latestMs === null || playedAt > latestMs) latestMs = playedAt;
+    }
+
+    if (toInsert.length > 0) {
+      const insertStmt = sqlite.prepare(
+        `
+        INSERT INTO play_events (
+          user_id, track_id, album_id, artist_id,
+          track_title, album_title, artist_name, genre,
+          duration_seconds, played_at, client_name, source
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Spotify (Imported)', 'import')
+      `,
+      );
+      const tx = sqlite.transaction(() => {
+        for (const row of toInsert) {
+          insertStmt.run(
+            userId,
+            row.trackId,
+            row.albumId,
+            row.artistId,
+            row.trackTitle,
+            row.albumTitle,
+            row.artistName,
+            row.genre,
+            row.durationSeconds,
+            row.playedAt,
+          );
+        }
+      });
+      tx();
+      importedCount = toInsert.length;
+    }
+
+    const format =
+      sawExtended && sawAccount
+        ? "mixed"
+        : sawExtended
+          ? "extended"
+          : sawAccount
+            ? "account"
+            : "unknown";
+
+    return {
+      format,
+      totalEntries: entries.length,
+      importedCount,
+      matchedLocalTracks,
+      skippedShortOrNonMusic,
+      deduplicatedCount,
+      earliestPlayedAt: earliestMs !== null ? new Date(earliestMs).toISOString() : null,
+      latestPlayedAt: latestMs !== null ? new Date(latestMs).toISOString() : null,
+    };
+  }
+
+  clearImportedHistory(userId: number): { deletedCount: number } {
+    const info = this.dbContext.sqlite
+      .prepare("DELETE FROM play_events WHERE user_id = ? AND source = 'import'")
+      .run(userId);
+    return { deletedCount: info.changes };
   }
 }

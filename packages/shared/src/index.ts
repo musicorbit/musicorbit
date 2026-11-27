@@ -854,7 +854,18 @@ export interface DeleteLibraryItemsResponse {
  */
 export type StatsRange = "7d" | "30d" | "year" | "all";
 export type RecapPeriodType = "month" | "year";
-export type PlaySource = "web" | "subsonic";
+export type PlaySource = "web" | "subsonic" | "import";
+
+export interface SpotifyHistoryImportResponse {
+  format: "extended" | "account" | "mixed" | "unknown";
+  totalEntries: number;
+  importedCount: number;
+  matchedLocalTracks: number;
+  skippedShortOrNonMusic: number;
+  deduplicatedCount: number;
+  earliestPlayedAt: string | null;
+  latestPlayedAt: string | null;
+}
 
 export interface RecordPlayRequest {
   trackId: number;

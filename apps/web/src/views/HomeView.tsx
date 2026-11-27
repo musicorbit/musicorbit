@@ -3,6 +3,7 @@ import {
   CalendarHeart,
   Clock,
   Disc3,
+  FileJson,
   Flame,
   HardDrive,
   Headphones,
@@ -16,6 +17,7 @@ import type { HomeStatsResponse, StatsRange } from "@musicorbit/shared";
 import { fetchAlbumDetail, fetchHomeStats } from "../api/client";
 import { AlbumCover } from "../components/AlbumCover";
 import { ArtistAvatar } from "../components/ArtistAvatar";
+import { ImportSpotifyHistoryModal } from "../components/ImportSpotifyHistoryModal";
 import { usePlayer } from "../context/PlayerContext";
 
 interface HomeViewProps {
@@ -95,6 +97,7 @@ export function HomeView({
   const [stats, setStats] = useState<HomeStatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [spotifyImportOpen, setSpotifyImportOpen] = useState(false);
 
   const loadStats = useCallback(async (selectedRange: StatsRange) => {
     setLoading(true);
@@ -192,6 +195,16 @@ export function HomeView({
               </button>
             ))}
           </div>
+
+          <button
+            type="button"
+            onClick={() => setSpotifyImportOpen(true)}
+            title="Import Spotify JSON listening history"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-emerald-500/40 hover:bg-zinc-800 hover:text-emerald-300"
+          >
+            <FileJson className="h-3.5 w-3.5 text-emerald-400" />
+            Import Spotify
+          </button>
 
           <button
             type="button"
@@ -343,6 +356,14 @@ export function HomeView({
             </button>
             <button
               type="button"
+              onClick={() => setSpotifyImportOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3.5 py-2 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/20"
+            >
+              <FileJson className="h-3.5 w-3.5" />
+              Import Spotify History
+            </button>
+            <button
+              type="button"
               onClick={onOpenSystem}
               className="rounded-xl border border-zinc-700 bg-zinc-900 px-3.5 py-2 text-xs font-medium text-zinc-200 transition hover:bg-zinc-800"
             >
@@ -430,7 +451,9 @@ export function HomeView({
                           className={`inline-flex max-w-[140px] truncate rounded-full px-2 py-0.5 text-[10px] font-medium ${
                             item.source === "subsonic"
                               ? "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/25"
-                              : "bg-zinc-800 text-zinc-300"
+                              : item.source === "import"
+                                ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/25"
+                                : "bg-zinc-800 text-zinc-300"
                           }`}
                         >
                           {item.clientName}
@@ -447,7 +470,9 @@ export function HomeView({
                       className={`inline-flex max-w-[140px] truncate rounded-full px-2 py-0.5 text-[10px] font-medium ${
                         item.source === "subsonic"
                           ? "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/25"
-                          : "bg-zinc-800 text-zinc-300"
+                          : item.source === "import"
+                            ? "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/25"
+                            : "bg-zinc-800 text-zinc-300"
                       }`}
                     >
                       {item.clientName}
@@ -491,7 +516,11 @@ export function HomeView({
                       <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
                         <div
                           className={`h-full rounded-full ${
-                            c.source === "subsonic" ? "bg-amber-400" : "bg-emerald-400"
+                            c.source === "subsonic"
+                              ? "bg-amber-400"
+                              : c.source === "import"
+                                ? "bg-emerald-400"
+                                : "bg-sky-400"
                           }`}
                           style={{ width: `${Math.max(4, c.percentage)}%` }}
                         />
@@ -783,6 +812,13 @@ export function HomeView({
             ))}
           </div>
         </section>
+      )}
+
+      {spotifyImportOpen && (
+        <ImportSpotifyHistoryModal
+          onClose={() => setSpotifyImportOpen(false)}
+          onImported={() => void loadStats(range)}
+        />
       )}
     </div>
   );

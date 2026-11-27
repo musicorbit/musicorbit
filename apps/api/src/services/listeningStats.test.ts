@@ -274,4 +274,196 @@ describe("ListeningStats, OpenSubsonic Scrobbling & Recaps", () => {
       }
     });
   });
+
+  it("imports both Spotify Account Data & Extended Streaming History JSON, matches local library, deduplicates overlap, filters skips/podcasts, and supports clear", async () => {
+    const root = createTempDir();
+    const musicDir = path.join(root, "music");
+    const dataDir = path.join(root, "data");
+    const downloadsDir = path.join(root, "downloads");
+    fs.mkdirSync(musicDir, { recursive: true });
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.mkdirSync(downloadsDir, { recursive: true });
+
+    const server = await buildServer({
+      port: 0,
+      host: "127.0.0.1",
+      logLevel: "silent",
+      musicDir,
+      dataDir,
+      downloadsDir,
+      autoImportThreshold: 85,
+      dbPath: path.join(dataDir, "musicorbit.db"),
+      coversDir: path.join(dataDir, "covers"),
+      artistImagesDir: path.join(dataDir, "artist-images"),
+      fetchArtistImages: false,
+      checkUpdates: false,
+      authEnabled: true,
+      webDistDir: null,
+      slskdUrl: null,
+      slskdApiKey: null,
+      version: "0.1.0",
+    });
+
+    try {
+      const setupRes = await server.app.inject({
+        method: "POST",
+        url: "/api/auth/setup",
+        payload: { username: "bianca", password: "password123" },
+      });
+      assert.equal(setupRes.statusCode, 201);
+      const cookie = setupRes.cookies.find((c) => c.name === "musicorbit_session")!;
+
+      // Seed 1 owned track to verify normalized matching ("Digital Love - 2001 Remaster" -> "Digital Love")
+      const now = Date.now();
+      const { sqlite } = server.dbContext;
+      const a1 = Number(
+        sqlite
+          .prepare(
+            "INSERT INTO artists (user_id, name, sort_name, created_at, updated_at) VALUES (1, ?, ?, ?, ?)",
+          )
+          .run("Daft Punk", "Daft Punk", now, now).lastInsertRowid,
+      );
+      const al1 = Number(
+        sqlite
+          .prepare(
+            "INSERT INTO albums (user_id, title, artist_id, year, genre, cover_hash, created_at, updated_at) VALUES (1, ?, ?, 2001, 'Electronic', 'cover1.jpg', ?, ?)",
+          )
+          .run("Discovery", a1, now, now).lastInsertRowid,
+      );
+      const t1 = Number(
+        sqlite
+          .prepare(
+            "INSERT INTO tracks (user_id, title, album_id, artist_id, track_number, duration_seconds, codec, file_path, file_size, file_mtime_ms, created_at, updated_at) VALUES (1, ?, ?, ?, 1, 298, 'FLAC', ?, 30000000, ?, ?, ?)",
+          )
+          .run("Digital Love", al1, a1, path.join(musicDir, "t1.flac"), now, now, now)
+          .lastInsertRowid,
+      );
+
+      // Also log 1 live web play so we verify DELETE /api/stats/import/spotify leaves live plays untouched
+      await server.app.inject({
+        method: "POST",
+        url: "/api/plays",
+        cookies: { musicorbit_session: cookie.value },
+        payload: { trackId: t1, clientName: "MusicOrbit Web" },
+      });
+
+      // 1. Import Spotify Account Data format (StreamingHistory_music_0.json)
+      const accountImport = await server.app.inject({
+        method: "POST",
+        url: "/api/stats/import/spotify",
+        cookies: { musicorbit_session: cookie.value },
+        payload: {
+          minSeconds: 30,
+          entries: [
+            {
+              endTime: "2026-06-15 18:30",
+              artistName: "Daft Punk",
+              trackName: "Digital Love - 2001 Remaster",
+              msPlayed: 298000,
+            },
+            {
+              endTime: "2026-06-15 18:35",
+              artistName: "Unowned Artist",
+              trackName: "Unowned Track",
+              msPlayed: 210000,
+            },
+            {
+              // Too short (< 30s) -> skipped
+              endTime: "2026-06-15 18:40",
+              artistName: "Daft Punk",
+              trackName: "Harder Better Faster Stronger",
+              msPlayed: 12000,
+            },
+          ],
+        },
+      });
+      assert.equal(accountImport.statusCode, 200);
+      const accBody = accountImport.json();
+      assert.equal(accBody.format, "account");
+      assert.equal(accBody.importedCount, 2);
+      assert.equal(accBody.matchedLocalTracks, 1);
+      assert.equal(accBody.skippedShortOrNonMusic, 1);
+
+      // 2. Import Extended Streaming History overlapping the first play (±65s dedupe!) + 1 new play + 1 podcast + 1 skipped track
+      const extendedImport = await server.app.inject({
+        method: "POST",
+        url: "/api/stats/import/spotify",
+        cookies: { musicorbit_session: cookie.value },
+        payload: [
+          {
+            // Overlaps "2026-06-15 18:30" by 22 seconds -> deduplicated!
+            ts: "2026-06-15T18:30:22Z",
+            ms_played: 298120,
+            master_metadata_track_name: "Digital Love",
+            master_metadata_album_artist_name: "Daft Punk",
+            master_metadata_album_name: "Discovery",
+            skipped: false,
+          },
+          {
+            // New play from 2025
+            ts: "2025-11-02T22:15:00Z",
+            ms_played: 245000,
+            master_metadata_track_name: "Instant Crush",
+            master_metadata_album_artist_name: "Daft Punk",
+            master_metadata_album_name: "Random Access Memories",
+            skipped: false,
+          },
+          {
+            // Podcast (null track metadata) -> skipped
+            ts: "2025-11-02T23:00:00Z",
+            ms_played: 1800000,
+            master_metadata_track_name: null,
+            master_metadata_album_artist_name: null,
+            master_metadata_album_name: null,
+            episode_name: "Some Podcast",
+          },
+          {
+            // Skipped early -> skipped
+            ts: "2025-11-02T23:45:00Z",
+            ms_played: 45000,
+            master_metadata_track_name: "Short Skip",
+            master_metadata_album_artist_name: "Someone",
+            master_metadata_album_name: "Album",
+            skipped: true,
+          },
+        ],
+      });
+      assert.equal(extendedImport.statusCode, 200);
+      const extBody = extendedImport.json();
+      assert.equal(extBody.format, "extended");
+      assert.equal(extBody.importedCount, 1);
+      assert.equal(extBody.deduplicatedCount, 1);
+      assert.equal(extBody.skippedShortOrNonMusic, 2);
+
+      // 3. Verify 2025 Recap populated from imported Spotify history and linked to Daft Punk artistId
+      const recap2025 = await server.app.inject({
+        method: "GET",
+        url: "/api/stats/recap?type=year&period=2025",
+        cookies: { musicorbit_session: cookie.value },
+      });
+      assert.equal(recap2025.statusCode, 200);
+      const r25 = recap2025.json();
+      assert.equal(r25.totalPlays, 1);
+      assert.equal(r25.topArtist.artistId, a1);
+      assert.equal(r25.clients[0].clientName, "Spotify (Imported)");
+
+      // 4. Verify clearing imported history deletes only imported plays (3) and keeps live Web play (1)
+      const clearRes = await server.app.inject({
+        method: "DELETE",
+        url: "/api/stats/import/spotify",
+        cookies: { musicorbit_session: cookie.value },
+      });
+      assert.equal(clearRes.statusCode, 200);
+      assert.equal(clearRes.json().deletedCount, 3);
+
+      const homeAfterClear = await server.app.inject({
+        method: "GET",
+        url: "/api/stats/home?range=all",
+        cookies: { musicorbit_session: cookie.value },
+      });
+      assert.equal(homeAfterClear.json().listening.allTimePlays, 1);
+    } finally {
+      await server.app.close();
+    }
+  });
 });

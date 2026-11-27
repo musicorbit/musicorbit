@@ -52,6 +52,7 @@ import type {
   ScanStatusResponse,
   SoulseekSearchResultsResponse,
   SoulseekSearchSummary,
+  SpotifyHistoryImportResponse,
   StartUploadBatchResponse,
   StatsRange,
   SubsonicPasswordResponse,
@@ -132,6 +133,31 @@ export async function saveRecapAsPlaylist(
     throw new Error(body?.error ?? `Could not save recap playlist (HTTP ${res.status})`);
   }
   return (await res.json()) as SaveRecapPlaylistResponse;
+}
+
+export async function importSpotifyHistoryJson(
+  entries: unknown[],
+  minSeconds = 30,
+): Promise<SpotifyHistoryImportResponse> {
+  const res = await fetch("/api/stats/import/spotify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ entries, minSeconds }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not import Spotify history (HTTP ${res.status})`);
+  }
+  return (await res.json()) as SpotifyHistoryImportResponse;
+}
+
+export async function clearImportedSpotifyHistory(): Promise<{ deletedCount: number }> {
+  const res = await fetch("/api/stats/import/spotify", { method: "DELETE" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not clear imported history (HTTP ${res.status})`);
+  }
+  return (await res.json()) as { deletedCount: number };
 }
 
 export function fetchScanStatus(): Promise<ScanStatusResponse> {

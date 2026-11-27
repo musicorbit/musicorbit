@@ -6,6 +6,7 @@ import type {
   RecapResponse,
   RecordPlayResponse,
   SaveRecapPlaylistResponse,
+  SpotifyHistoryImportResponse,
   StatsRange,
 } from "@musicorbit/shared";
 import { getRequestUser } from "../services/authHelpers.js";
@@ -89,4 +90,38 @@ export async function registerStatsRoutes(
       return reply.code(201).send(result);
     },
   );
+
+  // Import official Spotify JSON listening history (supports up to 50 MB per file)
+  app.post(
+    "/api/stats/import/spotify",
+    { bodyLimit: 50 * 1024 * 1024 },
+    async (request, reply): Promise<SpotifyHistoryImportResponse> => {
+      const user = getRequestUser(request);
+      const body = request.body as unknown;
+
+      let entries: unknown[];
+      let minSeconds: number | undefined;
+      if (Array.isArray(body)) {
+        entries = body;
+      } else if (body && typeof body === "object" && Array.isArray((body as { entries?: unknown }).entries)) {
+        entries = (body as { entries: unknown[] }).entries;
+        const rawMin = (body as { minSeconds?: unknown }).minSeconds;
+        if (typeof rawMin === "number" && Number.isFinite(rawMin)) {
+          minSeconds = rawMin;
+        }
+      } else {
+        return reply.code(400).send({
+          error:
+            "Expected a Spotify JSON array (e.g. StreamingHistory_music_0.json or Streaming_History_Audio_*.json).",
+        } as never);
+      }
+
+      return listeningStats.importSpotifyHistory(user.id, entries, { minSeconds });
+    },
+  );
+
+  app.delete("/api/stats/import/spotify", async (request): Promise<{ deletedCount: number }> => {
+    const user = getRequestUser(request);
+    return listeningStats.clearImportedHistory(user.id);
+  });
 }
