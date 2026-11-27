@@ -17,7 +17,7 @@
     "@musicorbit/shared": "0.1.0",
     "better-sqlite3": "^11.9.1",
     "dotenv": "^16.4.7",
-    "drizzle-orm": "^0.41.0",
+    "drizzle-orm": "^0.45.2",
     "fastify": "^5.2.2",
     "music-metadata": "^11.2.0",
     "node-taglib-sharp": "^6.0.3",
