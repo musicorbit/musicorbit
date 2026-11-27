@@ -23,6 +23,7 @@ import type {
   EnqueueDownloadRequest,
   FinalizeUploadBatchResponse,
   HealthResponse,
+  HistoryImportResponse,
   HomeStatsResponse,
   ImportFileAction,
   ImportItemStatus,
@@ -52,7 +53,6 @@ import type {
   ScanStatusResponse,
   SoulseekSearchResultsResponse,
   SoulseekSearchSummary,
-  SpotifyHistoryImportResponse,
   StartUploadBatchResponse,
   StatsRange,
   SubsonicPasswordResponse,
@@ -135,24 +135,25 @@ export async function saveRecapAsPlaylist(
   return (await res.json()) as SaveRecapPlaylistResponse;
 }
 
-export async function importSpotifyHistoryJson(
-  entries: unknown[],
+export async function importListeningHistoryFile(
+  content: string,
+  filename?: string,
   minSeconds = 30,
-): Promise<SpotifyHistoryImportResponse> {
-  const res = await fetch("/api/stats/import/spotify", {
+): Promise<HistoryImportResponse> {
+  const res = await fetch("/api/stats/import", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ entries, minSeconds }),
+    body: JSON.stringify({ content, filename, minSeconds }),
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(body?.error ?? `Could not import Spotify history (HTTP ${res.status})`);
+    throw new Error(body?.error ?? `Could not import listening history (HTTP ${res.status})`);
   }
-  return (await res.json()) as SpotifyHistoryImportResponse;
+  return (await res.json()) as HistoryImportResponse;
 }
 
-export async function clearImportedSpotifyHistory(): Promise<{ deletedCount: number }> {
-  const res = await fetch("/api/stats/import/spotify", { method: "DELETE" });
+export async function clearImportedHistory(): Promise<{ deletedCount: number }> {
+  const res = await fetch("/api/stats/import", { method: "DELETE" });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ?? `Could not clear imported history (HTTP ${res.status})`);

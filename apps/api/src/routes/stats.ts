@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type {
+  HistoryImportResponse,
   HomeStatsResponse,
   RecapPeriodType,
   RecapResponse,
@@ -91,7 +92,40 @@ export async function registerStatsRoutes(
     },
   );
 
-  // Import official Spotify JSON listening history (supports up to 50 MB per file)
+  // Unified listening history import (Spotify JSON, Apple Music CSV, Last.fm CSV/JSON, ListenBrainz JSON/JSONL)
+  app.post(
+    "/api/stats/import",
+    { bodyLimit: 50 * 1024 * 1024 },
+    async (request, reply): Promise<HistoryImportResponse> => {
+      const user = getRequestUser(request);
+      const body = request.body as unknown;
+      if (!body || typeof body !== "object" || typeof (body as { content?: unknown }).content !== "string") {
+        return reply.code(400).send({
+          error:
+            "Expected a listening history file payload (Spotify JSON, Apple Music CSV, Last.fm CSV/JSON, or ListenBrainz JSON/JSONL).",
+        } as never);
+      }
+
+      const payload = body as { content: string; filename?: unknown; minSeconds?: unknown };
+      const filename = typeof payload.filename === "string" ? payload.filename : undefined;
+      const minSeconds =
+        typeof payload.minSeconds === "number" && Number.isFinite(payload.minSeconds)
+          ? payload.minSeconds
+          : undefined;
+
+      return listeningStats.importListeningHistory(user.id, payload.content, {
+        filename,
+        minSeconds,
+      });
+    },
+  );
+
+  app.delete("/api/stats/import", async (request): Promise<{ deletedCount: number }> => {
+    const user = getRequestUser(request);
+    return listeningStats.clearImportedHistory(user.id);
+  });
+
+  // Backwards-compatible Spotify JSON endpoint
   app.post(
     "/api/stats/import/spotify",
     { bodyLimit: 50 * 1024 * 1024 },

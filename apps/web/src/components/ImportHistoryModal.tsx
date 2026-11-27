@@ -2,23 +2,23 @@ import { useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
-  ExternalLink,
-  FileJson,
+  FileUp,
   Loader2,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
-import type { SpotifyHistoryImportResponse } from "@musicorbit/shared";
-import { clearImportedSpotifyHistory, importSpotifyHistoryJson } from "../api/client";
+import type { HistoryImportResponse } from "@musicorbit/shared";
+import { clearImportedHistory, importListeningHistoryFile } from "../api/client";
 
-interface ImportSpotifyHistoryModalProps {
+interface ImportHistoryModalProps {
   onClose: () => void;
   onImported: () => void;
 }
 
 interface AggregatedResult {
   filesProcessed: number;
+  detectedSources: string[];
   totalEntries: number;
   importedCount: number;
   matchedLocalTracks: number;
@@ -28,10 +28,9 @@ interface AggregatedResult {
   latestPlayedAt: string | null;
 }
 
-export function ImportSpotifyHistoryModal({
-  onClose,
-  onImported,
-}: ImportSpotifyHistoryModalProps) {
+const SUPPORTED_EXTENSIONS = [".json", ".jsonl", ".csv"];
+
+export function ImportHistoryModal({ onClose, onImported }: ImportHistoryModalProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
   const [minSeconds, setMinSeconds] = useState(30);
@@ -43,11 +42,12 @@ export function ImportSpotifyHistoryModal({
   const [error, setError] = useState<string | null>(null);
 
   const processFiles = async (fileList: FileList | File[]) => {
-    const files = Array.from(fileList).filter((f) => f.name.toLowerCase().endsWith(".json"));
+    const files = Array.from(fileList).filter((f) => {
+      const lower = f.name.toLowerCase();
+      return SUPPORTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
+    });
     if (files.length === 0) {
-      setError(
-        "Please select one or more Spotify .json files (e.g. StreamingHistory_music_0.json or Streaming_History_Audio_*.json).",
-      );
+      setError("Please select one or more .json, .jsonl, or .csv listening history files.");
       return;
     }
 
@@ -56,8 +56,10 @@ export function ImportSpotifyHistoryModal({
     setNotice(null);
     setResult(null);
 
+    const sourcesSet = new Set<string>();
     const summary: AggregatedResult = {
       filesProcessed: 0,
+      detectedSources: [],
       totalEntries: 0,
       importedCount: 0,
       matchedLocalTracks: 0,
@@ -71,24 +73,20 @@ export function ImportSpotifyHistoryModal({
       for (let i = 0; i < files.length; i++) {
         const file = files[i]!;
         setProgressText(`Importing ${file.name} (${i + 1} of ${files.length})…`);
-        const text = await file.text();
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(text);
-        } catch {
-          throw new Error(`${file.name} is not valid JSON.`);
-        }
-        if (!Array.isArray(parsed)) {
+        const content = await file.text();
+        const res: HistoryImportResponse = await importListeningHistoryFile(
+          content,
+          file.name,
+          minSeconds,
+        );
+        if (res.format === "unknown" && res.importedCount === 0) {
           throw new Error(
-            `${file.name} does not contain a Spotify streaming history array. Pick StreamingHistory_music_*.json or Streaming_History_Audio_*.json.`,
+            `Could not recognize the history format in "${file.name}". Supported exports: Spotify JSON, Apple Music CSV, Last.fm CSV/JSON, and ListenBrainz JSON/JSONL.`,
           );
         }
 
-        const res: SpotifyHistoryImportResponse = await importSpotifyHistoryJson(
-          parsed,
-          minSeconds,
-        );
         summary.filesProcessed++;
+        res.detectedSources.forEach((s) => sourcesSet.add(s));
         summary.totalEntries += res.totalEntries;
         summary.importedCount += res.importedCount;
         summary.matchedLocalTracks += res.matchedLocalTracks;
@@ -108,10 +106,11 @@ export function ImportSpotifyHistoryModal({
         }
       }
 
+      summary.detectedSources = Array.from(sourcesSet);
       setResult(summary);
       onImported();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to import Spotify history.");
+      setError(err instanceof Error ? err.message : "Failed to import listening history.");
     } finally {
       setImporting(false);
       setProgressText(null);
@@ -124,12 +123,12 @@ export function ImportSpotifyHistoryModal({
     setError(null);
     setNotice(null);
     try {
-      const res = await clearImportedSpotifyHistory();
+      const res = await clearImportedHistory();
       setResult(null);
       setNotice(
         res.deletedCount > 0
-          ? `Removed ${res.deletedCount.toLocaleString()} imported Spotify plays (your Web & OpenSubsonic plays were untouched).`
-          : "No imported Spotify plays to remove.",
+          ? `Removed ${res.deletedCount.toLocaleString()} imported plays (your Web & OpenSubsonic plays were untouched).`
+          : "No imported plays to remove.",
       );
       onImported();
     } catch (err) {
@@ -150,13 +149,13 @@ export function ImportSpotifyHistoryModal({
       >
         <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30">
-              <FileJson className="h-4 w-4" />
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
+              <FileUp className="h-4 w-4" />
             </div>
             <div>
-              <h3 className="text-base font-semibold text-zinc-50">Import Spotify History</h3>
+              <h3 className="text-base font-semibold text-zinc-50">Import Listening History</h3>
               <p className="text-xs text-zinc-400">
-                Bring your past listens into MusicOrbit stats &amp; recaps
+                Auto-detects Spotify, Apple Music, Last.fm, and ListenBrainz exports
               </p>
             </div>
           </div>
@@ -172,31 +171,34 @@ export function ImportSpotifyHistoryModal({
         </div>
 
         <div className="space-y-4 overflow-y-auto p-5">
-          {/* Instructions */}
+          {/* Supported Sources */}
           <div className="rounded-xl border border-zinc-800/90 bg-zinc-900/50 p-3.5 text-xs text-zinc-300">
-            <p className="font-semibold text-zinc-100">Supported official Spotify JSON files:</p>
-            <ul className="mt-1.5 list-disc space-y-1 pl-4 text-zinc-400">
+            <p className="font-semibold text-zinc-100">Supported history exports (auto-detected):</p>
+            <ul className="mt-1.5 space-y-1 text-zinc-400">
               <li>
-                <strong className="text-zinc-200">Account Data</strong> (last 12 months):{" "}
-                <code className="text-amber-300">StreamingHistory_music_0.json</code>
-              </li>
-              <li>
-                <strong className="text-zinc-200">Extended Streaming History</strong> (lifetime):{" "}
+                <strong className="text-zinc-200">Spotify:</strong>{" "}
+                <code className="text-amber-300">StreamingHistory_music_*.json</code> &amp;{" "}
                 <code className="text-amber-300">Streaming_History_Audio_*.json</code>
               </li>
+              <li>
+                <strong className="text-zinc-200">Apple Music:</strong>{" "}
+                <code className="text-amber-300">Apple Music Play Activity.csv</code>
+              </li>
+              <li>
+                <strong className="text-zinc-200">Last.fm:</strong> scrobble{" "}
+                <code className="text-amber-300">.csv</code> or{" "}
+                <code className="text-amber-300">.json</code> exports
+              </li>
+              <li>
+                <strong className="text-zinc-200">ListenBrainz:</strong>{" "}
+                <code className="text-amber-300">.json</code> or{" "}
+                <code className="text-amber-300">.jsonl</code> listen exports
+              </li>
             </ul>
-            <p className="mt-2 text-[11px] text-zinc-400">
-              Request your export at{" "}
-              <a
-                href="https://www.spotify.com/account/privacy/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-0.5 text-emerald-400 hover:underline"
-              >
-                spotify.com/account/privacy
-                <ExternalLink className="h-3 w-3" />
-              </a>
-              . Re-uploading is safe — duplicates and podcasts are automatically filtered out.
+            <p className="mt-2 text-[11px] text-zinc-500">
+              Safe to re-upload anytime — duplicates, podcasts, and short skips are filtered
+              automatically, and OpenSubsonic apps (Amperfy, Arpeggi, Symfonium) sync automatically
+              via scrobbling.
             </p>
           </div>
 
@@ -245,7 +247,7 @@ export function ImportSpotifyHistoryModal({
             <input
               ref={fileInputRef}
               type="file"
-              accept=".json,application/json"
+              accept=".json,.jsonl,.csv,application/json,text/csv"
               multiple
               disabled={importing}
               onChange={(e) => {
@@ -266,7 +268,7 @@ export function ImportSpotifyHistoryModal({
               <>
                 <Upload className="h-7 w-7 text-amber-400" />
                 <p className="mt-2.5 text-sm font-medium text-zinc-100">
-                  Drop one or more Spotify JSON files here
+                  Drop your .json, .jsonl, or .csv export files here
                 </p>
                 <p className="mt-1 text-xs text-zinc-500">
                   Select multiple files at once — everything stays private on your server
@@ -276,7 +278,7 @@ export function ImportSpotifyHistoryModal({
                   onClick={() => fileInputRef.current?.click()}
                   className="mt-4 rounded-xl bg-amber-500 px-4 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400"
                 >
-                  Choose JSON Files
+                  Choose Export Files
                 </button>
               </>
             )}
@@ -298,10 +300,15 @@ export function ImportSpotifyHistoryModal({
 
           {result && (
             <div className="space-y-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-xs text-emerald-100">
-              <div className="flex items-center gap-2 font-semibold text-emerald-300">
-                <CheckCircle2 className="h-4 w-4" />
-                Imported {result.importedCount.toLocaleString()} plays from {result.filesProcessed}{" "}
-                {result.filesProcessed === 1 ? "file" : "files"}!
+              <div className="flex flex-wrap items-center gap-2 font-semibold text-emerald-300">
+                <CheckCircle2 className="h-4 w-4 shrink-0" />
+                <span>
+                  Imported {result.importedCount.toLocaleString()} plays from{" "}
+                  {result.filesProcessed} {result.filesProcessed === 1 ? "file" : "files"}
+                  {result.detectedSources.length > 0
+                    ? ` (${result.detectedSources.join(", ")})`
+                    : ""}
+                </span>
               </div>
               <div className="grid grid-cols-2 gap-2 pt-1 text-[11px] text-zinc-300">
                 <div>
@@ -317,7 +324,7 @@ export function ImportSpotifyHistoryModal({
                   </strong>
                 </div>
                 <div>
-                  Skips / podcasts ignored:{" "}
+                  Skips / non-music ignored:{" "}
                   <strong className="text-zinc-100">
                     {result.skippedShortOrNonMusic.toLocaleString()}
                   </strong>

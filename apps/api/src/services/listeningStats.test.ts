@@ -379,7 +379,7 @@ describe("ListeningStats, OpenSubsonic Scrobbling & Recaps", () => {
       });
       assert.equal(accountImport.statusCode, 200);
       const accBody = accountImport.json();
-      assert.equal(accBody.format, "account");
+      assert.equal(accBody.format, "spotify_account");
       assert.equal(accBody.importedCount, 2);
       assert.equal(accBody.matchedLocalTracks, 1);
       assert.equal(accBody.skippedShortOrNonMusic, 1);
@@ -430,7 +430,7 @@ describe("ListeningStats, OpenSubsonic Scrobbling & Recaps", () => {
       });
       assert.equal(extendedImport.statusCode, 200);
       const extBody = extendedImport.json();
-      assert.equal(extBody.format, "extended");
+      assert.equal(extBody.format, "spotify_extended");
       assert.equal(extBody.importedCount, 1);
       assert.equal(extBody.deduplicatedCount, 1);
       assert.equal(extBody.skippedShortOrNonMusic, 2);
@@ -462,6 +462,116 @@ describe("ListeningStats, OpenSubsonic Scrobbling & Recaps", () => {
         cookies: { musicorbit_session: cookie.value },
       });
       assert.equal(homeAfterClear.json().listening.allTimePlays, 1);
+    } finally {
+      await server.app.close();
+    }
+  });
+
+  it("auto-detects and imports Apple Music CSV, Last.fm CSV/JSON, and ListenBrainz JSONL via POST /api/stats/import", async () => {
+    const root = createTempDir();
+    const musicDir = path.join(root, "music");
+    const dataDir = path.join(root, "data");
+    const downloadsDir = path.join(root, "downloads");
+    fs.mkdirSync(musicDir, { recursive: true });
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.mkdirSync(downloadsDir, { recursive: true });
+
+    const server = await buildServer({
+      port: 0,
+      host: "127.0.0.1",
+      logLevel: "silent",
+      musicDir,
+      dataDir,
+      downloadsDir,
+      autoImportThreshold: 85,
+      dbPath: path.join(dataDir, "musicorbit.db"),
+      coversDir: path.join(dataDir, "covers"),
+      artistImagesDir: path.join(dataDir, "artist-images"),
+      fetchArtistImages: false,
+      checkUpdates: false,
+      authEnabled: true,
+      webDistDir: null,
+      slskdUrl: null,
+      slskdApiKey: null,
+      version: "0.1.0",
+    });
+
+    try {
+      const setupRes = await server.app.inject({
+        method: "POST",
+        url: "/api/auth/setup",
+        payload: { username: "bianca", password: "password123" },
+      });
+      const cookie = setupRes.cookies.find((c) => c.name === "musicorbit_session")!;
+
+      // 1. Apple Music Play Activity CSV (with video row & short skip filtered out)
+      const appleCsv = [
+        "Artist Name,Song Name,Container Name,Play Duration Milliseconds,Event End Timestamp,Media Type",
+        '"Frank Ocean","Nights","Blonde",307000,2026-04-12T20:10:00Z,AUDIO',
+        '"Frank Ocean","Short Skip","Blonde",8000,2026-04-12T20:15:00Z,AUDIO',
+        '"Some Video","Music Video","",200000,2026-04-12T20:20:00Z,VIDEO',
+      ].join("\n");
+
+      const appleRes = await server.app.inject({
+        method: "POST",
+        url: "/api/stats/import",
+        cookies: { musicorbit_session: cookie.value },
+        payload: { content: appleCsv, filename: "Apple Music Play Activity.csv", minSeconds: 30 },
+      });
+      assert.equal(appleRes.statusCode, 200);
+      assert.equal(appleRes.json().format, "apple_music");
+      assert.equal(appleRes.json().importedCount, 1);
+      assert.equal(appleRes.json().skippedShortOrNonMusic, 2);
+
+      // 2. Last.fm headerless 4-column CSV
+      const lastFmCsv = [
+        '"Radiohead","In Rainbows","Weird Fishes/Arpeggi","15 May 2026 21:43"',
+        '"Radiohead","Kid A","Everything In Its Right Place","16 May 2026 09:15"',
+      ].join("\n");
+      const lfmRes = await server.app.inject({
+        method: "POST",
+        url: "/api/stats/import",
+        cookies: { musicorbit_session: cookie.value },
+        payload: { content: lastFmCsv, filename: "lastfm.csv" },
+      });
+      assert.equal(lfmRes.statusCode, 200);
+      assert.equal(lfmRes.json().format, "lastfm");
+      assert.equal(lfmRes.json().importedCount, 2);
+
+      // 3. ListenBrainz JSONL (newline-delimited JSON)
+      const lbJsonl = [
+        JSON.stringify({
+          listened_at: Math.floor(Date.parse("2026-06-01T14:00:00Z") / 1000),
+          track_metadata: {
+            artist_name: "Boards of Canada",
+            track_name: "Roygbiv",
+            release_name: "Music Has the Right to Children",
+            additional_info: { duration_ms: 151000 },
+          },
+        }),
+      ].join("\n");
+      const lbRes = await server.app.inject({
+        method: "POST",
+        url: "/api/stats/import",
+        cookies: { musicorbit_session: cookie.value },
+        payload: { content: lbJsonl, filename: "listens.jsonl" },
+      });
+      assert.equal(lbRes.statusCode, 200);
+      assert.equal(lbRes.json().format, "listenbrainz");
+      assert.equal(lbRes.json().importedCount, 1);
+
+      // Verify all three sources show up cleanly in Where You Listen
+      const homeRes = await server.app.inject({
+        method: "GET",
+        url: "/api/stats/home?range=all",
+        cookies: { musicorbit_session: cookie.value },
+      });
+      const clients = (homeRes.json().clients as Array<{ clientName: string }>).map(
+        (c) => c.clientName,
+      );
+      assert.ok(clients.includes("Apple Music (Imported)"));
+      assert.ok(clients.includes("Last.fm (Imported)"));
+      assert.ok(clients.includes("ListenBrainz (Imported)"));
     } finally {
       await server.app.close();
     }

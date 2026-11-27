@@ -7,7 +7,7 @@ import {
   Copy,
   Disc3,
   Download,
-  FileJson,
+  FileUp,
   Flame,
   Gift,
   ListPlus,
@@ -22,7 +22,7 @@ import type { RecapPeriodType, RecapResponse } from "@musicorbit/shared";
 import { fetchAlbumDetail, fetchRecap, saveRecapAsPlaylist } from "../api/client";
 import { AlbumCover } from "../components/AlbumCover";
 import { ArtistAvatar } from "../components/ArtistAvatar";
-import { ImportSpotifyHistoryModal } from "../components/ImportSpotifyHistoryModal";
+import { ImportHistoryModal } from "../components/ImportHistoryModal";
 import { usePlayer } from "../context/PlayerContext";
 import {
   buildRecapShareText,
@@ -72,7 +72,7 @@ export function RecapsView({
   const [error, setError] = useState<string | null>(null);
   const [previewEarly, setPreviewEarly] = useState(false);
   const [slideIndex, setSlideIndex] = useState(0);
-  const [spotifyImportOpen, setSpotifyImportOpen] = useState(false);
+  const [historyImportOpen, setHistoryImportOpen] = useState(false);
 
   // Save as playlist state
   const [savingPlaylist, setSavingPlaylist] = useState(false);
@@ -303,11 +303,11 @@ export function RecapsView({
 
           <button
             type="button"
-            onClick={() => setSpotifyImportOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:border-emerald-500/40 hover:bg-zinc-800 hover:text-emerald-300"
+            onClick={() => setHistoryImportOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-200 transition hover:border-amber-500/40 hover:bg-zinc-800 hover:text-amber-300"
           >
-            <FileJson className="h-3.5 w-3.5 text-emerald-400" />
-            Import Spotify
+            <FileUp className="h-3.5 w-3.5 text-amber-400" />
+            Import History
           </button>
 
           {recap && recap.totalPlays > 0 && !isLockedPreChristmas && (
@@ -436,17 +436,17 @@ export function RecapsView({
             No plays recorded for {recap.label} yet
           </h3>
           <p className="mt-1 max-w-md text-sm text-zinc-500">
-            Listen to songs in MusicOrbit or from OpenSubsonic clients like Arpeggi, Symfonium,
-            Amperfy, or Feishin — or import your official Spotify JSON history to populate past
-            months and years immediately.
+            Listen to songs in MusicOrbit or OpenSubsonic apps like Amperfy, Arpeggi, Symfonium, or
+            Feishin — or import your past history from Spotify, Apple Music, Last.fm, or
+            ListenBrainz.
           </p>
           <button
             type="button"
-            onClick={() => setSpotifyImportOpen(true)}
+            onClick={() => setHistoryImportOpen(true)}
             className="mt-5 inline-flex items-center gap-1.5 rounded-xl bg-amber-500 px-4 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400"
           >
-            <FileJson className="h-3.5 w-3.5" />
-            Import Spotify History
+            <FileUp className="h-3.5 w-3.5" />
+            Import Listening History
           </button>
         </div>
       )}
@@ -1087,9 +1087,9 @@ export function RecapsView({
         </div>
       )}
 
-      {spotifyImportOpen && (
-        <ImportSpotifyHistoryModal
-          onClose={() => setSpotifyImportOpen(false)}
+      {historyImportOpen && (
+        <ImportHistoryModal
+          onClose={() => setHistoryImportOpen(false)}
           onImported={() => void loadRecap(periodType, selectedPeriod)}
         />
       )}

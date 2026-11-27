@@ -3,7 +3,7 @@ import {
   CalendarHeart,
   Clock,
   Disc3,
-  FileJson,
+  FileUp,
   Flame,
   HardDrive,
   Headphones,
@@ -17,7 +17,7 @@ import type { HomeStatsResponse, StatsRange } from "@musicorbit/shared";
 import { fetchAlbumDetail, fetchHomeStats } from "../api/client";
 import { AlbumCover } from "../components/AlbumCover";
 import { ArtistAvatar } from "../components/ArtistAvatar";
-import { ImportSpotifyHistoryModal } from "../components/ImportSpotifyHistoryModal";
+import { ImportHistoryModal } from "../components/ImportHistoryModal";
 import { usePlayer } from "../context/PlayerContext";
 
 interface HomeViewProps {
@@ -97,7 +97,7 @@ export function HomeView({
   const [stats, setStats] = useState<HomeStatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [spotifyImportOpen, setSpotifyImportOpen] = useState(false);
+  const [historyImportOpen, setHistoryImportOpen] = useState(false);
 
   const loadStats = useCallback(async (selectedRange: StatsRange) => {
     setLoading(true);
@@ -198,12 +198,12 @@ export function HomeView({
 
           <button
             type="button"
-            onClick={() => setSpotifyImportOpen(true)}
-            title="Import Spotify JSON listening history"
-            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-emerald-500/40 hover:bg-zinc-800 hover:text-emerald-300"
+            onClick={() => setHistoryImportOpen(true)}
+            title="Import listening history from Spotify, Apple Music, Last.fm, or ListenBrainz"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-200 transition hover:border-amber-500/40 hover:bg-zinc-800 hover:text-amber-300"
           >
-            <FileJson className="h-3.5 w-3.5 text-emerald-400" />
-            Import Spotify
+            <FileUp className="h-3.5 w-3.5 text-amber-400" />
+            Import History
           </button>
 
           <button
@@ -356,11 +356,11 @@ export function HomeView({
             </button>
             <button
               type="button"
-              onClick={() => setSpotifyImportOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3.5 py-2 text-xs font-medium text-emerald-300 transition hover:bg-emerald-500/20"
+              onClick={() => setHistoryImportOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3.5 py-2 text-xs font-medium text-amber-300 transition hover:bg-amber-500/20"
             >
-              <FileJson className="h-3.5 w-3.5" />
-              Import Spotify History
+              <FileUp className="h-3.5 w-3.5" />
+              Import History
             </button>
             <button
               type="button"
@@ -814,9 +814,9 @@ export function HomeView({
         </section>
       )}
 
-      {spotifyImportOpen && (
-        <ImportSpotifyHistoryModal
-          onClose={() => setSpotifyImportOpen(false)}
+      {historyImportOpen && (
+        <ImportHistoryModal
+          onClose={() => setHistoryImportOpen(false)}
           onImported={() => void loadStats(range)}
         />
       )}
