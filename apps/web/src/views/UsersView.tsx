@@ -24,6 +24,7 @@ import { useModalAccessibility } from "../hooks/useModalAccessibility";
 interface UsersViewProps {
   currentUserId: number | null;
   slskdConfigured: boolean;
+  onCurrentUserUpdated?: (displayName: string | null) => void;
 }
 
 function generateStrongPassword(): string {
@@ -33,7 +34,11 @@ function generateStrongPassword(): string {
   return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
 }
 
-export function UsersView({ currentUserId, slskdConfigured }: UsersViewProps) {
+export function UsersView({
+  currentUserId,
+  slskdConfigured,
+  onCurrentUserUpdated,
+}: UsersViewProps) {
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -201,7 +206,12 @@ export function UsersView({ currentUserId, slskdConfigured }: UsersViewProps) {
                 >
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold text-zinc-100">{user.username}</span>
+                      <span className="text-sm font-semibold text-zinc-100">
+                        {user.displayName || user.username}
+                      </span>
+                      {user.displayName && (
+                        <span className="font-mono text-xs text-zinc-500">@{user.username}</span>
+                      )}
                       {isSelf && (
                         <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-zinc-300">
                           You
@@ -316,10 +326,13 @@ export function UsersView({ currentUserId, slskdConfigured }: UsersViewProps) {
           onSaved={(updated, passwordWasReset) => {
             setEditingUser(null);
             setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+            if (updated.id === currentUserId) {
+              onCurrentUserUpdated?.(updated.displayName);
+            }
             setNotice(
               passwordWasReset
-                ? `Updated "${updated.username}" and reset their password (active sessions revoked).`
-                : `Updated "${updated.username}".`,
+                ? `Updated "${updated.displayName || updated.username}" and reset their password (active sessions revoked).`
+                : `Updated "${updated.displayName || updated.username}".`,
             );
           }}
         />
@@ -350,6 +363,7 @@ function CreateUserModal({ onClose, onCreated }: CreateUserModalProps) {
   useModalAccessibility(dialogRef, onClose);
 
   const [username, setUsername] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState<"user" | "admin">("user");
@@ -366,6 +380,7 @@ function CreateUserModal({ onClose, onCreated }: CreateUserModalProps) {
     try {
       const created = await createUser({
         username: username.trim(),
+        displayName: displayName.trim() || null,
         password,
         role,
         musicDir: musicDir.trim() || undefined,
@@ -439,21 +454,35 @@ function CreateUserModal({ onClose, onCreated }: CreateUserModalProps) {
             </label>
 
             <label className="block space-y-1">
-              <span className="text-xs font-medium text-zinc-300">Role</span>
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value as "user" | "admin")}
+              <span className="text-xs font-medium text-zinc-300">
+                Display Name <span className="font-normal text-zinc-500">(optional)</span>
+              </span>
+              <input
+                type="text"
+                maxLength={80}
+                placeholder="e.g. Alex"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
                 className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none"
-              >
-                <option value="user" className="bg-zinc-900 text-zinc-100">
-                  User (own library only)
-                </option>
-                <option value="admin" className="bg-zinc-900 text-zinc-100">
-                  Administrator (full server access)
-                </option>
-              </select>
+              />
             </label>
           </div>
+
+          <label className="block space-y-1">
+            <span className="text-xs font-medium text-zinc-300">Role</span>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value as "user" | "admin")}
+              className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 focus:border-amber-500/60 focus:outline-none"
+            >
+              <option value="user" className="bg-zinc-900 text-zinc-100">
+                User (own library only)
+              </option>
+              <option value="admin" className="bg-zinc-900 text-zinc-100">
+                Administrator (full server access)
+              </option>
+            </select>
+          </label>
 
           <div className="space-y-1">
             <div className="flex items-center justify-between">
@@ -563,6 +592,7 @@ function EditUserModal({ user, isLastAdmin, onClose, onSaved }: EditUserModalPro
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalAccessibility(dialogRef, onClose);
 
+  const [displayName, setDisplayName] = useState(user.displayName ?? "");
   const [role, setRole] = useState<"user" | "admin">(user.role);
   const [musicDir, setMusicDir] = useState(user.musicDir);
   const [canUseSoulseek, setCanUseSoulseek] = useState(user.canUseSoulseek);
@@ -582,6 +612,7 @@ function EditUserModal({ user, isLastAdmin, onClose, onSaved }: EditUserModalPro
     setSubmitting(true);
     try {
       const updated = await updateUser(user.id, {
+        displayName: displayName.trim() || null,
         role,
         musicDir: musicDir.trim() || undefined,
         canUseSoulseek: role === "admin" ? true : canUseSoulseek,
@@ -639,9 +670,23 @@ function EditUserModal({ user, isLastAdmin, onClose, onSaved }: EditUserModalPro
 
         <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
           <label className="block space-y-1">
+            <span className="text-xs font-medium text-zinc-300">
+              Display Name <span className="font-normal text-zinc-500">(optional)</span>
+            </span>
+            <input
+              data-autofocus
+              type="text"
+              maxLength={80}
+              placeholder={`Defaults to ${user.username}`}
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none"
+            />
+          </label>
+
+          <label className="block space-y-1">
             <span className="text-xs font-medium text-zinc-300">Role</span>
             <select
-              data-autofocus
               value={role}
               disabled={isLastAdmin}
               onChange={(e) => setRole(e.target.value as "user" | "admin")}

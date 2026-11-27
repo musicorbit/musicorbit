@@ -10,6 +10,7 @@ interface AuthGateProps {
 
 export function AuthGate({ needsSetup, onAuthenticated }: AuthGateProps) {
   const [username, setUsername] = useState(needsSetup ? "admin" : "");
+  const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -28,7 +29,7 @@ export function AuthGate({ needsSetup, onAuthenticated }: AuthGateProps) {
     setSubmitting(true);
     try {
       const next = needsSetup
-        ? await setupAdmin(username.trim(), password)
+        ? await setupAdmin(username.trim(), password, displayName.trim() || undefined)
         : await loginUser(username.trim(), password);
       onAuthenticated(next);
     } catch (err) {
@@ -72,8 +73,27 @@ export function AuthGate({ needsSetup, onAuthenticated }: AuthGateProps) {
         )}
 
         <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+          {needsSetup && (
+            <label className="block space-y-1">
+              <span className="text-xs font-medium text-zinc-400">
+                Display Name <span className="font-normal text-zinc-500">(optional)</span>
+              </span>
+              <input
+                type="text"
+                autoComplete="name"
+                maxLength={80}
+                placeholder="e.g. Bianca (shown in greetings & recaps)"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none"
+              />
+            </label>
+          )}
+
           <label className="block space-y-1">
-            <span className="text-xs font-medium text-zinc-400">Username</span>
+            <span className="text-xs font-medium text-zinc-400">
+              Username{needsSetup ? " (used for sign-in & mobile apps)" : ""}
+            </span>
             <input
               type="text"
               autoComplete="username"

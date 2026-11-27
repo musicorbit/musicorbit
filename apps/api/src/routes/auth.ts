@@ -33,6 +33,23 @@ const credentialsSchema = z.object({
   password: z.string().min(8, "Password must be at least 8 characters").max(200),
 });
 
+const setupSchema = credentialsSchema.extend({
+  displayName: z
+    .string()
+    .trim()
+    .max(80, "Display name must be at most 80 characters")
+    .nullable()
+    .optional(),
+});
+
+const updateProfileSchema = z.object({
+  displayName: z
+    .string()
+    .trim()
+    .max(80, "Display name must be at most 80 characters")
+    .nullable(),
+});
+
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(1, "Current password is required").max(200),
   newPassword: z.string().min(8, "New password must be at least 8 characters").max(200),
@@ -114,12 +131,14 @@ export async function registerAuthRoutes(
   const toAuthUser = (row: {
     id: number;
     username: string;
+    displayName: string | null;
     role: "admin" | "user";
     musicDir: string | null;
     canUseSoulseek: number | null;
   }): AuthUser => ({
     id: row.id,
     username: row.username,
+    displayName: row.displayName?.trim() || null,
     role: row.role,
     musicDir: row.musicDir ? path.resolve(row.musicDir) : getDefaultMusicDir(),
     canUseSoulseek: row.role === "admin" || Boolean(row.canUseSoulseek),
@@ -139,6 +158,7 @@ export async function registerAuthRoutes(
         SELECT
           u.id,
           u.username,
+          u.display_name AS displayName,
           u.role,
           u.music_dir AS musicDir,
           u.can_use_soulseek AS canUseSoulseek
@@ -151,6 +171,7 @@ export async function registerAuthRoutes(
       | {
           id: number;
           username: string;
+          displayName: string | null;
           role: "admin" | "user";
           musicDir: string | null;
           canUseSoulseek: number | null;
@@ -189,6 +210,7 @@ export async function registerAuthRoutes(
       request.authUser = {
         id: 1,
         username: "local",
+        displayName: null,
         role: "admin",
         musicDir: getDefaultMusicDir(),
         canUseSoulseek: true,
@@ -244,7 +266,7 @@ export async function registerAuthRoutes(
       return reply.code(409).send({ error: "Admin account is already set up. Please sign in." });
     }
 
-    const parsed = credentialsSchema.safeParse(request.body);
+    const parsed = setupSchema.safeParse(request.body);
     if (!parsed.success) {
       const msg = Object.values(parsed.error.flatten().fieldErrors).flat()[0] ?? "Invalid input";
       return reply.code(400).send({ error: msg });
@@ -253,15 +275,16 @@ export async function registerAuthRoutes(
     const now = Date.now();
     const passwordHash = hashPassword(parsed.data.password);
     const adminMusicDir = getDefaultMusicDir();
+    const displayName = parsed.data.displayName?.trim() || null;
 
     const res = sqlite
       .prepare(
         `
-        INSERT INTO users (username, password_hash, role, music_dir, can_use_soulseek, created_at)
-        VALUES (?, ?, 'admin', ?, 1, ?)
+        INSERT INTO users (username, display_name, password_hash, role, music_dir, can_use_soulseek, created_at)
+        VALUES (?, ?, ?, 'admin', ?, 1, ?)
       `,
       )
-      .run(parsed.data.username, passwordHash, adminMusicDir, now);
+      .run(parsed.data.username, displayName, passwordHash, adminMusicDir, now);
 
     const adminId = Number(res.lastInsertRowid);
 
@@ -285,6 +308,7 @@ export async function registerAuthRoutes(
     const user: AuthUser = {
       id: adminId,
       username: parsed.data.username,
+      displayName,
       role: "admin",
       musicDir: adminMusicDir,
       canUseSoulseek: true,
@@ -325,6 +349,7 @@ export async function registerAuthRoutes(
         SELECT
           id,
           username,
+          display_name AS displayName,
           password_hash AS passwordHash,
           role,
           music_dir AS musicDir,
@@ -337,6 +362,7 @@ export async function registerAuthRoutes(
       | {
           id: number;
           username: string;
+          displayName: string | null;
           passwordHash: string;
           role: "admin" | "user";
           musicDir: string | null;
@@ -413,6 +439,34 @@ export async function registerAuthRoutes(
       userId: user.id,
     });
     return { ok: true };
+  });
+
+  // Self-service display name update for any authenticated user
+  app.put("/api/auth/profile", async (request, reply): Promise<{ user: AuthUser }> => {
+    if (!authEnabled) {
+      return reply.code(400).send({ error: "Authentication is disabled." } as never);
+    }
+    const user = request.authUser;
+    if (!user) {
+      return reply.code(401).send({ error: "Authentication required" } as never);
+    }
+
+    const parsed = updateProfileSchema.safeParse(request.body);
+    if (!parsed.success) {
+      const msg = Object.values(parsed.error.flatten().fieldErrors).flat()[0] ?? "Invalid display name";
+      return reply.code(400).send({ error: msg } as never);
+    }
+
+    const nextDisplayName = parsed.data.displayName?.trim() || null;
+    sqlite
+      .prepare("UPDATE users SET display_name = ? WHERE id = ?")
+      .run(nextDisplayName, user.id);
+
+    const updatedUser: AuthUser = {
+      ...user,
+      displayName: nextDisplayName,
+    };
+    return { user: updatedUser };
   });
 
   // Persist first-login onboarding tour completion state per user

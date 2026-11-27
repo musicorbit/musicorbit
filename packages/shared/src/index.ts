@@ -721,6 +721,7 @@ export interface ActivityLogsResponse {
 export interface AuthUser {
   id: number;
   username: string;
+  displayName: string | null;
   role: "admin" | "user";
   musicDir: string;
   canUseSoulseek: boolean;
@@ -743,6 +744,7 @@ export interface SubsonicPasswordResponse {
 export interface UserSummary {
   id: number;
   username: string;
+  displayName: string | null;
   role: "admin" | "user";
   musicDir: string;
   canUseSoulseek: boolean;
@@ -757,6 +759,7 @@ export interface UserSummary {
 
 export interface CreateUserRequest {
   username: string;
+  displayName?: string | null;
   password: string;
   role?: "admin" | "user";
   musicDir?: string;
@@ -764,6 +767,7 @@ export interface CreateUserRequest {
 }
 
 export interface UpdateUserRequest {
+  displayName?: string | null;
   role?: "admin" | "user";
   musicDir?: string;
   canUseSoulseek?: boolean;

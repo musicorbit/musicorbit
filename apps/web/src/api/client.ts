@@ -13,6 +13,7 @@ import type {
   ArtistImageUpdateResponse,
   ArtistSummary,
   AuthStatusResponse,
+  AuthUser,
   BrowseDirectoriesResponse,
   BulkImportFolderResponse,
   ChangePasswordRequest,
@@ -860,17 +861,35 @@ export function fetchAuthStatus(): Promise<AuthStatusResponse> {
 export async function setupAdmin(
   username: string,
   password: string,
+  displayName?: string,
 ): Promise<AuthStatusResponse> {
   const res = await fetch("/api/auth/setup", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({
+      username,
+      password,
+      displayName: displayName?.trim() || undefined,
+    }),
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ?? `Setup failed (HTTP ${res.status})`);
   }
   return (await res.json()) as AuthStatusResponse;
+}
+
+export async function updateMyProfile(displayName: string | null): Promise<{ user: AuthUser }> {
+  const res = await fetch("/api/auth/profile", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ displayName }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ?? `Could not update profile (HTTP ${res.status})`);
+  }
+  return (await res.json()) as { user: AuthUser };
 }
 
 export async function loginUser(

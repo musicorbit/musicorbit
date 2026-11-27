@@ -230,6 +230,7 @@ export function initDatabase(dbPath: string): DbContext {
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT NOT NULL UNIQUE,
+      display_name TEXT,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user',
       music_dir TEXT,
@@ -316,6 +317,7 @@ export function initDatabase(dbPath: string): DbContext {
   ensureColumn(sqlite, "artists", "image_checked_at", "INTEGER");
   ensureColumn(sqlite, "playlists", "cover_hash", "TEXT");
   ensureColumn(sqlite, "playlists", "synced_filename", "TEXT");
+  ensureColumn(sqlite, "users", "display_name", "TEXT");
   ensureColumn(sqlite, "users", "music_dir", "TEXT");
   ensureColumn(sqlite, "users", "can_use_soulseek", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(sqlite, "users", "subsonic_token", "TEXT");

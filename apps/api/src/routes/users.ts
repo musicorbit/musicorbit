@@ -26,6 +26,12 @@ const createUserBodySchema = z.object({
     .min(2, "Username must be at least 2 characters")
     .max(64)
     .regex(/^[a-zA-Z0-9._-]+$/, "Username may only contain letters, numbers, ., _, and -"),
+  displayName: z
+    .string()
+    .trim()
+    .max(80, "Display name must be at most 80 characters")
+    .nullable()
+    .optional(),
   password: z.string().min(8, "Password must be at least 8 characters").max(200),
   role: z.enum(["admin", "user"]).default("user"),
   musicDir: z.string().trim().max(1000).optional(),
@@ -33,6 +39,12 @@ const createUserBodySchema = z.object({
 });
 
 const updateUserBodySchema = z.object({
+  displayName: z
+    .string()
+    .trim()
+    .max(80, "Display name must be at most 80 characters")
+    .nullable()
+    .optional(),
   role: z.enum(["admin", "user"]).optional(),
   musicDir: z.string().trim().min(1).max(1000).optional(),
   canUseSoulseek: z.boolean().optional(),
@@ -69,6 +81,7 @@ export async function registerUserRoutes(
         SELECT
           u.id,
           u.username,
+          u.display_name AS displayName,
           u.role,
           u.music_dir AS musicDir,
           u.can_use_soulseek AS canUseSoulseek,
@@ -85,6 +98,7 @@ export async function registerUserRoutes(
       | {
           id: number;
           username: string;
+          displayName: string | null;
           role: "admin" | "user";
           musicDir: string | null;
           canUseSoulseek: number | null;
@@ -100,6 +114,7 @@ export async function registerUserRoutes(
     return {
       id: row.id,
       username: row.username,
+      displayName: row.displayName?.trim() || null,
       role: row.role,
       musicDir: row.musicDir ? path.resolve(row.musicDir) : settingsService.getMusicDir(),
       canUseSoulseek: row.role === "admin" || Boolean(row.canUseSoulseek),
@@ -181,15 +196,24 @@ export async function registerUserRoutes(
     const now = Date.now();
     const passwordHash = hashPassword(parsed.data.password);
     const canUseSoulseek = parsed.data.role === "admin" ? 1 : parsed.data.canUseSoulseek ? 1 : 0;
+    const displayName = parsed.data.displayName?.trim() || null;
 
     const inserted = sqlite
       .prepare(
         `
-        INSERT INTO users (username, password_hash, role, music_dir, can_use_soulseek, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO users (username, display_name, password_hash, role, music_dir, can_use_soulseek, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
       `,
       )
-      .run(parsed.data.username, passwordHash, parsed.data.role, resolvedDir, canUseSoulseek, now);
+      .run(
+        parsed.data.username,
+        displayName,
+        passwordHash,
+        parsed.data.role,
+        resolvedDir,
+        canUseSoulseek,
+        now,
+      );
 
     const newId = Number(inserted.lastInsertRowid);
     const summary = loadUserSummary(newId)!;
@@ -221,12 +245,13 @@ export async function registerUserRoutes(
     const targetId = parsedParams.data.id;
     const existing = sqlite
       .prepare(
-        "SELECT id, username, role, music_dir AS musicDir, can_use_soulseek AS canUseSoulseek FROM users WHERE id = ?",
+        "SELECT id, username, display_name AS displayName, role, music_dir AS musicDir, can_use_soulseek AS canUseSoulseek FROM users WHERE id = ?",
       )
       .get(targetId) as
       | {
           id: number;
           username: string;
+          displayName: string | null;
           role: "admin" | "user";
           musicDir: string | null;
           canUseSoulseek: number;
@@ -275,19 +300,26 @@ export async function registerUserRoutes(
             : 0
           : existing.canUseSoulseek;
 
+    const nextDisplayName =
+      parsedBody.data.displayName !== undefined
+        ? parsedBody.data.displayName?.trim() || null
+        : existing.displayName;
+
     if (parsedBody.data.password) {
       const nextHash = hashPassword(parsedBody.data.password);
       sqlite
         .prepare(
-          "UPDATE users SET role = ?, music_dir = ?, can_use_soulseek = ?, password_hash = ? WHERE id = ?",
+          "UPDATE users SET display_name = ?, role = ?, music_dir = ?, can_use_soulseek = ?, password_hash = ? WHERE id = ?",
         )
-        .run(nextRole, nextMusicDir, nextSoulseek, nextHash, targetId);
+        .run(nextDisplayName, nextRole, nextMusicDir, nextSoulseek, nextHash, targetId);
       // Immediately invalidate all active sessions for that user on password reset
       sqlite.prepare("DELETE FROM sessions WHERE user_id = ?").run(targetId);
     } else {
       sqlite
-        .prepare("UPDATE users SET role = ?, music_dir = ?, can_use_soulseek = ? WHERE id = ?")
-        .run(nextRole, nextMusicDir, nextSoulseek, targetId);
+        .prepare(
+          "UPDATE users SET display_name = ?, role = ?, music_dir = ?, can_use_soulseek = ? WHERE id = ?",
+        )
+        .run(nextDisplayName, nextRole, nextMusicDir, nextSoulseek, targetId);
     }
 
     const updated = loadUserSummary(targetId)!;

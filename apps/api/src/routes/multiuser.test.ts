@@ -723,6 +723,54 @@ describe("Multi-User Authentication, Security, Isolation & slskd Routing", () =>
     assert.equal(fs.existsSync(adminTracksStill[0]!.filePath), true);
   });
 
+  it("supports separate username and displayName across setup, profile, and user management", async () => {
+    // Admin updates their own displayName via self-service PUT /api/auth/profile
+    const profileRes = await handle.app.inject({
+      method: "PUT",
+      url: "/api/auth/profile",
+      headers: { cookie: adminCookie },
+      payload: { displayName: "Bianca" },
+    });
+    assert.equal(profileRes.statusCode, 200);
+    assert.equal(profileRes.json().user.username, "admin");
+    assert.equal(profileRes.json().user.displayName, "Bianca");
+
+    // Auth status reflects the displayName immediately
+    const statusRes = await handle.app.inject({
+      method: "GET",
+      url: "/api/auth/status",
+      headers: { cookie: adminCookie },
+    });
+    assert.equal(statusRes.statusCode, 200);
+    assert.equal(statusRes.json().user.displayName, "Bianca");
+
+    // Creating a new user with displayName persists and can be updated by Admin
+    const createRes = await handle.app.inject({
+      method: "POST",
+      url: "/api/users",
+      headers: { cookie: adminCookie },
+      payload: {
+        username: "sam_login",
+        displayName: "Sam Rivera",
+        password: "SamPassword123!",
+        role: "user",
+      },
+    });
+    assert.equal(createRes.statusCode, 201);
+    const sam = createRes.json() as UserSummary;
+    assert.equal(sam.username, "sam_login");
+    assert.equal(sam.displayName, "Sam Rivera");
+
+    const updateRes = await handle.app.inject({
+      method: "PUT",
+      url: `/api/users/${sam.id}`,
+      headers: { cookie: adminCookie },
+      payload: { displayName: "Sam" },
+    });
+    assert.equal(updateRes.statusCode, 200);
+    assert.equal((updateRes.json() as UserSummary).displayName, "Sam");
+  });
+
   it("rate-limits repeated failed login attempts with HTTP 429", async () => {
     let lastStatus = 0;
     for (let i = 0; i < 11; i++) {

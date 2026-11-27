@@ -1,16 +1,40 @@
 import { useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, Eye, EyeOff, KeyRound, Loader2, ShieldCheck, X } from "lucide-react";
-import { changePassword } from "../api/client";
+import {
+  AlertCircle,
+  Check,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  KeyRound,
+  Loader2,
+  ShieldCheck,
+  User,
+  X,
+} from "lucide-react";
+import type { AuthUser } from "@musicorbit/shared";
+import { changePassword, updateMyProfile } from "../api/client";
 import { useModalAccessibility } from "../hooks/useModalAccessibility";
 
 interface ChangePasswordModalProps {
   username: string;
+  displayName?: string | null;
+  onProfileUpdated?: (user: AuthUser) => void;
   onClose: () => void;
 }
 
-export function ChangePasswordModal({ username, onClose }: ChangePasswordModalProps) {
+export function ChangePasswordModal({
+  username,
+  displayName = null,
+  onProfileUpdated,
+  onClose,
+}: ChangePasswordModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalAccessibility(dialogRef, onClose);
+
+  const [displayNameInput, setDisplayNameInput] = useState(displayName ?? "");
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -19,6 +43,22 @@ export function ChangePasswordModal({ username, onClose }: ChangePasswordModalPr
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProfileError(null);
+    setProfileSaved(false);
+    setSavingProfile(true);
+    try {
+      const res = await updateMyProfile(displayNameInput.trim() || null);
+      onProfileUpdated?.(res.user);
+      setProfileSaved(true);
+    } catch (err) {
+      setProfileError(err instanceof Error ? err.message : "Could not update display name");
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,21 +104,64 @@ export function ChangePasswordModal({ username, onClose }: ChangePasswordModalPr
             </div>
             <div>
               <h2 id="change-password-title" className="text-base font-semibold text-zinc-50">
-                Change Password
+                Account &amp; Password
               </h2>
-              <p className="text-xs text-zinc-400">Account: {username}</p>
+              <p className="text-xs text-zinc-400">Username: @{username}</p>
             </div>
           </div>
 
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close change password dialog"
+            aria-label="Close account settings dialog"
             className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-100"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        {/* Display Name section */}
+        <form
+          onSubmit={(e) => void handleSaveProfile(e)}
+          className="mb-5 space-y-2.5 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3.5"
+        >
+          <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-200">
+            <User className="h-3.5 w-3.5 text-amber-400" />
+            <span>Display Name</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              data-autofocus
+              type="text"
+              maxLength={80}
+              placeholder={`e.g. Bianca (defaults to ${username})`}
+              value={displayNameInput}
+              onChange={(e) => {
+                setDisplayNameInput(e.target.value);
+                setProfileSaved(false);
+              }}
+              className="min-w-0 flex-1 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:border-amber-500/60 focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={savingProfile}
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 transition hover:bg-amber-400 disabled:opacity-45"
+            >
+              {savingProfile ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="h-3.5 w-3.5" />
+              )}
+              Save
+            </button>
+          </div>
+          {profileError && <p className="text-[11px] text-red-300">{profileError}</p>}
+          {profileSaved && (
+            <p className="text-[11px] text-emerald-300">
+              Display name saved — greetings, sidebar, and recaps updated.
+            </p>
+          )}
+        </form>
 
         {success ? (
           <div className="space-y-4">
@@ -120,7 +203,6 @@ export function ChangePasswordModal({ username, onClose }: ChangePasswordModalPr
             <label className="block space-y-1">
               <span className="text-xs font-medium text-zinc-300">Current Password</span>
               <input
-                data-autofocus
                 type={showPasswords ? "text" : "password"}
                 autoComplete="current-password"
                 required

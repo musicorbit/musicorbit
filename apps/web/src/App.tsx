@@ -649,12 +649,23 @@ function MusicOrbitShell() {
             data-tour={inMobileDrawer ? undefined : "user-card"}
             className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-900/70 px-3 py-2 text-xs"
           >
-            <div className="min-w-0">
-              <p className="truncate font-medium text-zinc-100">{authStatus.user.username}</p>
-              <p className="text-[10px] text-zinc-500">
+            <button
+              type="button"
+              onClick={() => {
+                setMobileNavOpen(false);
+                setChangePasswordOpen(true);
+              }}
+              title="Edit display name or change password"
+              className="min-w-0 flex-1 text-left transition hover:text-amber-300"
+            >
+              <p className="truncate font-medium text-zinc-100">
+                {authStatus.user.displayName || authStatus.user.username}
+              </p>
+              <p className="truncate text-[10px] text-zinc-500">
+                {authStatus.user.displayName ? `@${authStatus.user.username} · ` : ""}
                 {authStatus.user.role === "admin" ? "Administrator" : "Member"}
               </p>
-            </div>
+            </button>
             <div className="flex shrink-0 items-center gap-1">
               {!inMobileDrawer && (
                 <button
@@ -882,7 +893,7 @@ function MusicOrbitShell() {
 
           {route.view === "home" && (
             <HomeView
-              username={authStatus?.user?.username}
+              username={authStatus?.user?.displayName || authStatus?.user?.username}
               onSelectAlbum={(albumId) => navigate({ view: "album-detail", albumId })}
               onSelectArtist={(artistId) => navigate({ view: "artist-detail", artistId })}
               onOpenAlbums={() => navigate({ view: "albums" })}
@@ -895,7 +906,7 @@ function MusicOrbitShell() {
 
           {route.view === "recaps" && (
             <RecapsView
-              username={authStatus?.user?.username}
+              username={authStatus?.user?.displayName || authStatus?.user?.username}
               initialType={route.initialType}
               initialPeriod={route.initialPeriod}
               onSelectAlbum={(albumId) => navigate({ view: "album-detail", albumId })}
@@ -1024,6 +1035,13 @@ function MusicOrbitShell() {
             <UsersView
               currentUserId={authStatus.user?.id ?? null}
               slskdConfigured={slskdConfigured}
+              onCurrentUserUpdated={(displayName) =>
+                setAuthStatus((prev) =>
+                  prev?.user
+                    ? { ...prev, user: { ...prev.user, displayName } }
+                    : prev,
+                )
+              }
             />
           )}
 
@@ -1047,13 +1065,17 @@ function MusicOrbitShell() {
       {changePasswordOpen && authStatus?.user && (
         <ChangePasswordModal
           username={authStatus.user.username}
+          displayName={authStatus.user.displayName}
+          onProfileUpdated={(updatedUser) =>
+            setAuthStatus((prev) => (prev ? { ...prev, user: updatedUser } : prev))
+          }
           onClose={() => setChangePasswordOpen(false)}
         />
       )}
 
       {tourOpen && (
         <OnboardingTour
-          username={authStatus?.user?.username ?? ""}
+          username={authStatus?.user?.displayName || authStatus?.user?.username || ""}
           isAdmin={isAdmin}
           authEnabled={Boolean(authStatus?.authEnabled)}
           canUseSoulseek={canUseSoulseek}

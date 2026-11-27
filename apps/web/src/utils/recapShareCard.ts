@@ -135,7 +135,7 @@ export async function renderRecapShareCardBlob(
   if (username) {
     ctx.fillStyle = "#a1a1aa";
     ctx.font = "500 22px Inter, -apple-system, BlinkMacSystemFont, sans-serif";
-    const userLabel = `@${username}`;
+    const userLabel = username.trim();
     const uw = ctx.measureText(userLabel).width;
     ctx.fillText(userLabel, width - padX - uw, y + 30);
   }
