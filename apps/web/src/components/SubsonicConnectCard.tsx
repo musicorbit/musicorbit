@@ -87,7 +87,7 @@ export function SubsonicConnectCard() {
             Connect <strong className="text-zinc-200">Symfonium</strong> (Android),{" "}
             <strong className="text-zinc-200">Amperfy / Arpeggi</strong> (iOS), or{" "}
             <strong className="text-zinc-200">Feishin</strong> directly to MusicOrbit for CarPlay,
-            Android Auto, offline downloads, and synced lyrics — no Navidrome needed.
+            Android Auto, offline downloads, and synced lyrics.
           </p>
         </div>
 
