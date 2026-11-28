@@ -9,7 +9,7 @@ Thanks for your interest in contributing to **MusicOrbit**!
 
 ## Local Development Setup
 
-Requirements: **Node.js 22+** and **npm**. (`ffmpeg` is optional locally, needed only if testing ALAC → FLAC transcoding.)
+Requirements: **Node.js 24+** (see `.nvmrc`) and **npm**. (`ffmpeg` is optional locally, needed only if testing ALAC → FLAC transcoding.)
 
 ```bash
 git clone https://github.com/musicorbit/musicorbit.git

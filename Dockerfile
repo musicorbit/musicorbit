@@ -1,5 +1,5 @@
 # Stage 1: Build shared package, API, and React web bundle
-FROM node:22-bookworm-slim AS builder
+FROM node:24-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -27,7 +27,7 @@ RUN npm run build
 RUN npm prune --omit=dev
 
 # Stage 2: Lean production runtime serving both API and built React SPA
-FROM node:22-bookworm-slim AS runner
+FROM node:24-bookworm-slim AS runner
 
 WORKDIR /app
 

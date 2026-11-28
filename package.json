@@ -6,7 +6,7 @@
   "license": "AGPL-3.0-only",
   "type": "module",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=24.0.0"
   },
   "workspaces": [
     "packages/*",
@@ -24,7 +24,7 @@
     "reset-password": "npm run reset-password -w @musicorbit/api --"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2",
+    "concurrently": "^10.0.7",
     "typescript": "^5.8.2"
   }
 }

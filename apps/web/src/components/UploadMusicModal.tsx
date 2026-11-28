@@ -346,9 +346,7 @@ export function UploadMusicModal({
             ref={folderInputRef}
             type="file"
             multiple
-            // @ts-expect-error webkitdirectory is standard in Chromium/Safari/Firefox for folder uploads
             webkitdirectory=""
-            directory=""
             onChange={(e) => {
               handleFileInputChange(e.target.files);
               e.target.value = "";
